@@ -1,0 +1,21 @@
+[package]
+name = "ica-native"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eframe = "0.32.0"
+egui = "0.32.0"
+
+anyhow = "1.0.98"
+
+foldhash = "0.1.5"
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.9.4"
+
+rust_socketio = { git = "https://github.com/nextdata-tech/rust-socketio.git", branch = "tyler/feat-add-features-for-other-tls-types" }
+reqwest = "0.12.22"
+egui_extras = { version = "0.32.0", features = ["all_loaders"] }
+image = "0.25.6"
