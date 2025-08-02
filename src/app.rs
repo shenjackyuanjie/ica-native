@@ -6,6 +6,7 @@ use crate::assets;
 
 pub struct IcaApp {
     pub connected: bool,
+    pub open_verify: bool,
 }
 
 impl IcaApp {
@@ -35,31 +36,22 @@ impl IcaApp {
 
     pub fn new(cc: &CreationContext<'_>) -> Self {
         Self::setup_fonts(&cc.egui_ctx);
-        Self { connected: false }
+        Self { connected: false, open_verify: false }
     }
 }
 
 impl eframe::App for IcaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
-            // ui.horizontal(|ui| {
-            //     ui.label("Icalingua++ egui");
-
-            //     egui::menu::bar(ui, |ui| {
-            //         ui.menu_button("菜单", |ui| {
-            //             if ui.button("选项1").clicked() {
-            //                 // 处理选项1点击事件
-            //                 ui.close();
-            //             }
-            //             if ui.button("选项2").clicked() {
-            //                 // 处理选项2点击事件
-            //                 ui.close();
-            //             }
-            //         });
-            //     });
-            // });
             egui::MenuBar::new().ui(ui, |ui| {
-                // ui.menu_button(atoms, add_contents)
+                ui.menu_button("Icalingua++ native", |ui| {
+                    ui.label(crate::VERSION);
+                    ui.label("Github (todo)");
+                    if ui.button("验证消息").clicked() {
+                        ui.close();
+                        self.open_verify = true;
+                    }
+                });
                 ui.menu_button("文件", |ui| {
                     if ui.button("新建").clicked() {
                         ui.close();
@@ -120,5 +112,19 @@ impl eframe::App for IcaApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("egui app ica");
         });
+
+        if self.open_verify {
+
+            egui::Window::new("新页面")
+                .default_size(egui::vec2(400.0, 300.0))
+                .show(ctx, |ui| {
+                    ui.heading("这是一个新页面");
+                    ui.label("在这里添加你的内容。");
+                    if ui.button("关闭").clicked() {
+                        // ui.close();
+                        self.open_verify = false;
+                    }
+                });
+        }
     }
 }

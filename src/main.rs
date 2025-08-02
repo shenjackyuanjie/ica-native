@@ -4,10 +4,12 @@ use egui::IconData;
 pub mod app;
 pub mod assets;
 
-fn main() -> anyhow::Result<()> {
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+fn main() -> anyhow::Result<()> {
     let icon = {
-        let img = image::load_from_memory_with_format(assets::png::ICON_512X, image::ImageFormat::Png)?;
+        let img =
+            image::load_from_memory_with_format(assets::png::ICON_512X, image::ImageFormat::Png)?;
         let rgba_image = img.into_rgba8();
         let (w, h) = (rgba_image.width(), rgba_image.height());
         IconData {
@@ -33,6 +35,7 @@ fn main() -> anyhow::Result<()> {
             egui_extras::install_image_loaders(&cc.egui_ctx);
             Ok(Box::new(app::IcaApp::new(cc)))
         }),
-    ).expect("error in eframe::run_native");
+    )
+    .expect("error in eframe::run_native");
     Ok(())
 }
