@@ -5,12 +5,12 @@ use egui::Hyperlink;
 
 use crate::assets;
 
+pub mod custom_chat;
 pub mod online_mode;
 pub mod open_page;
-pub mod custom_chat;
 
-use online_mode::OnlineMode;
 use custom_chat::CustomChat;
+use online_mode::OnlineMode;
 
 pub struct IcaApp {
     /// 是否连接上了
@@ -98,18 +98,9 @@ impl eframe::App for IcaApp {
                         let _ = ui.checkbox(&mut self.mute_all, "禁用 @ 全体 通知");
                     }
                 });
-                ui.menu_button("在线状态", |ui| {
-                    ui.label("选择在线状态");
-                    let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Online, "在线");
-                    let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Left, "离开");
-                    let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Hidden, "隐身");
-                    let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Busy, "忙碌");
-                    let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::PingMe, "Q我吧");
-                    let _ = ui.selectable_value(
-                        &mut self.online_mode,
-                        OnlineMode::DoNotDisturb,
-                        "请勿打扰",
-                    );
+                ui.menu_button("选项", |ui| {
+                    let _ = ui.checkbox(&mut self.open_page.custom_chat, "定制聊天界面");
+                    let _ = ui.checkbox(&mut self.open_page.online_status, "在线状态");
                 });
                 ui.menu_button("帮助", |ui| {
                     if ui.button("文档").clicked() {
@@ -135,6 +126,30 @@ impl eframe::App for IcaApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("egui app ica");
         });
+
+        egui::Window::new("定制聊天界面")
+            .open(&mut self.open_page.custom_chat)
+            .resizable(false)
+            .show(ctx, |ui| {
+                self.custom_chat.show_ui(ui);
+            });
+
+        egui::Window::new("在线状态")
+            .open(&mut self.open_page.online_status)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("选择在线状态");
+                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Online, "在线");
+                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Left, "离开");
+                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Hidden, "隐身");
+                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Busy, "忙碌");
+                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::PingMe, "Q我吧");
+                let _ = ui.selectable_value(
+                    &mut self.online_mode,
+                    OnlineMode::DoNotDisturb,
+                    "请勿打扰",
+                );
+            });
 
         // if self.open_page.verify_message {
         egui::Window::new("验证消息")

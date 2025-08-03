@@ -1,4 +1,5 @@
 /// 用来存 "打开了" 的页面
+#[derive(Default)]
 pub struct AppOpenPage {
     /// 验证消息页面
     pub verify_message: bool,
@@ -8,15 +9,8 @@ pub struct AppOpenPage {
     pub settings: bool,
     /// 通知等级说明页面
     pub notify_level: bool,
-}
-
-impl Default for AppOpenPage {
-    fn default() -> Self {
-        Self {
-            verify_message: false,
-            about: false,
-            settings: false,
-            notify_level: false,
-        }
-    }
+    /// 定制聊天界面
+    pub custom_chat: bool,
+    /// 在线状态
+    pub online_status: bool,
 }
