@@ -1,4 +1,3 @@
-
 /// 用来存 "打开了" 的页面
 pub struct AppOpenPage {
     /// 验证消息页面

@@ -5,11 +5,20 @@ use egui::Hyperlink;
 
 use crate::assets;
 
+pub mod online_mode;
 pub mod open_page;
+pub mod custom_chat;
+
+use online_mode::OnlineMode;
+use custom_chat::CustomChat;
 
 pub struct IcaApp {
     /// 是否连接上了
     pub connected: bool,
+    /// 聊天界面定制选项
+    pub custom_chat: CustomChat,
+    /// 在线模式
+    pub online_mode: OnlineMode,
     /// 打开了什么页面
     pub open_page: open_page::AppOpenPage,
     /// 是否禁用 @ 全体 通知
@@ -47,11 +56,19 @@ impl IcaApp {
 
     pub fn new(cc: &CreationContext<'_>) -> Self {
         Self::setup_fonts(&cc.egui_ctx);
-        Self { connected: false, open_page: open_page::AppOpenPage::default(), mute_any: false, mute_all: false, notify_level: 3 }
+        Self {
+            connected: false,
+            custom_chat: CustomChat::default(),
+            online_mode: OnlineMode::default(),
+            open_page: open_page::AppOpenPage::default(),
+            mute_any: false,
+            mute_all: false,
+            notify_level: 3,
+        }
     }
 
     /// 后面再写的加载配置文件
-    pub fn new_with_cfg() {
+    pub fn new_with_cfg(_cc: &CreationContext<'_>) {
         todo!()
     }
 }
@@ -81,6 +98,19 @@ impl eframe::App for IcaApp {
                         let _ = ui.checkbox(&mut self.mute_all, "禁用 @ 全体 通知");
                     }
                 });
+                ui.menu_button("在线状态", |ui| {
+                    ui.label("选择在线状态");
+                    let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Online, "在线");
+                    let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Left, "离开");
+                    let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Hidden, "隐身");
+                    let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Busy, "忙碌");
+                    let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::PingMe, "Q我吧");
+                    let _ = ui.selectable_value(
+                        &mut self.online_mode,
+                        OnlineMode::DoNotDisturb,
+                        "请勿打扰",
+                    );
+                });
                 ui.menu_button("帮助", |ui| {
                     if ui.button("文档").clicked() {
                         ui.close();
@@ -106,49 +136,49 @@ impl eframe::App for IcaApp {
             ui.heading("egui app ica");
         });
 
-        if self.open_page.verify_message {
-            egui::Window::new("验证消息")
-                .default_size(egui::vec2(400.0, 300.0))
-                .open(&mut self.open_page.verify_message)
-                .show(ctx, |ui| {
-                    ui.heading("这是一个新页面");
-                    ui.label("在这里添加你的内容。");
-                });
-        }
+        // if self.open_page.verify_message {
+        egui::Window::new("验证消息")
+            .default_size(egui::vec2(400.0, 300.0))
+            .open(&mut self.open_page.verify_message)
+            .show(ctx, |ui| {
+                ui.heading("这是一个新页面");
+                ui.label("在这里添加你的内容。");
+            });
+        // }
 
-        if self.open_page.about {
-            egui::Window::new("关于 Icalingua++ native")
-                .default_size(egui::vec2(420.0, 320.0))
-                .open(&mut self.open_page.about)
-                .collapsible(true)
-                .show(ctx, |ui| {
-                    ui.heading("Icalingua++ native");
-                    ui.separator();
+        // if self.open_page.about {
+        egui::Window::new("关于 Icalingua++ native")
+            .default_size(egui::vec2(420.0, 320.0))
+            .open(&mut self.open_page.about)
+            .collapsible(true)
+            .show(ctx, |ui| {
+                ui.heading("Icalingua++ native");
+                ui.separator();
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("版本：");
+                    ui.monospace(crate::VERSION);
+                });
+                ui.add_space(6.0);
+                ui.label("一个使用 Rust + egui 开发的跨平台原生 ica 客户端。");
+                ui.add_space(8.0);
+                ui.collapsing("开源信息", |ui| {
+                    ui.label("本项目基于开源许可证发布，欢迎 Star、Issue 与 PR。");
                     ui.horizontal_wrapped(|ui| {
-                        ui.label("版本：");
-                        ui.monospace(crate::VERSION);
-                    });
-                    ui.add_space(6.0);
-                    ui.label("一个使用 Rust + egui 开发的跨平台原生 ica 客户端。");
-                    ui.add_space(8.0);
-                    ui.collapsing("开源信息", |ui| {
-                        ui.label("本项目基于开源许可证发布，欢迎 Star、Issue 与 PR。");
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label("项目地址：");
-                            let link = Hyperlink::from_label_and_url("Github", crate::GITHUB_LINK);
-                            ui.add(link);
-                        });
-                    });
-                    ui.add_space(8.0);
-                    ui.collapsing("致谢", |ui| {
-                        ui.label("感谢所有贡献者与所使用的开源项目：");
-                        ui.label("Icalingua 作者以及各位用户");
-                        ui.label("Rust 语言与生态");
-                        ui.label("egui/eframe 图形界面框架");
-                        ui.label("以及社区用户的反馈与支持");
+                        ui.label("项目地址：");
+                        let link = Hyperlink::from_label_and_url("Github", crate::GITHUB_LINK);
+                        ui.add(link);
                     });
                 });
-        }
+                ui.add_space(8.0);
+                ui.collapsing("致谢", |ui| {
+                    ui.label("感谢所有贡献者与所使用的开源项目：");
+                    ui.label("Icalingua 作者以及各位用户");
+                    ui.label("Rust 语言与生态");
+                    ui.label("egui/eframe 图形界面框架");
+                    ui.label("以及社区用户的反馈与支持");
+                });
+            });
+        // }
 
         if self.open_page.notify_level {
             // 在新页面展示一张图
@@ -157,6 +187,7 @@ impl eframe::App for IcaApp {
                 .open(&mut self.open_page.notify_level)
                 .collapsible(false)
                 .default_size((size.width() / 2.0, size.height() / 2.0))
+                .resizable(true)
                 .show(ctx, |ui| {
                     ui.image(crate::assets::webp::NOTIFICATION);
                 });

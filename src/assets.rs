@@ -12,5 +12,6 @@ pub mod svg {
 }
 
 pub mod webp {
-    pub const NOTIFICATION: egui::ImageSource = egui::include_image!("../assets/webp/notification.webp");
+    pub const NOTIFICATION: egui::ImageSource =
+        egui::include_image!("../assets/webp/notification.webp");
 }
