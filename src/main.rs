@@ -5,6 +5,7 @@ pub mod app;
 pub mod assets;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const GITHUB_LINK: &str = "https://github.com/shenjackyuanjie/ica-native";
 
 fn main() -> anyhow::Result<()> {
     let icon = {
@@ -21,7 +22,7 @@ fn main() -> anyhow::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([320.0, 240.0])
+            .with_inner_size([1024.0, 768.0])
             .with_drag_and_drop(true)
             .with_icon(icon),
         ..Default::default()
