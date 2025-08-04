@@ -2,6 +2,7 @@ use eframe::egui;
 use egui::IconData;
 
 pub mod app;
+pub mod client;
 pub mod assets;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

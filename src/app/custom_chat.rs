@@ -36,11 +36,17 @@ pub struct CustomChat {
     /// 禁用文件类型选择框
     /// 拖拽复制默认识别媒体
     pub disable_file_type_selection: bool,
+    // ====== 以下是 ica-native 新加的
+    /// 显示 "话题" 按钮
+    pub enable_topic_button: bool,
+    /// 隐藏群友头像 (纯文字模式)
+    pub hide_group_member_avatar: bool,
 }
 
 impl CustomChat {
-    pub fn show_ui(&mut self, ui: &mut Ui) {
-        Grid::new("custom_chat_grid_two_columns")
+    /// 展示 ica 也有的选项
+    pub fn show_ica_ui(&mut self, ui: &mut Ui) {
+        Grid::new("custom_chat_ica_grid")
             .num_columns(2)
             .striped(true)
             .show(ui, |ui| {
@@ -97,8 +103,6 @@ impl CustomChat {
                     ui.weak("中英文自动加空格");
                 });
                 let _ = ui.checkbox(&mut self.use_pangu_to_view_msg, "");
-                // ui.end_row();
-                // ui.label("");
                 ui.end_row();
 
                 ui.vertical(|ui| {
@@ -106,8 +110,6 @@ impl CustomChat {
                     ui.weak("不包括 +1");
                 });
                 let _ = ui.checkbox(&mut self.use_pangu_to_send_msg, "");
-                // ui.end_row();
-                // ui.label("");
                 ui.end_row();
 
                 ui.vertical(|ui| {
@@ -115,8 +117,28 @@ impl CustomChat {
                     ui.weak("拖拽复制默认识别媒体");
                 });
                 let _ = ui.checkbox(&mut self.disable_file_type_selection, "");
-                // ui.end_row();
-                // ui.label("");
+                ui.end_row();
+            });
+    }
+
+    /// 展示 ica-native 特有的选项
+    pub fn show_extra_ui(&mut self, ui: &mut Ui) {
+        Grid::new("custom_chat_extra_grid")
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.label("显示 \"话题\" 按钮");
+                    ui.weak("单独显示");
+                    ui.weak("回复同一条信息");
+                    ui.weak("位于同一条信息回复链");
+                    ui.weak("的信息");
+                });
+                let _ = ui.checkbox(&mut self.enable_topic_button, "");
+                ui.end_row();
+
+                ui.label("隐藏群友头像 (纯文字模式)");
+                let _ = ui.checkbox(&mut self.hide_group_member_avatar, "");
                 ui.end_row();
             });
     }
@@ -140,6 +162,8 @@ impl Default for CustomChat {
             use_pangu_to_view_msg: false,
             use_pangu_to_send_msg: false,
             disable_file_type_selection: false,
+            enable_topic_button: true,
+            hide_group_member_avatar: false,
         }
     }
 }

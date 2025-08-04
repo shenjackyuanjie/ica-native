@@ -9,8 +9,10 @@ pub struct AppOpenPage {
     pub settings: bool,
     /// 通知等级说明页面
     pub notify_level: bool,
-    /// 定制聊天界面
-    pub custom_chat: bool,
+    /// 定制聊天界面 (ica)
+    pub custom_chat_ica: bool,
+    /// 定制聊天界面 (extra)
+    pub custom_chat_extra: bool,
     /// 在线状态
     pub online_status: bool,
 }

@@ -12,6 +12,8 @@ pub mod open_page;
 use custom_chat::CustomChat;
 use online_mode::OnlineMode;
 
+pub type RoomId = i32;
+
 pub struct IcaApp {
     /// 是否连接上了
     pub connected: bool,
@@ -27,6 +29,8 @@ pub struct IcaApp {
     pub mute_any: bool,
     /// 通知等级
     pub notify_level: u8,
+    /// 所有聊天
+    pub chat_rooms: Vec<RoomId>
 }
 
 impl IcaApp {
@@ -99,7 +103,9 @@ impl eframe::App for IcaApp {
                     }
                 });
                 ui.menu_button("选项", |ui| {
-                    let _ = ui.checkbox(&mut self.open_page.custom_chat, "定制聊天界面");
+                    ui.label("这里显示你打开了哪些选项页面");
+                    let _ = ui.checkbox(&mut self.open_page.custom_chat_ica, "定制聊天界面(ica)");
+                    let _ = ui.checkbox(&mut self.open_page.custom_chat_extra, "定制聊天界面(extra)");
                     let _ = ui.checkbox(&mut self.open_page.online_status, "在线状态");
                 });
                 ui.menu_button("帮助", |ui| {
@@ -127,11 +133,18 @@ impl eframe::App for IcaApp {
             ui.heading("egui app ica");
         });
 
-        egui::Window::new("定制聊天界面")
-            .open(&mut self.open_page.custom_chat)
+        egui::Window::new("定制聊天界面 (ica)")
+            .open(&mut self.open_page.custom_chat_ica)
             .resizable(false)
             .show(ctx, |ui| {
-                self.custom_chat.show_ui(ui);
+                self.custom_chat.show_ica_ui(ui);
+            });
+
+        egui::Window::new("定制聊天界面 (extra)")
+            .open(&mut self.open_page.custom_chat_extra)
+            .resizable(false)
+            .show(ctx, |ui| {
+                self.custom_chat.show_extra_ui(ui);
             });
 
         egui::Window::new("在线状态")
