@@ -2,8 +2,8 @@ use eframe::egui;
 use egui::IconData;
 
 pub mod app;
-pub mod client;
 pub mod assets;
+pub mod client;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GITHUB_LINK: &str = "https://github.com/shenjackyuanjie/ica-native";

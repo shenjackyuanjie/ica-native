@@ -7,8 +7,9 @@ pub mod png {
 }
 
 pub mod svg {
-    pub const CHAT_GROUP: &[u8] = include_bytes!("../assets/svg/chat-group-icon.svg");
-    pub const CHAT_MUTE: &[u8] = include_bytes!("../assets/svg/chat-mute.svg");
+    pub const CHAT_GROUP: egui::ImageSource =
+        egui::include_image!("../assets/svg/chat-group-icon.svg");
+    pub const CHAT_MUTE: egui::ImageSource = egui::include_image!("../assets/svg/chat-mute.svg");
 }
 
 pub mod webp {

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use eframe::CreationContext;
-use egui::Hyperlink;
+use egui::{Hyperlink, Image, Widget};
 
 use crate::assets;
 
@@ -30,7 +30,9 @@ pub struct IcaApp {
     /// 通知等级
     pub notify_level: u8,
     /// 所有聊天
-    pub chat_rooms: Vec<RoomId>
+    pub chat_rooms: Vec<RoomId>,
+    /// 聊天组
+    pub chat_groups: Vec<Vec<RoomId>>,
 }
 
 impl IcaApp {
@@ -68,6 +70,8 @@ impl IcaApp {
             mute_any: false,
             mute_all: false,
             notify_level: 3,
+            chat_rooms: Vec::new(),
+            chat_groups: Vec::new(),
         }
     }
 
@@ -105,7 +109,8 @@ impl eframe::App for IcaApp {
                 ui.menu_button("选项", |ui| {
                     ui.label("这里显示你打开了哪些选项页面");
                     let _ = ui.checkbox(&mut self.open_page.custom_chat_ica, "定制聊天界面(ica)");
-                    let _ = ui.checkbox(&mut self.open_page.custom_chat_extra, "定制聊天界面(extra)");
+                    let _ =
+                        ui.checkbox(&mut self.open_page.custom_chat_extra, "定制聊天界面(extra)");
                     let _ = ui.checkbox(&mut self.open_page.online_status, "在线状态");
                 });
                 ui.menu_button("帮助", |ui| {
@@ -124,9 +129,17 @@ impl eframe::App for IcaApp {
             ui.label("消息栏");
             ui.label("头像占位");
             let chat_groups = vec!["群组1", "群组2", "群组3"];
-            for group in chat_groups {
-                ui.label(group);
-            }
+            ui.vertical_centered(|ui| {
+                let img = Image::new(crate::assets::svg::CHAT_GROUP)
+                    // .bg_fill(bg_fill)
+                    .fit_to_exact_size([24.0, 24.0].into())
+                    .alt_text("chat_group_icon");
+                for group in chat_groups {
+                    // icon + text
+                    img.clone().ui(ui);
+                    ui.label(group);
+                }
+            });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
