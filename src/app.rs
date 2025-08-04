@@ -5,14 +5,15 @@ use egui::{Button, Hyperlink, Image, Label};
 
 use crate::assets;
 
+pub mod chat_groups;
 pub mod custom_chat;
 pub mod online_mode;
-pub mod chat_groups;
 pub mod open_page;
 
+use chat_groups::ChatGroups;
 use custom_chat::CustomChat;
 use online_mode::OnlineMode;
-use chat_groups::ChatGroup;
+use open_page::AppOpenPage;
 
 pub type RoomId = i32;
 
@@ -24,7 +25,7 @@ pub struct IcaApp {
     /// 在线模式
     pub online_mode: OnlineMode,
     /// 打开了什么页面
-    pub open_page: open_page::AppOpenPage,
+    pub open_page: AppOpenPage,
     /// 是否禁用 @ 全体 通知
     pub mute_all: bool,
     /// 是否禁用任何通知
@@ -38,7 +39,7 @@ pub struct IcaApp {
     /// 选中了哪个聊天组
     pub chat_group_idx: usize,
     /// 聊天组
-    pub chat_groups: Vec<ChatGroup>,
+    pub chat_groups: ChatGroups,
 }
 
 impl IcaApp {
@@ -79,7 +80,7 @@ impl IcaApp {
             chat_rooms: Vec::new(),
             chat_group_selected: false,
             chat_group_idx: 0,
-            chat_groups: Vec::new(),
+            chat_groups: ChatGroups::new(),
         }
     }
 
@@ -91,7 +92,7 @@ impl IcaApp {
 
 impl eframe::App for IcaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
+        egui::TopBottomPanel::top("顶栏").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("Icalingua++ native", |ui| {
                     ui.label(crate::VERSION);
@@ -139,8 +140,7 @@ impl eframe::App for IcaApp {
             .show(ctx, |ui| {
                 ui.label("消息栏");
                 ui.label("头像占位");
-                let chat_groups = vec!["群组1", "群组2", "群组3"];
-                // let chat_groups = self.chat_groups
+                // let chat_groups = vec!["群组1", "群组2", "群组3"];
 
                 ui.vertical_centered(|ui| {
                     let img = Image::new(crate::assets::svg::CHAT_GROUP)
@@ -160,14 +160,14 @@ impl eframe::App for IcaApp {
                         let label = Label::new(text).selectable(false);
                         ui.add(label);
                     }
-                    for (idx, group) in chat_groups.iter().enumerate() {
+                    for (idx, group) in self.chat_groups.group_names().iter().enumerate() {
                         // icon + text
                         let btn = Button::image(img.clone());
                         if ui.add(btn).clicked() {
                             self.chat_group_selected = true;
                             self.chat_group_idx = idx;
                         };
-                        let mut text: egui::RichText = (*group).into();
+                        let mut text: egui::RichText = group.into();
                         if idx == self.chat_group_idx && self.chat_group_selected {
                             text = text.strong();
                         }
@@ -176,6 +176,11 @@ impl eframe::App for IcaApp {
                     }
                 });
             });
+
+        egui::SidePanel::left("聊天列表")
+            .resizable(true)
+            .width_range(150.0..=500.0)
+            .show(ctx, |ui| {});
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("egui app ica");
