@@ -1,16 +1,18 @@
 use std::sync::Arc;
 
 use eframe::CreationContext;
-use egui::{Hyperlink, Image, Widget};
+use egui::{Button, Hyperlink, Image, Label};
 
 use crate::assets;
 
 pub mod custom_chat;
 pub mod online_mode;
+pub mod chat_groups;
 pub mod open_page;
 
 use custom_chat::CustomChat;
 use online_mode::OnlineMode;
+use chat_groups::ChatGroup;
 
 pub type RoomId = i32;
 
@@ -31,8 +33,12 @@ pub struct IcaApp {
     pub notify_level: u8,
     /// 所有聊天
     pub chat_rooms: Vec<RoomId>,
+    /// 是否选中某个聊天组
+    pub chat_group_selected: bool,
+    /// 选中了哪个聊天组
+    pub chat_group_idx: usize,
     /// 聊天组
-    pub chat_groups: Vec<Vec<RoomId>>,
+    pub chat_groups: Vec<ChatGroup>,
 }
 
 impl IcaApp {
@@ -71,6 +77,8 @@ impl IcaApp {
             mute_all: false,
             notify_level: 3,
             chat_rooms: Vec::new(),
+            chat_group_selected: false,
+            chat_group_idx: 0,
             chat_groups: Vec::new(),
         }
     }
@@ -125,22 +133,49 @@ impl eframe::App for IcaApp {
             })
         });
 
-        egui::SidePanel::left("side_panel").show(ctx, |ui| {
-            ui.label("消息栏");
-            ui.label("头像占位");
-            let chat_groups = vec!["群组1", "群组2", "群组3"];
-            ui.vertical_centered(|ui| {
-                let img = Image::new(crate::assets::svg::CHAT_GROUP)
-                    // .bg_fill(bg_fill)
-                    .fit_to_exact_size([24.0, 24.0].into())
-                    .alt_text("chat_group_icon");
-                for group in chat_groups {
-                    // icon + text
-                    img.clone().ui(ui);
-                    ui.label(group);
-                }
+        egui::SidePanel::left("群聊组")
+            .resizable(false)
+            .exact_width(70.0)
+            .show(ctx, |ui| {
+                ui.label("消息栏");
+                ui.label("头像占位");
+                let chat_groups = vec!["群组1", "群组2", "群组3"];
+                // let chat_groups = self.chat_groups
+
+                ui.vertical_centered(|ui| {
+                    let img = Image::new(crate::assets::svg::CHAT_GROUP)
+                        .max_width(24.0)
+                        .fit_to_exact_size([24.0, 24.0].into())
+                        .alt_text("chat_group_icon");
+                    // all chats
+                    let btn = Button::image(img.clone());
+                    if ui.add(btn).clicked() {
+                        self.chat_group_selected = false;
+                    };
+                    {
+                        let mut text = egui::RichText::new("所有聊天");
+                        if !self.chat_group_selected {
+                            text = text.strong();
+                        }
+                        let label = Label::new(text).selectable(false);
+                        ui.add(label);
+                    }
+                    for (idx, group) in chat_groups.iter().enumerate() {
+                        // icon + text
+                        let btn = Button::image(img.clone());
+                        if ui.add(btn).clicked() {
+                            self.chat_group_selected = true;
+                            self.chat_group_idx = idx;
+                        };
+                        let mut text: egui::RichText = (*group).into();
+                        if idx == self.chat_group_idx && self.chat_group_selected {
+                            text = text.strong();
+                        }
+                        let label = Label::new(text).selectable(false);
+                        ui.add(label);
+                    }
+                });
             });
-        });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("egui app ica");
