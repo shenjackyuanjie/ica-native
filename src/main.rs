@@ -1,6 +1,7 @@
 use eframe::egui;
 use egui::IconData;
 
+pub mod ica;
 pub mod app;
 pub mod assets;
 pub mod client;
@@ -8,7 +9,13 @@ pub mod client;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GITHUB_LINK: &str = "https://github.com/shenjackyuanjie/ica-native";
 
+pub type StopGetter = tokio::sync::oneshot::Receiver<()>;
+
 fn main() -> anyhow::Result<()> {
+    egui_main()
+}
+
+fn egui_main() -> anyhow::Result<()> {
     let icon = {
         let img =
             image::load_from_memory_with_format(assets::png::ICON_512X, image::ImageFormat::Png)?;
