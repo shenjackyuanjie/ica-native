@@ -15,4 +15,6 @@ pub struct AppOpenPage {
     pub custom_chat_extra: bool,
     /// 在线状态
     pub online_status: bool,
+    /// Socketio 状态
+    pub socketio_status: bool,
 }

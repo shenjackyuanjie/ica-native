@@ -1,10 +1,10 @@
 use eframe::egui;
 use egui::IconData;
 
-pub mod ica;
 pub mod app;
 pub mod assets;
 pub mod client;
+pub mod ica;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GITHUB_LINK: &str = "https://github.com/shenjackyuanjie/ica-native";
@@ -36,13 +36,18 @@ fn egui_main() -> anyhow::Result<()> {
         ..Default::default()
     };
 
+    let async_rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4) // TODO: read from cfg
+        .enable_all()
+        .build()?;
+
     eframe::run_native(
         "ica native",
         options,
         Box::new(|cc| {
             // 安装 egui extra
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(app::IcaApp::new(cc)))
+            Ok(Box::new(app::IcaApp::new(cc, async_rt)))
         }),
     )
     .expect("error in eframe::run_native");

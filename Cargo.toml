@@ -4,25 +4,27 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-eframe = "0.32.0"
-egui = "0.32.0"
-egui_extras = { version = "0.32.0", features = ["all_loaders"] }
+eframe = "0.32.1"
+egui = "0.32.1"
+egui_extras = { version = "0.32.1", features = ["all_loaders"] }
 
-anyhow = "1.0.98"
+anyhow = "1.0"
 
-foldhash = "0.1.5"
+foldhash = "0.2.0"
 ed25519-dalek = { version = "2.1" }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-image = "0.25.6"
-toml = "0.9.4"
+image = "0.25"
+toml = "0.9"
 
-rust_socketio = { git = "https://github.com/nextdata-tech/rust-socketio.git", branch = "tyler/feat-add-features-for-other-tls-types", default-features = false, features = [
+# rust_socketio = { git = "https://github.com/nextdata-tech/rust-socketio.git", branch = "tyler/feat-add-features-for-other-tls-types", default-features = false, features = [
+rust_socketio = { git = "ssh://git@github.com/nextdata-tech/rust-socketio.git", branch = "tyler/feat-add-features-for-other-tls-types", default-features = false, features = [
     "async",
     "rustls-tls-native-roots",
 ] }
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls-native-roots",
 ] }
-base64 = "0.22.1"
+base64 = "0.22"
+tokio = { version = "1.47.1", features = ["full"] }

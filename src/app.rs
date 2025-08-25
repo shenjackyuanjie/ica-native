@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use eframe::CreationContext;
 use egui::{Button, Hyperlink, Image, Label};
+use tokio::runtime::Runtime;
 
 use crate::assets;
 
@@ -40,6 +41,9 @@ pub struct IcaApp {
     pub chat_group_idx: usize,
     /// 聊天组
     pub chat_groups: ChatGroups,
+    /// tokio rt
+    /// 用来开 socketio
+    pub runtime: Runtime,
 }
 
 impl IcaApp {
@@ -67,7 +71,7 @@ impl IcaApp {
         ctx.set_fonts(fonts);
     }
 
-    pub fn new(cc: &CreationContext<'_>) -> Self {
+    pub fn new(cc: &CreationContext<'_>, async_rt: Runtime) -> Self {
         Self::setup_fonts(&cc.egui_ctx);
         Self {
             connected: false,
@@ -81,6 +85,7 @@ impl IcaApp {
             chat_group_selected: false,
             chat_group_idx: 0,
             chat_groups: ChatGroups::new(),
+            runtime: async_rt,
         }
     }
 
@@ -117,17 +122,17 @@ impl eframe::App for IcaApp {
                 });
                 ui.menu_button("选项", |ui| {
                     ui.label("这里显示你打开了哪些选项页面");
+                    let _ = ui.checkbox(&mut self.open_page.settings, "设置");
                     let _ = ui.checkbox(&mut self.open_page.custom_chat_ica, "定制聊天界面(ica)");
                     let _ =
                         ui.checkbox(&mut self.open_page.custom_chat_extra, "定制聊天界面(extra)");
                     let _ = ui.checkbox(&mut self.open_page.online_status, "在线状态");
+                    let _ = ui.checkbox(&mut self.open_page.socketio_status, "Socketio 状态");
                 });
                 ui.menu_button("帮助", |ui| {
-                    if ui.button("文档").clicked() {
-                        ui.close();
-                    }
+                    let link = Hyperlink::from_label_and_url("Github(文档)", crate::GITHUB_LINK);
+                    ui.add(link);
                     if ui.button("关于").clicked() {
-                        ui.close();
                         self.open_page.about = true;
                     }
                 });
@@ -140,11 +145,11 @@ impl eframe::App for IcaApp {
             .show(ctx, |ui| {
                 ui.label("消息栏");
                 ui.label("头像占位");
-                // let chat_groups = vec!["群组1", "群组2", "群组3"];
+                // 渲染头像
+                ui.spacing_mut().item_spacing.x = 0.5;
 
                 ui.vertical_centered(|ui| {
                     let img = Image::new(crate::assets::svg::CHAT_GROUP)
-                        .max_width(24.0)
                         .fit_to_exact_size([24.0, 24.0].into())
                         .alt_text("chat_group_icon");
                     // all chats
@@ -180,7 +185,17 @@ impl eframe::App for IcaApp {
         egui::SidePanel::left("聊天列表")
             .resizable(true)
             .width_range(150.0..=500.0)
-            .show(ctx, |ui| {});
+            .show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("聊天列表");
+                        if ui.button("刷新").clicked() {
+                            // 刷新聊天列表的逻辑
+                        }
+                    });
+                    ui.separator();
+                });
+            });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("egui app ica");
@@ -204,6 +219,7 @@ impl eframe::App for IcaApp {
             .open(&mut self.open_page.online_status)
             .resizable(false)
             .show(ctx, |ui| {
+                ui.heading("在线状态");
                 ui.label("选择在线状态");
                 let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Online, "在线");
                 let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Left, "离开");
@@ -229,7 +245,6 @@ impl eframe::App for IcaApp {
 
         // if self.open_page.about {
         egui::Window::new("关于 Icalingua++ native")
-            .default_size(egui::vec2(420.0, 320.0))
             .open(&mut self.open_page.about)
             .collapsible(true)
             .show(ctx, |ui| {
@@ -260,6 +275,15 @@ impl eframe::App for IcaApp {
                 });
             });
         // }
+
+        egui::Window::new("Socketio 状态")
+            .open(&mut self.open_page.socketio_status)
+            .collapsible(true)
+            .show(ctx, |ui| {
+                ui.heading("Socketio 状态");
+                // let connected = egui::Checkbox::new(false, "连接状态");
+                // ui.add(connected);
+            });
 
         if self.open_page.notify_level {
             // 在新页面展示一张图
