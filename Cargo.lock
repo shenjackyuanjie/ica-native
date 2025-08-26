@@ -1889,6 +1889,7 @@ dependencies = [
  "egui",
  "egui_extras",
  "foldhash 0.2.0",
+ "futures-util",
  "image",
  "reqwest",
  "rust_socketio",

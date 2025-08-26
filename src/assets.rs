@@ -1,5 +1,6 @@
 pub mod fonts {
     pub const FONT_微软新雅黑: &[u8] = include_bytes!("../assets/fonts/msyh.ttc");
+    pub const FONT_UNIFONT: &[u8] = include_bytes!("../assets/fonts/unifont-16.0.04.otf");
 }
 
 pub mod png {

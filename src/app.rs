@@ -51,22 +51,42 @@ impl IcaApp {
         let mut fonts = egui::FontDefinitions::default();
 
         let font_yh_data = egui::FontData::from_static(assets::fonts::FONT_微软新雅黑);
+        let font_unifont_data = egui::FontData::from_static(assets::fonts::FONT_UNIFONT);
+
+        let yh_font_name = "msyh".to_string();
+        let unifont_name = "unifont".to_string();
 
         fonts
             .font_data
-            .insert("msyh".to_string(), Arc::new(font_yh_data));
+            .insert(yh_font_name.clone(), Arc::new(font_yh_data));
+
+        fonts
+            .font_data
+            .insert(unifont_name.clone(), Arc::new(font_unifont_data));
 
         fonts
             .families
             .entry(egui::FontFamily::Proportional)
             .or_default()
-            .insert(0, "msyh".to_string());
+            .insert(0, yh_font_name.clone());
+
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(1, unifont_name.clone());
 
         fonts
             .families
             .entry(egui::FontFamily::Monospace)
             .or_default()
-            .push("msyh".to_string());
+            .push(yh_font_name.clone());
+
+        fonts
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .push(unifont_name.clone());
 
         ctx.set_fonts(fonts);
     }
