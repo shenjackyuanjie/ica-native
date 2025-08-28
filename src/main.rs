@@ -18,7 +18,6 @@ fn main() -> anyhow::Result<()> {
 
 fn egui_main() -> anyhow::Result<()> {
     let config = cfg::init_cfg();
-    
 
     let icon = {
         let img =
@@ -37,6 +36,8 @@ fn egui_main() -> anyhow::Result<()> {
             .with_inner_size([config.screen.width, config.screen.height])
             .with_drag_and_drop(true)
             .with_icon(icon),
+        vsync: config.screen.vsync,
+        centered: config.screen.centered,
         ..Default::default()
     };
 
@@ -55,5 +56,7 @@ fn egui_main() -> anyhow::Result<()> {
         }),
     )
     .expect("error in eframe::run_native");
+
+    cfg::write_back_cfg()?;
     Ok(())
 }

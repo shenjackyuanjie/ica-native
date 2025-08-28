@@ -2,7 +2,11 @@ use std::{path::Path, sync::OnceLock};
 
 use serde::{Deserialize, Serialize};
 
+/// 全局配置
 pub static CONFIG: OnceLock<IcaCfg> = OnceLock::new();
+
+/// 配置的路径
+pub static CONFIG_PATH: OnceLock<String> = OnceLock::new();
 
 /// 配置文件
 ///
@@ -20,9 +24,17 @@ pub struct IcaCfg {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Screen {
     /// 宽
+    #[serde(default)]
     pub width: f32,
     /// 高
+    #[serde(default)]
     pub height: f32,
+    /// 垂直同步
+    #[serde(default)]
+    pub vsync: bool,
+    /// 初始化时是否窗口居中
+    #[serde(default)]
+    pub centered: bool,
 }
 
 impl Default for Screen {
@@ -30,6 +42,8 @@ impl Default for Screen {
         Self {
             width: 1024.0,
             height: 768.0,
+            vsync: true,
+            centered: false,
         }
     }
 }
@@ -90,13 +104,16 @@ pub fn init_cfg() -> &'static IcaCfg {
                 panic!("命令行指定的配置文件不存在, 给一个存在的行不行");
             } else if !path.is_file() {
                 panic!("命令行指定的配置文件不是文件, 给一个文件行不行");
-            } else if !path
+            } else if path
                 .metadata()
                 .map(|m| m.permissions().readonly())
                 .unwrap_or(false)
             {
                 // 只读文件警告
-                eprintln!("警告: 命令行指定的配置文件是一个只读文件, 请确保你知道自己在干什么");
+                eprintln!(
+                    "警告: 命令行指定的配置文件({})是一个只读文件, 请确保你知道自己在干什么",
+                    path.display()
+                );
             }
             // 读取
             let content = std::fs::read_to_string(path)
@@ -105,6 +122,7 @@ pub fn init_cfg() -> &'static IcaCfg {
             let cfg: IcaCfg = toml::from_str(&content)
                 .map_err(|e| format!("配置文件解析为 toml 失败 {e}"))
                 .unwrap();
+            CONFIG_PATH.get_or_init(|| p);
             return CONFIG.get_or_init(|| cfg);
         }
     }
@@ -123,17 +141,19 @@ pub fn init_cfg() -> &'static IcaCfg {
                 std::fs::write(path, content)
                     .map_err(|e| format!("默认配置文件写入失败 {e} {path:?}"))
                     .unwrap();
+                CONFIG_PATH.get_or_init(|| p);
                 return CONFIG.get_or_init(|| default_cfg);
             } else if !path.is_file() {
                 eprintln!("警告: 环境变量({CFG_ENV_VAR})指定的配置文件不是文件, 给一个文件行不行");
-            } else if !path
+            } else if path
                 .metadata()
                 .map(|m| m.permissions().readonly())
                 .unwrap_or(false)
             {
                 // 只读文件警告
                 eprintln!(
-                    "警告: 环境变量({CFG_ENV_VAR})指定的配置文件是一个只读文件, 请确保你知道自己在干什么"
+                    "警告: 环境变量({CFG_ENV_VAR})指定的配置文件({})是一个只读文件, 请确保你知道自己在干什么",
+                    path.display()
                 );
                 // 读取
                 let content = std::fs::read_to_string(path)
@@ -143,6 +163,7 @@ pub fn init_cfg() -> &'static IcaCfg {
                     let cfg: IcaCfg = toml::from_str(&content)
                         .map_err(|e| format!("配置文件解析为 toml 失败 {e} {path:?}"))
                         .unwrap();
+                    CONFIG_PATH.get_or_init(|| p);
                     return CONFIG.get_or_init(|| cfg);
                 }
             }
@@ -157,16 +178,20 @@ pub fn init_cfg() -> &'static IcaCfg {
         std::fs::write(path, content)
             .map_err(|e| format!("默认配置文件写入失败 {e} {path:?}"))
             .unwrap();
+        CONFIG_PATH.get_or_init(|| DEFAULT_CFG_PATH.to_string());
         return CONFIG.get_or_init(|| default_cfg);
     } else if !path.is_file() {
         panic!("默认配置文件路径 {} 不是文件", path.display());
-    } else if !path
+    } else if path
         .metadata()
         .map(|m| m.permissions().readonly())
         .unwrap_or(false)
     {
         // 只读文件警告
-        eprintln!("警告: 默认配置文件是一个只读文件, 请确保你知道自己在干什么");
+        eprintln!(
+            "警告: 默认配置文件{}是一个只读文件, 请确保你知道自己在干什么",
+            path.display()
+        );
     }
 
     // 读取
@@ -176,5 +201,20 @@ pub fn init_cfg() -> &'static IcaCfg {
     let cfg: IcaCfg = toml::from_str(&content)
         .map_err(|e| format!("配置文件解析为 toml 失败 {e}"))
         .unwrap();
+    CONFIG_PATH.get_or_init(|| DEFAULT_CFG_PATH.to_string());
     CONFIG.get_or_init(|| cfg)
+}
+
+pub fn write_back_cfg() -> anyhow::Result<()> {
+    let cfg = CONFIG
+        .get()
+        .ok_or_else(|| anyhow::anyhow!("配置未初始化"))?;
+    let content = toml::to_string_pretty(cfg)?;
+    let path = Path::new(
+        CONFIG_PATH
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("配置路径未初始化"))?,
+    );
+    std::fs::write(path, content)?;
+    Ok(())
 }
