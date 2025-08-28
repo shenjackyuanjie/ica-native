@@ -7,7 +7,7 @@ pub static CONFIG: OnceLock<IcaCfg> = OnceLock::new();
 /// 配置文件
 ///
 /// 考虑到允许你同时连接多个 bridge, 所以这玩意做的有点复杂
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct IcaCfg {
     /// bridge 列表
     #[serde(default)]
@@ -53,7 +53,8 @@ pub const CFG_ENV_VAR: &str = "ICA_NATIVE_CONFIG";
 ///
 /// 优先级: cli - env - default
 pub fn init_cfg() -> &'static IcaCfg {
-    let cli_path = {
+    // 处理 cli 参数
+    {
         let args = std::env::args().collect::<Vec<_>>();
         let mut path = None;
         for i in 0..args.len() {
@@ -62,13 +63,13 @@ pub fn init_cfg() -> &'static IcaCfg {
                 break;
             }
         }
-        path.map(|p| {
+        if let Some(p) = path {
             let path = Path::new(&p);
             // 检查是否存在 & 是否是文件
             if !path.exists() {
-                panic!("警告: 命令行指定的配置文件不存在, 给一个存在的行不行");
+                panic!("命令行指定的配置文件不存在, 给一个存在的行不行");
             } else if !path.is_file() {
-                panic!("警告: 命令行指定的配置文件不是一个文件, 给一个文件行不行");
+                panic!("命令行指定的配置文件不是文件, 给一个文件行不行");
             } else if !path
                 .metadata()
                 .map(|m| m.permissions().readonly())
@@ -77,12 +78,83 @@ pub fn init_cfg() -> &'static IcaCfg {
                 // 只读文件警告
                 eprintln!("警告: 命令行指定的配置文件是一个只读文件, 请确保你知道自己在干什么");
             }
-            Some(p)
-        })
-    };
+            // 读取
+            let content = std::fs::read_to_string(path)
+                .map_err(|e| format!("配置文件读取失败 {e}"))
+                .unwrap();
+            let cfg: IcaCfg = toml::from_str(&content)
+                .map_err(|e| format!("配置文件解析为 toml 失败 {e}"))
+                .unwrap();
+            return CONFIG.get_or_init(|| cfg);
+        }
+    }
+    // 尝试一下环境变量
+    {
+        if let Some(p) = std::env::var(CFG_ENV_VAR)
+            .ok()
+            .filter(|p| !p.trim().is_empty())
+        {
+            let path = Path::new(&p);
+            // 检查是否存在 & 是否是文件
+            if !path.exists() {
+                eprintln!("警告: 环境变量({CFG_ENV_VAR})指定的配置文件不存在, 将写入默认配置");
+                let default_cfg = IcaCfg::default();
+                let content = toml::to_string_pretty(&default_cfg).unwrap();
+                std::fs::write(path, content)
+                    .map_err(|e| format!("默认配置文件写入失败 {e} {path:?}"))
+                    .unwrap();
+                return CONFIG.get_or_init(|| default_cfg);
+            } else if !path.is_file() {
+                eprintln!("警告: 环境变量({CFG_ENV_VAR})指定的配置文件不是文件, 给一个文件行不行");
+            } else if !path
+                .metadata()
+                .map(|m| m.permissions().readonly())
+                .unwrap_or(false)
+            {
+                // 只读文件警告
+                eprintln!(
+                    "警告: 环境变量({CFG_ENV_VAR})指定的配置文件是一个只读文件, 请确保你知道自己在干什么"
+                );
+                // 读取
+                let content = std::fs::read_to_string(path)
+                    .inspect_err(|e| eprintln!("配置文件读取失败 {e}"));
 
-    let env_path = { std::env::var(CFG_ENV_VAR).ok().filter(|p| !p.trim().is_empty()) };
+                if let Ok(content) = content {
+                    let cfg: IcaCfg = toml::from_str(&content)
+                        .map_err(|e| format!("配置文件解析为 toml 失败 {e} {path:?}"))
+                        .unwrap();
+                    return CONFIG.get_or_init(|| cfg);
+                }
+            }
+        }
+    }
+    // 默认路径
+    let path = Path::new(DEFAULT_CFG_PATH);
+    if !path.exists() {
+        eprintln!("警告: 默认配置文件不存在, 将写入默认配置");
+        let default_cfg = IcaCfg::default();
+        let content = toml::to_string_pretty(&default_cfg).unwrap();
+        std::fs::write(path, content)
+            .map_err(|e| format!("默认配置文件写入失败 {e} {path:?}"))
+            .unwrap();
+        return CONFIG.get_or_init(|| default_cfg);
+    } else if !path.is_file() {
+        panic!("默认配置文件路径 {} 不是文件", path.display());
+    } else if !path
+        .metadata()
+        .map(|m| m.permissions().readonly())
+        .unwrap_or(false)
+    {
+        // 只读文件警告
+        eprintln!("警告: 默认配置文件是一个只读文件, 请确保你知道自己在干什么");
+    }
 
-
-    todo!()
+    // 读取
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("配置文件读取失败 {e}"))
+        .unwrap();
+    let cfg: IcaCfg = toml::from_str(&content)
+        .map_err(|e| format!("配置文件解析为 toml 失败 {e}"))
+        .unwrap();
+    CONFIG.get_or_init(|| cfg)
 }
