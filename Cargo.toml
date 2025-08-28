@@ -11,6 +11,8 @@ egui_extras = { version = "0.32.1", features = ["all_loaders"] }
 anyhow = "1.0"
 
 foldhash = "0.2.0"
+base64 = "0.22"
+hex = "0.4"
 ed25519-dalek = { version = "2.1" }
 
 serde = { version = "1.0", features = ["derive"] }
@@ -26,6 +28,9 @@ rust_socketio = { git = "ssh://git@github.com/nextdata-tech/rust-socketio.git", 
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls-native-roots",
 ] }
-base64 = "0.22"
+
 tokio = { version = "1.47.1", features = ["full"] }
 futures-util = "0.3.31"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["time"] }

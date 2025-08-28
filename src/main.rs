@@ -3,6 +3,7 @@ use egui::IconData;
 
 pub mod app;
 pub mod assets;
+pub mod cfg;
 pub mod client;
 pub mod ica;
 
