@@ -12,6 +12,26 @@ pub struct IcaCfg {
     /// bridge 列表
     #[serde(default)]
     pub bridges: Vec<IcaBridge>,
+    /// 屏幕相关设置
+    #[serde(default)]
+    pub screen: Screen,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Screen {
+    /// 宽
+    pub width: u32,
+    /// 高
+    pub height: u32,
+}
+
+impl Default for Screen {
+    fn default() -> Self {
+        Self {
+            width: 1024,
+            height: 768,
+        }
+    }
 }
 
 /// 默认你写上去就是启用喽

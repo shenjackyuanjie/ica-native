@@ -17,6 +17,8 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn egui_main() -> anyhow::Result<()> {
+    let config = cfg::init_cfg();
+
     let icon = {
         let img =
             image::load_from_memory_with_format(assets::png::ICON_512X, image::ImageFormat::Png)?;
@@ -24,8 +26,8 @@ fn egui_main() -> anyhow::Result<()> {
         let (w, h) = (rgba_image.width(), rgba_image.height());
         IconData {
             rgba: rgba_image.into_raw(),
-            width: w,
-            height: h,
+            width: config.screen.width,
+            height: config.screen.height,
         }
     };
 
