@@ -18,6 +18,7 @@ fn main() -> anyhow::Result<()> {
 
 fn egui_main() -> anyhow::Result<()> {
     let config = cfg::init_cfg();
+    
 
     let icon = {
         let img =
@@ -26,14 +27,14 @@ fn egui_main() -> anyhow::Result<()> {
         let (w, h) = (rgba_image.width(), rgba_image.height());
         IconData {
             rgba: rgba_image.into_raw(),
-            width: config.screen.width,
-            height: config.screen.height,
+            width: w,
+            height: h,
         }
     };
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1024.0, 768.0])
+            .with_inner_size([config.screen.width, config.screen.height])
             .with_drag_and_drop(true)
             .with_icon(icon),
         ..Default::default()

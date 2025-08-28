@@ -24,4 +24,9 @@ target
 # Added by cargo
 
 /target
+
+# vscode workspace
 ica-native.code-workspace
+
+# config file
+ica_native.toml

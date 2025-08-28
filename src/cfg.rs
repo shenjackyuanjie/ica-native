@@ -20,16 +20,16 @@ pub struct IcaCfg {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Screen {
     /// 宽
-    pub width: u32,
+    pub width: f32,
     /// 高
-    pub height: u32,
+    pub height: f32,
 }
 
 impl Default for Screen {
     fn default() -> Self {
         Self {
-            width: 1024,
-            height: 768,
+            width: 1024.0,
+            height: 768.0,
         }
     }
 }
