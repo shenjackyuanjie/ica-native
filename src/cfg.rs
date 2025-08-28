@@ -24,26 +24,39 @@ pub struct IcaCfg {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Screen {
     /// 宽
-    #[serde(default)]
+    #[serde(default = "screen_width_default")]
     pub width: f32,
     /// 高
-    #[serde(default)]
+    #[serde(default = "screen_height_default")]
     pub height: f32,
     /// 垂直同步
-    #[serde(default)]
+    #[serde(default = "screen_vsync_default")]
     pub vsync: bool,
     /// 初始化时是否窗口居中
-    #[serde(default)]
+    #[serde(default = "screen_centered_default")]
     pub centered: bool,
+}
+
+fn screen_width_default() -> f32 {
+    1024.0
+}
+fn screen_height_default() -> f32 {
+    768.0
+}
+fn screen_vsync_default() -> bool {
+    true
+}
+fn screen_centered_default() -> bool {
+    false
 }
 
 impl Default for Screen {
     fn default() -> Self {
         Self {
-            width: 1024.0,
-            height: 768.0,
-            vsync: true,
-            centered: false,
+            width: screen_width_default(),
+            height: screen_height_default(),
+            vsync: screen_vsync_default(),
+            centered: screen_centered_default(),
         }
     }
 }
