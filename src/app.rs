@@ -4,17 +4,19 @@ use eframe::CreationContext;
 use egui::{Button, Hyperlink, Image, Label};
 use tokio::runtime::Runtime;
 
-use crate::assets;
+use crate::{assets, ica::IcaClient};
 
 pub mod chat_groups;
 pub mod custom_chat;
 pub mod online_mode;
 pub mod open_page;
+pub mod config_editer;
 
 use chat_groups::ChatGroups;
 use custom_chat::CustomChat;
 use online_mode::OnlineMode;
 use open_page::AppOpenPage;
+use config_editer::ConfigEditer;
 
 pub type RoomId = i32;
 
@@ -41,9 +43,14 @@ pub struct IcaApp {
     pub chat_group_idx: usize,
     /// 聊天组
     pub chat_groups: ChatGroups,
+    /// 配置文件修改
+    pub config_editer: ConfigEditer,
     /// tokio rt
     /// 用来开 socketio
     pub runtime: Runtime,
+    /// Socketio 列表
+    /// 一些 Socketio 连接
+    pub ica_clients: Vec<IcaClient>,
 }
 
 impl IcaApp {
@@ -91,13 +98,22 @@ impl IcaApp {
         ctx.set_fonts(fonts);
     }
 
-    pub fn new(cc: &CreationContext<'_>, async_rt: Runtime) -> Self {
+    fn setup_async_rt() -> Runtime {
+        let config = crate::cfg::get_cfg_snapshot();
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(config.tokio_rt_work_thread as usize)
+            .enable_all()
+            .build()
+            .expect("faild to build tokio rt")
+    }
+
+    pub fn new(cc: &CreationContext<'_>) -> Self {
         Self::setup_fonts(&cc.egui_ctx);
         Self {
             connected: false,
             custom_chat: CustomChat::default(),
             online_mode: OnlineMode::default(),
-            open_page: open_page::AppOpenPage::default(),
+            open_page: AppOpenPage::default(),
             mute_any: false,
             mute_all: false,
             notify_level: 3,
@@ -105,13 +121,10 @@ impl IcaApp {
             chat_group_selected: false,
             chat_group_idx: 0,
             chat_groups: ChatGroups::new(),
-            runtime: async_rt,
+            config_editer: ConfigEditer::default(),
+            runtime: Self::setup_async_rt(),
+            ica_clients: Vec::new(),
         }
-    }
-
-    /// 后面再写的加载配置文件
-    pub fn new_with_cfg(_cc: &CreationContext<'_>) {
-        todo!()
     }
 }
 
@@ -148,6 +161,7 @@ impl eframe::App for IcaApp {
                         ui.checkbox(&mut self.open_page.custom_chat_extra, "定制聊天界面(extra)");
                     let _ = ui.checkbox(&mut self.open_page.online_status, "在线状态");
                     let _ = ui.checkbox(&mut self.open_page.socketio_status, "Socketio 状态");
+                    let _ = ui.checkbox(&mut self.open_page.raw_config, "配置文件编辑");
                 });
                 ui.menu_button("帮助", |ui| {
                     let link = Hyperlink::from_label_and_url("Github(文档)", crate::GITHUB_LINK);
@@ -206,7 +220,7 @@ impl eframe::App for IcaApp {
             .resizable(true)
             .width_range(150.0..=500.0)
             .show(ctx, |ui| {
-                ui.vertical(|ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label("聊天列表");
                         if ui.button("刷新").clicked() {
@@ -303,6 +317,13 @@ impl eframe::App for IcaApp {
                 ui.heading("Socketio 状态");
                 // let connected = egui::Checkbox::new(false, "连接状态");
                 // ui.add(connected);
+            });
+
+        egui::Window::new("配置文件编辑")
+            .open(&mut self.open_page.raw_config)
+            .collapsible(true)
+            .show(ctx, |ui| {
+                self.config_editer.ui(ui);
             });
 
         if self.open_page.notify_level {

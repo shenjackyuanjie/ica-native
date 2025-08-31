@@ -1,17 +1,25 @@
-use std::{path::Path, sync::OnceLock};
+use std::{
+    fmt::Display,
+    path::Path,
+    sync::{OnceLock, RwLock},
+};
 
 use serde::{Deserialize, Serialize};
 
 /// 全局配置
-pub static CONFIG: OnceLock<IcaCfg> = OnceLock::new();
+pub static CONFIG: OnceLock<RwLock<IcaCfg>> = OnceLock::new();
 
 /// 配置的路径
 pub static CONFIG_PATH: OnceLock<String> = OnceLock::new();
 
+fn tokio_rt_work_thread_default() -> u32 {
+    4
+}
+
 /// 配置文件
 ///
 /// 考虑到允许你同时连接多个 bridge, 所以这玩意做的有点复杂
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct IcaCfg {
     /// bridge 列表
     #[serde(default)]
@@ -19,9 +27,48 @@ pub struct IcaCfg {
     /// 屏幕相关设置
     #[serde(default)]
     pub screen: Screen,
+    /// 界面设置相关
+    #[serde(default)]
+    pub ui_setting: UiSetting,
+    /// async runtime workthread count
+    /// tokio 运行线程数
+    #[serde(default = "tokio_rt_work_thread_default")]
+    pub tokio_rt_work_thread: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+impl Display for IcaCfg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = toml::to_string_pretty(self).expect("faild to fmt self");
+        f.write_str(&text)
+    }
+}
+
+/// 默认你写上去就是启用喽
+fn ica_bridge_enable_default() -> bool {
+    true
+}
+
+/// 具体 bridge 的配置
+///
+/// ## 登录功能
+///
+/// 理论上应该可以支持你去使用 ica native 让 bridge 登录
+///
+/// 但是考虑到会需要解析一些网页之类的, 还是请使用 icalingua 本体进行登录
+///
+/// 因此其实这玩意挺简洁的就是了
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct IcaBridge {
+    /// socketio 服务器的 url
+    pub url: String,
+    /// socketio 的 private key (ed25519)
+    pub private_key: String,
+    /// 是否启用该 bridge
+    #[serde(default = "ica_bridge_enable_default")]
+    pub enable: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Screen {
     /// 宽
     #[serde(default = "screen_width_default")]
@@ -61,29 +108,9 @@ impl Default for Screen {
     }
 }
 
-/// 默认你写上去就是启用喽
-fn ica_bridge_enable_default() -> bool {
-    true
-}
-
-/// 具体 bridge 的配置
-///
-/// ## 登录功能
-///
-/// 理论上应该可以支持你去使用 ica native 让 bridge 登录
-///
-/// 但是考虑到会需要解析一些网页之类的, 还是请使用 icalingua 本体进行登录
-///
-/// 因此其实这玩意挺简洁的就是了
-#[derive(Debug, Serialize, Deserialize)]
-pub struct IcaBridge {
-    /// socketio 服务器的 url
-    pub url: String,
-    /// socketio 的 private key (ed25519)
-    pub private_key: String,
-    /// 是否启用该 bridge
-    #[serde(default = "ica_bridge_enable_default")]
-    pub enable: bool,
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct UiSetting {
+    // todo
 }
 
 /// 默认配置文件路径
@@ -99,7 +126,7 @@ pub const CFG_ENV_VAR: &str = "ICA_NATIVE_CONFIG";
 /// 然后如果环境变量有的话取个 ICA_NATIVE_CONFIG 也是可以的
 ///
 /// 优先级: cli - env - default
-pub fn init_cfg() -> &'static IcaCfg {
+pub fn init_cfg() {
     // 处理 cli 参数
     {
         let args = std::env::args().collect::<Vec<_>>();
@@ -136,7 +163,8 @@ pub fn init_cfg() -> &'static IcaCfg {
                 .map_err(|e| format!("配置文件解析为 toml 失败 {e}"))
                 .unwrap();
             CONFIG_PATH.get_or_init(|| p);
-            return CONFIG.get_or_init(|| cfg);
+            CONFIG.get_or_init(|| RwLock::new(cfg));
+            return;
         }
     }
     // 尝试一下环境变量
@@ -155,7 +183,8 @@ pub fn init_cfg() -> &'static IcaCfg {
                     .map_err(|e| format!("默认配置文件写入失败 {e} {path:?}"))
                     .unwrap();
                 CONFIG_PATH.get_or_init(|| p);
-                return CONFIG.get_or_init(|| default_cfg);
+                CONFIG.get_or_init(|| RwLock::new(default_cfg));
+                return;
             } else if !path.is_file() {
                 eprintln!("警告: 环境变量({CFG_ENV_VAR})指定的配置文件不是文件, 给一个文件行不行");
             } else if path
@@ -177,7 +206,8 @@ pub fn init_cfg() -> &'static IcaCfg {
                         .map_err(|e| format!("配置文件解析为 toml 失败 {e} {path:?}"))
                         .unwrap();
                     CONFIG_PATH.get_or_init(|| p);
-                    return CONFIG.get_or_init(|| cfg);
+                    CONFIG.get_or_init(|| RwLock::new(cfg));
+                    return;
                 }
             }
         }
@@ -192,7 +222,8 @@ pub fn init_cfg() -> &'static IcaCfg {
             .map_err(|e| format!("默认配置文件写入失败 {e} {path:?}"))
             .unwrap();
         CONFIG_PATH.get_or_init(|| DEFAULT_CFG_PATH.to_string());
-        return CONFIG.get_or_init(|| default_cfg);
+        CONFIG.get_or_init(|| RwLock::new(default_cfg));
+        return;
     } else if !path.is_file() {
         panic!("默认配置文件路径 {} 不是文件", path.display());
     } else if path
@@ -215,14 +246,17 @@ pub fn init_cfg() -> &'static IcaCfg {
         .map_err(|e| format!("配置文件解析为 toml 失败 {e}"))
         .unwrap();
     CONFIG_PATH.get_or_init(|| DEFAULT_CFG_PATH.to_string());
-    CONFIG.get_or_init(|| cfg)
+    CONFIG.get_or_init(|| RwLock::new(cfg));
 }
 
+/// 关闭时 写入 cfg
 pub fn write_back_cfg() -> anyhow::Result<()> {
     let cfg = CONFIG
         .get()
-        .ok_or_else(|| anyhow::anyhow!("配置未初始化"))?;
-    let content = toml::to_string_pretty(cfg)?;
+        .ok_or_else(|| anyhow::anyhow!("配置未初始化"))?
+        .read()
+        .map_err(|_| anyhow::anyhow!("配置读锁被污染"))?;
+    let content = toml::to_string_pretty(&*cfg)?;
     let path = Path::new(
         CONFIG_PATH
             .get()
@@ -230,4 +264,68 @@ pub fn write_back_cfg() -> anyhow::Result<()> {
     );
     std::fs::write(path, content)?;
     Ok(())
+}
+
+/// 使用闭包更新配置
+///
+/// # Example
+/// ```
+/// update_cfg(|cfg| {
+///     cfg.ui_setting.some_field = new_value;
+/// });
+/// ```
+pub fn update_cfg<F>(updater: F)
+where
+    F: FnOnce(&mut IcaCfg),
+{
+    let config_lock = CONFIG.get().expect("配置未初始化");
+
+    let mut cfg = config_lock.write().expect("配置写锁被污染");
+
+    updater(&mut cfg);
+}
+
+/// 更新并保存配置
+///
+/// 这个函数会在更新配置后立即将其写入文件
+pub fn update_and_save_cfg<F>(updater: F)
+where
+    F: FnOnce(&mut IcaCfg),
+{
+    update_cfg(updater);
+    write_back_cfg().expect("配置写入失败");
+}
+
+/// 重新加载配置文件
+///
+/// 从磁盘重新读取配置文件并更新内存中的配置
+pub fn reload_cfg() {
+    let path = CONFIG_PATH.get().expect("配置路径未初始化");
+
+    let content = std::fs::read_to_string(path).expect("配置文件读取失败");
+    let new_cfg: IcaCfg = toml::from_str(&content).expect("配置文件解析失败");
+
+    let config_lock = CONFIG.get().expect("配置未初始化");
+
+    let mut cfg = config_lock.write().expect("配置写锁被污染");
+
+    *cfg = new_cfg;
+}
+
+/// 获取当前配置的快照
+///
+/// 这个函数会返回当前配置的一个完整克隆，适用于需要获取配置快照
+/// 或者需要在不持有锁的情况下处理配置的场景
+///
+/// # Example
+/// ```
+/// let cfg_snapshot = get_cfg_snapshot();
+/// // 现在可以随意使用 cfg_snapshot，不会阻塞其他线程
+/// ```
+pub fn get_cfg_snapshot() -> IcaCfg {
+    let config_lock = CONFIG.get().expect("配置未初始化");
+
+    let cfg = config_lock.read().expect("配置读锁被污染");
+
+    cfg.clone()
 }

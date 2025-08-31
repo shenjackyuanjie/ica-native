@@ -17,7 +17,10 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn egui_main() -> anyhow::Result<()> {
-    let config = cfg::init_cfg();
+    cfg::init_cfg();
+
+    // 获取一个 cfg 快照
+    let config = cfg::get_cfg_snapshot();
 
     let icon = {
         let img =
@@ -41,18 +44,13 @@ fn egui_main() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    let async_rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4) // TODO: read from cfg
-        .enable_all()
-        .build()?;
-
     eframe::run_native(
         "ica native",
         options,
         Box::new(|cc| {
             // 安装 egui extra
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(app::IcaApp::new(cc, async_rt)))
+            Ok(Box::new(app::IcaApp::new(cc)))
         }),
     )
     .expect("error in eframe::run_native");

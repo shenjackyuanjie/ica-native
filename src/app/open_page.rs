@@ -17,4 +17,6 @@ pub struct AppOpenPage {
     pub online_status: bool,
     /// Socketio 状态
     pub socketio_status: bool,
+    /// 原始的配置文件
+    pub raw_config: bool,
 }
