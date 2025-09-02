@@ -14,9 +14,14 @@ impl ConfigEditer {
         let Self { raw_cache: code, raw_serde_err_msg } = self;
         ui.heading("\\toml/");
 
-        if ui.button("重新加载配置").clicked() {
+        if ui.button("重新加载当前配置").clicked() {
             let cfg = crate::cfg::get_cfg_snapshot();
             *code = cfg.to_string();
+        }
+        if ui.button("重新加载配置文件").clicked() {
+            if let Err(e) = crate::cfg::reload_cfg() {
+                // todo: 显示错误信息
+            }
         }
         if ui.button("保存并关闭").clicked() {
             match toml::from_str::<IcaCfg>(code) {

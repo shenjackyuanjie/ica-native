@@ -299,17 +299,19 @@ where
 /// 重新加载配置文件
 ///
 /// 从磁盘重新读取配置文件并更新内存中的配置
-pub fn reload_cfg() {
+pub fn reload_cfg() -> anyhow::Result<()> {
     let path = CONFIG_PATH.get().expect("配置路径未初始化");
 
-    let content = std::fs::read_to_string(path).expect("配置文件读取失败");
-    let new_cfg: IcaCfg = toml::from_str(&content).expect("配置文件解析失败");
+    let content = std::fs::read_to_string(path)?;
+    let new_cfg: IcaCfg = toml::from_str(&content)?;
 
     let config_lock = CONFIG.get().expect("配置未初始化");
 
     let mut cfg = config_lock.write().expect("配置写锁被污染");
 
     *cfg = new_cfg;
+
+    Ok(())
 }
 
 /// 获取当前配置的快照
