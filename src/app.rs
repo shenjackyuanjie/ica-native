@@ -278,14 +278,15 @@ impl IcaApp {
             let room_id = room.room_id;
             let is_selected = self.selected_room_id == Some(room_id);
 
-            // 使用 scope 来避免同时借用
+            // 使用 scope 来避免同时借用 self
             let clicked = {
                 let mut clicked = false;
                 ui.scope(|ui| {
+                    // 先分配空间并检测交互：宽度用整个 panel 行宽（左右分割线之间）
                     let desired_size = egui::vec2(full_row_width, 56.0);
                     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
 
-                    // 绘制背景
+                    // 先绘制背景（在内容下面）
                     let bg_color = if is_selected {
                         egui::Color32::from_gray(55)
                     } else if response.hovered() {
@@ -297,11 +298,15 @@ impl IcaApp {
 
                     // 在背景上渲染内容
                     ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                        // 内边距: 上
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
+                            // 内边距: 左
                             ui.add_space(4.0);
                             self.render_room_avatar(ui, room);
+                            // 头像 和 信息 的间距
                             ui.add_space(2.0);
+                            // 右侧：群名和消息预览
                             self.render_room_info(ui, room);
                         });
                     });
