@@ -45,6 +45,8 @@ pub struct IcaApp {
     pub chat_groups: ChatGroups,
     /// 配置文件修改
     pub config_editer: ConfigEditer,
+    /// 选中的聊天室 ID
+    pub selected_room_id: Option<RoomId>,
     /// tokio rt
     /// 用来开 socketio
     pub runtime: Runtime,
@@ -122,6 +124,7 @@ impl IcaApp {
             chat_group_idx: 0,
             chat_groups: ChatGroups::new(),
             config_editer: ConfigEditer::default(),
+            selected_room_id: None,
             runtime: Self::setup_async_rt(),
             ica_clients: Vec::new(),
         }
@@ -268,41 +271,55 @@ impl IcaApp {
         ui.separator();
     }
 
-    fn render_chat_rooms(&self, ui: &mut egui::Ui, full_row_width: f32) {
-        for room in &self.chat_rooms {
-            self.render_chat_room_item(ui, room, full_row_width);
+    fn render_chat_rooms(&mut self, ui: &mut egui::Ui, full_row_width: f32) {
+        let room_count = self.chat_rooms.len();
+        for idx in 0..room_count {
+            let room = &self.chat_rooms[idx];
+            let room_id = room.room_id;
+            let is_selected = self.selected_room_id == Some(room_id);
+
+            // 使用 scope 来避免同时借用
+            let clicked = {
+                let mut clicked = false;
+                ui.scope(|ui| {
+                    let desired_size = egui::vec2(full_row_width, 56.0);
+                    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+
+                    // 绘制背景
+                    let bg_color = if is_selected {
+                        egui::Color32::from_gray(55)
+                    } else if response.hovered() {
+                        egui::Color32::from_gray(45)
+                    } else {
+                        egui::Color32::TRANSPARENT
+                    };
+                    ui.painter().rect_filled(rect, 4.0, bg_color);
+
+                    // 在背景上渲染内容
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(4.0);
+                            self.render_room_avatar(ui, room);
+                            ui.add_space(2.0);
+                            self.render_room_info(ui, room);
+                        });
+                    });
+
+                    if response.clicked() {
+                        clicked = true;
+                    }
+                });
+                clicked
+            };
+
+            if clicked {
+                self.selected_room_id = Some(room_id);
+            }
+
             ui.add_space(4.0);
             ui.separator();
         }
-    }
-
-    fn render_chat_room_item(&self, ui: &mut egui::Ui, room: &Room, full_row_width: f32) {
-        // 先分配空间并检测交互：宽度用整个 panel 行宽（左右分割线之间）
-        let desired_size = egui::vec2(full_row_width, 56.0);
-        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
-
-        // 先绘制背景（在内容下面）
-        let bg_color = if response.hovered() {
-            egui::Color32::from_gray(45)
-        } else {
-            egui::Color32::TRANSPARENT
-        };
-        ui.painter().rect_filled(rect, 4.0, bg_color);
-
-        // 在背景上渲染内容
-        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-            // 内边距: 上
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                // 内边距: 左
-                ui.add_space(4.0);
-                self.render_room_avatar(ui, room);
-                // 头像 和 信息 的间距
-                ui.add_space(2.0);
-                // 右侧：群名和消息预览
-                self.render_room_info(ui, room);
-            });
-        });
     }
 
     fn render_room_avatar(&self, ui: &mut egui::Ui, room: &Room) {
@@ -553,6 +570,11 @@ impl IcaApp {
 
 impl eframe::App for IcaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 检测 ESC 键取消选择
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.selected_room_id = None;
+        }
+
         self.render_top_panel(ctx);
         self.render_left_groups_panel(ctx);
         self.render_chat_list_panel(ctx);
