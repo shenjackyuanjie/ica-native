@@ -6,6 +6,7 @@ use crate::StopGetter;
 use crate::cfg::IcaBridge;
 
 pub mod events;
+pub mod types;
 
 /// icalingua 客户端的兼容版本号
 pub const ICA_PROTOCOL_VERSION: &str = "2.12.28";

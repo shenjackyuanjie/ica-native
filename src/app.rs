@@ -7,18 +7,18 @@ use tokio::runtime::Runtime;
 use crate::{assets, ica::IcaClient};
 
 pub mod chat_groups;
+pub mod config_editer;
 pub mod custom_chat;
 pub mod online_mode;
 pub mod open_page;
-pub mod config_editer;
 
 use chat_groups::ChatGroups;
+use config_editer::ConfigEditer;
 use custom_chat::CustomChat;
 use online_mode::OnlineMode;
 use open_page::AppOpenPage;
-use config_editer::ConfigEditer;
 
-pub type RoomId = i32;
+use crate::ica::types::{RoomId, room::Room};
 
 pub struct IcaApp {
     /// 是否连接上了
@@ -36,7 +36,7 @@ pub struct IcaApp {
     /// 通知等级
     pub notify_level: u8,
     /// 所有聊天
-    pub chat_rooms: Vec<RoomId>,
+    pub chat_rooms: Vec<Room>,
     /// 是否选中某个聊天组
     pub chat_group_selected: bool,
     /// 选中了哪个聊天组
@@ -57,15 +57,15 @@ impl IcaApp {
     fn setup_fonts(ctx: &egui::Context) {
         let mut fonts = egui::FontDefinitions::default();
 
-        let font_yh_data = egui::FontData::from_static(assets::fonts::FONT_微软新雅黑);
+        let font_sy_data = egui::FontData::from_static(assets::fonts::FONT_思源黑体);
         let font_unifont_data = egui::FontData::from_static(assets::fonts::FONT_UNIFONT);
 
-        let yh_font_name = "msyh".to_string();
+        let sy_font_name = "notosans".to_string();
         let unifont_name = "unifont".to_string();
 
         fonts
             .font_data
-            .insert(yh_font_name.clone(), Arc::new(font_yh_data));
+            .insert(sy_font_name.clone(), Arc::new(font_sy_data));
 
         fonts
             .font_data
@@ -75,19 +75,19 @@ impl IcaApp {
             .families
             .entry(egui::FontFamily::Proportional)
             .or_default()
-            .insert(0, yh_font_name.clone());
+            .insert(0, unifont_name.clone());
 
         fonts
             .families
             .entry(egui::FontFamily::Proportional)
             .or_default()
-            .insert(1, unifont_name.clone());
+            .insert(0, sy_font_name.clone());
 
         fonts
             .families
             .entry(egui::FontFamily::Monospace)
             .or_default()
-            .push(yh_font_name.clone());
+            .push(sy_font_name.clone());
 
         fonts
             .families
@@ -220,6 +220,11 @@ impl eframe::App for IcaApp {
             .resizable(true)
             .width_range(150.0..=500.0)
             .show(ctx, |ui| {
+                // 让聊天列表条目的背景能“铺满”左右分割线之间的整块区域：
+                // 关键点：用 `ui.max_rect()` 的宽度来分配条目 rect，而不是 `ui.available_width()`
+                // 因为 `available_width()` 会受当前 layout/indent/scroll 内容区影响而变窄，导致背景留白。
+                let full_row_width = ui.max_rect().width();
+
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label("聊天列表");
@@ -228,6 +233,141 @@ impl eframe::App for IcaApp {
                         }
                     });
                     ui.separator();
+
+                    // 渲染聊天列表
+                    for room in &self.chat_rooms {
+                        // 先分配空间并检测交互：宽度用整个 panel 行宽（左右分割线之间）
+                        let desired_size = egui::vec2(full_row_width, 56.0);
+                        let (rect, response) =
+                            ui.allocate_exact_size(desired_size, egui::Sense::click());
+
+                        // 先绘制背景（在内容下面）
+                        let bg_color = if response.hovered() {
+                            egui::Color32::from_gray(45)
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        };
+                        ui.painter().rect_filled(rect, 4.0, bg_color);
+
+                        // 在背景上渲染内容
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                            // 内边距: 上
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                // 内边距: 左
+                                ui.add_space(4.0);
+                                // 左侧：头像区域（方形，固定大小）
+                                // 群聊时右下角叠加发送者头像
+                                let is_group = room.room_id < 0;
+                                let avatar_size = 48.0;
+                                let sender_avatar_size = 18.0;
+
+                                // 使用 LayerId 叠加两个头像
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(avatar_size, avatar_size),
+                                    egui::Sense::hover(),
+                                );
+
+                                // 主头像（群头像或私聊头像）
+                                let avatar_url = room.avatar_url();
+                                ui.put(
+                                    rect,
+                                    egui::Image::from_uri(avatar_url)
+                                        .fit_to_exact_size(egui::vec2(avatar_size, avatar_size))
+                                        .corner_radius(4.0),
+                                );
+                                // 群聊时叠加发送者头像在右下角
+                                if is_group && let Some(user_id) = room.last_message.user_id {
+                                    let sender_url =
+                                        format!("https://q1.qlogo.cn/g?b=qq&nk={}&s=140", user_id);
+                                    let sender_rect = egui::Rect::from_min_size(
+                                        egui::pos2(
+                                            rect.right() - sender_avatar_size - 2.0,
+                                            rect.bottom() - sender_avatar_size - 2.0,
+                                        ),
+                                        egui::vec2(sender_avatar_size, sender_avatar_size),
+                                    );
+                                    ui.put(
+                                        sender_rect,
+                                        egui::Image::from_uri(sender_url)
+                                            .fit_to_exact_size(egui::vec2(
+                                                sender_avatar_size,
+                                                sender_avatar_size,
+                                            ))
+                                            .corner_radius(2.0),
+                                    );
+                                }
+                                // 头像 和 信息 的间距
+                                ui.add_space(2.0);
+                                // 右侧：群名和消息预览
+                                ui.vertical(|ui| {
+                                    // 第一行：群名 @提醒 (未读数)
+                                    ui.horizontal(|ui| {
+                                        let name_text = if room.room_name.is_empty() {
+                                            "未命名聊天"
+                                        } else {
+                                            &room.room_name
+                                        };
+                                        let mut text = egui::RichText::new(name_text);
+
+                                        if room.unread_count > 0 {
+                                            text = text.strong();
+                                        }
+
+                                        ui.label(text);
+
+                                        match room.at {
+                                            crate::ica::types::message::At::All => {
+                                                ui.colored_label(egui::Color32::YELLOW, "[@全体]");
+                                            }
+                                            crate::ica::types::message::At::Bool(true) => {
+                                                ui.colored_label(egui::Color32::YELLOW, "[@我]");
+                                            }
+                                            _ => {}
+                                        }
+
+                                        if room.unread_count > 0 {
+                                            ui.colored_label(
+                                                egui::Color32::RED,
+                                                format!("({})", room.unread_count),
+                                            );
+                                        }
+                                    });
+
+                                    // 第二行：群聊显示 "人名: 内容"，私聊直接显示 "内容"
+                                    let is_group = room.room_id < 0;
+                                    ui.horizontal(|ui| {
+                                        if is_group
+                                            && let Some(ref username) = room.last_message.username
+                                            && !username.is_empty()
+                                        {
+                                            ui.label(
+                                                egui::RichText::new(format!("{}: ", username))
+                                                    .size(12.0)
+                                                    .color(egui::Color32::LIGHT_BLUE),
+                                            );
+                                        }
+                                        if let Some(ref content) = room.last_message.content
+                                            && !content.is_empty()
+                                        {
+                                            let preview = if content.chars().count() > 20 {
+                                                format!(
+                                                    "{}...",
+                                                    content.chars().take(20).collect::<String>()
+                                                )
+                                            } else {
+                                                content.clone()
+                                            };
+                                            ui.label(egui::RichText::new(preview).size(12.0));
+                                        }
+                                    });
+                                });
+                            });
+                        });
+
+                        ui.add_space(4.0);
+                        ui.separator();
+                    }
                 });
             });
 

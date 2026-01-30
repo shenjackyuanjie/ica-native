@@ -37,11 +37,9 @@ pub async fn any_event(event: Event, payload: Payload, _client: Client) {
         Event::Message => {
             if let Payload::Text(values) = payload
                 && let Some(value) = values.first()
+                && handled.contains(&value.as_str().unwrap())
             {
-                if handled.contains(&value.as_str().unwrap()) {
-                    return;
-                }
-                // info!("收到消息 {}", value.to_string().yellow());
+                return;
             }
             return;
         }
