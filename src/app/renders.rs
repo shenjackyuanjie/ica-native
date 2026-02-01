@@ -1,0 +1,379 @@
+use super::*;
+use egui::{Button, Hyperlink, Image, Label};
+
+impl IcaApp {
+    // 顶栏：将多个 menu 合并为一个“功能块”
+    pub fn render_top_panel(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("顶栏").show(ctx, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                self.render_top_menus(ui);
+            })
+        });
+    }
+
+    // 合并后的顶部菜单：包含 Icalingua 信息、通知设置、选项、帮助
+    pub fn render_top_menus(&mut self, ui: &mut egui::Ui) {
+        // Icalingua 菜单
+        ui.menu_button("Icalingua++ native", |ui| {
+            ui.label(crate::VERSION);
+            let link = Hyperlink::from_label_and_url("Github", crate::GITHUB_LINK);
+            ui.add(link);
+            if ui.button("验证消息").clicked() {
+                ui.close();
+                self.open_page.verify_message = true;
+            }
+        });
+
+        // 通知设置
+        ui.menu_button("通知设置", |ui| {
+            ui.label("通知启用级别 1-5");
+            let _ = ui.add(egui::Slider::new(&mut self.notify_level, 1..=5));
+            if ui.button("通知等级说明").clicked() {
+                ui.close();
+                self.open_page.notify_level = true;
+            }
+            let _ = ui.checkbox(&mut self.mute_any, "禁用任何通知");
+            if !self.mute_any {
+                let _ = ui.checkbox(&mut self.mute_all, "禁用 @ 全体 通知");
+            }
+        });
+
+        // 选项（把原先多个 checkbox 合并在同一菜单内）
+        ui.menu_button("选项", |ui| {
+            ui.label("这里显示你打开了哪些选项页面");
+            let _ = ui.checkbox(&mut self.open_page.settings, "设置");
+            let _ = ui.checkbox(&mut self.open_page.custom_chat_ica, "定制聊天界面(ica)");
+            let _ = ui.checkbox(&mut self.open_page.custom_chat_extra, "定制聊天界面(extra)");
+            let _ = ui.checkbox(&mut self.open_page.online_status, "在线状态");
+            let _ = ui.checkbox(&mut self.open_page.socketio_status, "Socketio 状态");
+            let _ = ui.checkbox(&mut self.open_page.raw_config, "配置文件编辑");
+        });
+
+        // 帮助
+        ui.menu_button("帮助", |ui| {
+            let link = Hyperlink::from_label_and_url("Github(文档)", crate::GITHUB_LINK);
+            ui.add(link);
+            if ui.button("关于").clicked() {
+                self.open_page.about = true;
+            }
+        });
+    }
+
+    // 左侧群组面板：合并“所有聊天按钮”和“群列表”渲染为一个函数
+    pub fn render_left_groups_panel(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::left("群聊组")
+            .resizable(false)
+            .exact_width(70.0)
+            .show(ctx, |ui| {
+                ui.label("消息栏");
+                ui.label("头像占位");
+                // 渲染头像
+                ui.spacing_mut().item_spacing.x = 0.5;
+
+                ui.vertical_centered(|ui| {
+                    // 所有聊天按钮
+                    let img = Image::new(crate::assets::svg::CHAT_GROUP)
+                        .fit_to_exact_size([24.0, 24.0].into())
+                        .alt_text("chat_group_icon");
+                    let btn = Button::image(img.clone());
+                    if ui.add(btn).clicked() {
+                        self.chat_group_selected = false;
+                    };
+                    let mut text = egui::RichText::new("所有聊天");
+                    if !self.chat_group_selected {
+                        text = text.strong();
+                    }
+                    let label = Label::new(text).selectable(false);
+                    ui.add(label);
+
+                    // 群组列表
+                    let img = Image::new(crate::assets::svg::CHAT_GROUP)
+                        .fit_to_exact_size([24.0, 24.0].into())
+                        .alt_text("chat_group_icon");
+                    for (idx, group) in self.chat_groups.group_names().iter().enumerate() {
+                        let btn = Button::image(img.clone());
+                        if ui.add(btn).clicked() {
+                            self.chat_group_selected = true;
+                            self.chat_group_idx = idx;
+                        };
+                        let mut text: egui::RichText = group.into();
+                        if idx == self.chat_group_idx && self.chat_group_selected {
+                            text = text.strong();
+                        }
+                        let label = Label::new(text).selectable(false);
+                        ui.add(label);
+                    }
+                });
+            });
+    }
+
+    // 聊天列表面板：把 header + rooms + 房间渲染整合为更少的函数（内部仍有一个私有房间渲染辅助）
+    pub fn render_chat_list_panel(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::left("聊天列表")
+            .resizable(true)
+            .width_range(150.0..=500.0)
+            .show(ctx, |ui| {
+                // 让聊天列表条目的背景能"铺满"左右分割线之间的整块区域：
+                // 关键点：用 `ui.max_rect()` 的宽度来分配条目 rect，而不是 `ui.available_width()`
+                // 因为 `available_width()` 会受当前 layout/indent/scroll 内容区影响而变窄，导致背景留白。
+                let full_row_width = ui.max_rect().width();
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    // header
+                    ui.horizontal(|ui| {
+                        ui.label("聊天列表");
+                        if ui.button("刷新").clicked() {
+                            // 刷新逻辑留空，交由上层处理
+                        }
+                    });
+                    ui.separator();
+
+                    // rooms
+                    let room_count = self.chat_rooms.len();
+                    for idx in 0..room_count {
+                        let room = &self.chat_rooms[idx];
+                        let room_id = room.room_id;
+                        let is_selected = self.selected_room_id == Some(room_id);
+
+                        // 使用 scope 来避免同时借用 self
+                        let clicked = {
+                            let mut clicked = false;
+                            ui.scope(|ui| {
+                                let desired_size = egui::vec2(full_row_width, 56.0);
+                                let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+
+                                // 先绘制背景（在内容下面）
+                                let bg_color = if is_selected {
+                                    egui::Color32::from_gray(55)
+                                } else if response.hovered() {
+                                    egui::Color32::from_gray(45)
+                                } else {
+                                    egui::Color32::TRANSPARENT
+                                };
+                                ui.painter().rect_filled(rect, 4.0, bg_color);
+
+                                // 在 rect 内渲染房间条目，使用单个合并的房间渲染函数
+                                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                                    // 内边距: 上
+                                    ui.add_space(4.0);
+                                    ui.horizontal(|ui| {
+                                        // 内边距: 左
+                                        ui.add_space(4.0);
+                                        self.render_room(ui, room);
+                                    });
+                                });
+
+                                if response.clicked() {
+                                    clicked = true;
+                                }
+                            });
+                            clicked
+                        };
+
+                        if clicked {
+                            self.selected_room_id = Some(room_id);
+                        }
+
+                        ui.separator();
+                    }
+                });
+            });
+    }
+
+    pub fn render_central_panel(&mut self, ctx: &egui::Context) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("egui app ica");
+        });
+    }
+
+    // 合并房间内的头像 / 名称行 / 预览行 为一个方法，减少外部碎片函数
+    fn render_room(&self, ui: &mut egui::Ui, room: &Room) {
+        // 左侧：头像区域（方形，固定大小）
+        // 群聊时右下角叠加发送者头像
+        // 使用 LayerId 叠加两个头像（保留原注释以便后续改进）
+        let is_group = room.room_id < 0;
+        let avatar_size = 48.0;
+        let sender_avatar_size = 18.0;
+
+        // 使用 LayerId 叠加两个头像
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(avatar_size, avatar_size), egui::Sense::hover());
+
+        // 主头像（群头像或私聊头像）
+        let avatar_url = room.avatar_url();
+        ui.put(
+            rect,
+            egui::Image::from_uri(avatar_url)
+                .fit_to_exact_size(egui::vec2(avatar_size, avatar_size))
+                .corner_radius(4.0),
+        );
+        // 群聊时叠加发送者头像在右下角
+        if is_group && let Some(user_id) = room.last_message.user_id {
+            let sender_url = format!("https://q1.qlogo.cn/g?b=qq&nk={}&s=140", user_id);
+            let sender_rect = egui::Rect::from_min_size(
+                egui::pos2(rect.right() - sender_avatar_size - 2.0, rect.bottom() - sender_avatar_size - 2.0),
+                egui::vec2(sender_avatar_size, sender_avatar_size),
+            );
+            ui.put(
+                sender_rect,
+                egui::Image::from_uri(sender_url)
+                    .fit_to_exact_size(egui::vec2(sender_avatar_size, sender_avatar_size))
+                    .corner_radius(2.0),
+            );
+        }
+
+        // 头像 与 信息 的间距
+        // ui.add_space(2.0);
+
+        // 内容区：名称 + 预览
+        ui.vertical(|ui| {
+            ui.add_space(4.0);
+            // 第一行：名称、@ 提示、未读数
+            ui.horizontal(|ui| {
+                // 群名称跟的上边距
+                let name_text = if room.room_name.is_empty() { "未命名聊天" } else { &room.room_name };
+                let mut text = egui::RichText::new(name_text);
+                if room.unread_count > 0 {
+                    text = text.strong();
+                }
+                ui.label(text);
+
+                match room.at {
+                    crate::ica::types::message::At::All => {
+                        ui.colored_label(egui::Color32::YELLOW, "[@全体]");
+                    }
+                    crate::ica::types::message::At::Bool(true) => {
+                        ui.colored_label(egui::Color32::YELLOW, "[@我]");
+                    }
+                    _ => {}
+                }
+
+                if room.unread_count > 0 {
+                    ui.colored_label(egui::Color32::RED, format!("({})", room.unread_count));
+                }
+            });
+
+            // 第二行：消息预览（群聊显示用户名: 内容）
+            ui.horizontal(|ui| {
+                if is_group && let Some(ref username) = room.last_message.username && !username.is_empty() {
+                    ui.label(egui::RichText::new(format!("{}:", username)).size(12.0).color(egui::Color32::LIGHT_BLUE));
+                }
+                if let Some(ref content) = room.last_message.content && !content.is_empty() {
+                    let preview = if content.chars().count() > 20 {
+                        format!("{}...", content.chars().take(20).collect::<String>())
+                    } else {
+                        content.clone()
+                    };
+                    ui.label(egui::RichText::new(preview).size(12.0));
+                }
+            });
+        });
+    }
+
+    // 将所有窗口渲染相关的独立函数合并到一个功能块里（内部 still 分支式处理每个窗口）
+    pub fn render_windows(&mut self, ctx: &egui::Context) {
+        // 定制聊天界面 (ica)
+        egui::Window::new("定制聊天界面 (ica)")
+            .open(&mut self.open_page.custom_chat_ica)
+            .resizable(false)
+            .show(ctx, |ui| {
+                self.custom_chat.show_ica_ui(ui);
+            });
+
+        // 定制聊天界面 (extra)
+        egui::Window::new("定制聊天界面 (extra)")
+            .open(&mut self.open_page.custom_chat_extra)
+            .resizable(false)
+            .show(ctx, |ui| {
+                self.custom_chat.show_extra_ui(ui);
+            });
+
+        // 在线状态
+        egui::Window::new("在线状态")
+            .open(&mut self.open_page.online_status)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.heading("在线状态");
+                ui.label("选择在线状态");
+                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Online, "在线");
+                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Left, "离开");
+                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Hidden, "隐身");
+                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Busy, "忙碌");
+                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::PingMe, "Q我吧");
+                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::DoNotDisturb, "请勿打扰");
+            });
+
+        // 验证消息
+        egui::Window::new("验证消息")
+            .default_size(egui::vec2(400.0, 300.0))
+            .open(&mut self.open_page.verify_message)
+            .show(ctx, |ui| {
+                ui.heading("这是一个新页面");
+                ui.label("在这里添加你的内容。");
+            });
+
+        // 关于
+        egui::Window::new("关于 Icalingua++ native")
+            .open(&mut self.open_page.about)
+            .collapsible(true)
+            .show(ctx, |ui| {
+                ui.heading("Icalingua++ native");
+                ui.separator();
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("版本：");
+                    ui.monospace(crate::VERSION);
+                });
+                ui.add_space(6.0);
+                ui.label("一个使用 Rust + egui 开发的跨平台原生 ica 客户端。");
+                ui.add_space(8.0);
+                ui.collapsing("开源信息", |ui| {
+                    ui.label("本项目基于开源许可证发布，欢迎 Star、Issue 与 PR。");
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("项目地址：");
+                        let link = Hyperlink::from_label_and_url("Github", crate::GITHUB_LINK);
+                        ui.add(link);
+                    });
+                });
+                ui.add_space(8.0);
+                ui.collapsing("致谢", |ui| {
+                    ui.label("感谢所有贡献者与所使用的开源项目：");
+                    ui.label("Icalingua 作者以及各位用户");
+                    ui.label("Rust 语言与生态");
+                    ui.label("egui/eframe 图形界面框架");
+                    ui.label("以及社区用户的反馈与支持");
+                });
+            });
+
+        // Socketio 状态
+        egui::Window::new("Socketio 状态")
+            .open(&mut self.open_page.socketio_status)
+            .collapsible(true)
+            .show(ctx, |ui| {
+                ui.heading("Socketio 状态");
+            });
+
+        // 配置文件编辑
+        egui::Window::new("配置文件编辑")
+            .open(&mut self.open_page.raw_config)
+            .collapsible(true)
+            .show(ctx, |ui| {
+                self.config_editer.ui(ui);
+            });
+
+        // 通知等级说明（以窗口方式展示图片）
+        if self.open_page.notify_level {
+            // 在新页面展示一张图
+            let size = ctx.screen_rect();
+            egui::Window::new("通知等级说明")
+                .open(&mut self.open_page.notify_level)
+                .collapsible(false)
+                .default_size((size.width() / 2.0, size.height() / 2.0))
+                .resizable(true)
+                .show(ctx, |ui| {
+                    ui.image(crate::assets::webp::NOTIFICATION);
+                });
+            // todo
+            // 这里应该新开一个页面的
+            // egui::Context::show_viewport_deferred(&self, new_viewport_id, viewport_builder, viewport_ui_cb);
+            // ctx.show_viewport_deferred("info", viewport_builder, viewport_ui_cb);
+        }
+    }
+}
