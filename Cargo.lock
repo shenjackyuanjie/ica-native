@@ -2002,6 +2002,7 @@ dependencies = [
  "futures-util",
  "hex",
  "image",
+ "rand 0.9.2",
  "reqwest",
  "rust_socketio",
  "serde",

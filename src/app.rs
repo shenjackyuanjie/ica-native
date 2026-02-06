@@ -109,6 +109,96 @@ impl IcaApp {
             .expect("faild to build tokio rt")
     }
 
+    /// 生成测试用的聊天室数据
+    fn test_chat_rooms() -> Vec<Room> {
+        // 生成随机房间数据
+        use rand::Rng;
+        use rand::seq::SliceRandom;
+        use rand::rng;
+        let mut rooms = Vec::with_capacity(50);
+        let room_names = vec![
+            "测试群聊",
+            "开发讨论组",
+            "项目协作",
+            "闲聊灌水",
+            "技术交流",
+            "学习小组",
+            "游戏开黑",
+            "音乐分享",
+            "读书会",
+            "运动健身",
+        ];
+
+        let user_names = vec!["张三", "李四", "王五", "赵六", "钱七", "孙八", "周九", "吴十", "郑十一", "王十二"];
+
+        let message_templates = vec![
+            "大家好！今天天气不错",
+            "有人在线吗？",
+            "这个功能什么时候能做完？",
+            "晚上一起吃饭吗？",
+            "[图片]",
+            "我刚刚上传了文件",
+            "明天会议几点开始？",
+            "这个问题怎么解决？",
+            "有人玩{}吗？",
+            "推荐一个好看的{}",
+        ];
+
+        let mut rng = rng();
+
+        for i in 0..500 {
+            let room_name_idx = rng.random_range(0..room_names.len());
+            let user_idx = rng.random_range(0..user_names.len());
+            let message_idx = rng.random_range(0..message_templates.len());
+
+            // 随机生成消息内容
+            let mut message = message_templates[message_idx].to_string();
+            if message.contains("{}") {
+                let replacements = vec!["游戏", "电影", "书", "餐厅", "音乐", "软件"];
+                let replacement = replacements[rng.random_range(0..replacements.len())];
+                message = message.replace("{}", replacement);
+            }
+
+            // 随机添加表情或标签
+            if rng.random_bool(0.3) {
+                message += if rng.random_bool(0.5) { " 😊" } else { " #标签" };
+            }
+
+            rooms.push(Room {
+                room_id: if rng.random_bool(0.7) {
+                    -rng.random_range(100_000_000..1_000_000_000)
+                } else {
+                    rng.random_range(100_000_000..1_000_000_000)
+                },
+                room_name: format!("{} {}", room_names[room_name_idx], rng.random_range(1..100)),
+                index: i as i64 + 1,
+                unread_count: rng.random_range(0..100),
+                priority: rng.random_range(1..4),
+                utime: 1700000000 + rng.random_range(0..100000),
+                at: match rng.random_range(0..3) {
+                    0 => crate::ica::types::message::At::All,
+                    1 => crate::ica::types::message::At::Bool(rng.random_bool(0.2)),
+                    _ => crate::ica::types::message::At::None,
+                },
+                last_message: crate::ica::types::message::LastMessage {
+                    content: Some(message),
+                    timestamp: Some(match rng.random_range(0..4) {
+                        0 => "刚刚".to_string(),
+                        1 => format!("{}:{}", rng.random_range(0..24), rng.random_range(0..60)),
+                        2 => "昨天".to_string(),
+                        _ => "前天".to_string(),
+                    }),
+                    username: Some(user_names[user_idx].to_string()),
+                    user_id: Some(rng.random_range(100_000_000..1_000_000_000)),
+                },
+            });
+        }
+
+        // 打乱房间顺序
+        rooms.shuffle(&mut rng);
+        rooms
+    }
+
     pub fn new(cc: &CreationContext<'_>) -> Self {
         Self::setup_fonts(&cc.egui_ctx);
         Self {
@@ -119,7 +209,7 @@ impl IcaApp {
             mute_any: false,
             mute_all: false,
             notify_level: 3,
-            chat_rooms: Vec::new(),
+            chat_rooms: Self::test_chat_rooms(),
             chat_group_selected: false,
             chat_group_idx: 0,
             chat_groups: ChatGroups::new(),
