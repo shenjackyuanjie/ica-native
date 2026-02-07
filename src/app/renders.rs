@@ -111,7 +111,7 @@ impl IcaApp {
     pub fn render_chat_list_panel(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("聊天列表")
             .resizable(true)
-            .width_range(150.0..=700.0)
+            .width_range(300.0..=700.0)
             .show(ctx, |ui| {
                 // 让聊天列表条目的背景能"铺满"左右分割线之间的整块区域：
                 // 关键点：用 `ui.max_rect()` 的宽度来分配条目 rect，而不是 `ui.available_width()`
@@ -294,37 +294,66 @@ impl IcaApp {
                 ui.add_space(2.0);
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                 // 第一行：名称、@ 提示、未读数
-                ui.horizontal(|ui| {
-                    let name_text = if room.room_name.is_empty() { "未命名聊天" } else { &room.room_name };
-                    let mut text = egui::RichText::new(name_text);
-                    if room.unread_count > 0 {
-                        text = text.strong();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(ref timestamp) = room.last_message.timestamp && !timestamp.is_empty() {
+                        ui.label(egui::RichText::new(timestamp).size(10.0).color(egui::Color32::from_gray(140)));
                     }
-                    ui.label(text);
 
-                    // match room.at {
-                    //     crate::ica::types::message::At::All => {
-                    //         ui.colored_label(egui::Color32::YELLOW, "[@全体]");
-                    //     }
-                    //     crate::ica::types::message::At::Bool(true) => {
-                    //         ui.colored_label(egui::Color32::YELLOW, "[@我]");
-                    //     }
-                    //     _ => {}
-                    // }
-
-                    // if room.unread_count > 0 {
-                    //     ui.colored_label(egui::Color32::RED, format!("({})", room.unread_count));
-                    // }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let name_text = if room.room_name.is_empty() { "未命名聊天" } else { &room.room_name };
+                        let mut text = egui::RichText::new(name_text);
+                        if room.unread_count > 0 {
+                            text = text.strong();
+                        }
+                        ui.label(text);
+                    });
                 });
 
-                // 第二行：消息预览（群聊显示用户名: 内容）
-                ui.horizontal(|ui| {
-                    if is_group && let Some(ref username) = room.last_message.username && !username.is_empty() {
-                        ui.label(egui::RichText::new(format!("{}:", username)).size(12.0).color(egui::Color32::LIGHT_BLUE));
+                // 第二行：消息预览（群聊显示用户名: 内容）+ 未读数胶囊
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if room.unread_count > 0 {
+                        let unread_text = room.unread_count.to_string();
+                        let font_size = 12.0;
+                        let badge_color = match room.at {
+                            crate::ica::types::message::At::All => egui::Color32::ORANGE,
+                            crate::ica::types::message::At::Bool(true) => egui::Color32::RED,
+                            _ => egui::Color32::from_gray(140),
+                        };
+                        let galley = ui.painter().layout_no_wrap(
+                            unread_text.clone(),
+                            egui::FontId::proportional(font_size),
+                            egui::Color32::WHITE,
+                        );
+                        let text_width = galley.size().x;
+                        let text_height = galley.size().y;
+                        let padding_x = 5.0;
+                        let padding_y = 1.0;
+                        let badge_width = text_width + padding_x * 2.0;
+                        let badge_height = text_height + padding_y * 2.0;
+
+                        let (badge_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(badge_width, badge_height),
+                            egui::Sense::hover(),
+                        );
+                        let rounding = badge_height / 2.0;
+                        ui.painter().rect_filled(badge_rect, rounding, badge_color);
+                        ui.painter().text(
+                            badge_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            unread_text,
+                            egui::FontId::proportional(font_size),
+                            egui::Color32::WHITE,
+                        );
                     }
-                    if let Some(ref content) = room.last_message.content && !content.is_empty() {
-                        ui.label(egui::RichText::new(content).size(12.0));
-                    }
+
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        if is_group && let Some(ref username) = room.last_message.username && !username.is_empty() {
+                            ui.label(egui::RichText::new(format!("{}:", username)).size(12.0).color(egui::Color32::LIGHT_BLUE));
+                        }
+                        if let Some(ref content) = room.last_message.content && !content.is_empty() {
+                            ui.label(egui::RichText::new(content).size(12.0));
+                        }
+                    });
                 });
             },
         );
