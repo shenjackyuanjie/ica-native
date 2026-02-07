@@ -6,6 +6,7 @@ pub mod assets;
 pub mod cfg;
 pub mod client;
 pub mod ica;
+pub mod image_loader;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GITHUB_LINK: &str = "https://github.com/shenjackyuanjie/ica-native";
@@ -13,6 +14,9 @@ pub const GITHUB_LINK: &str = "https://github.com/shenjackyuanjie/ica-native";
 pub type StopGetter = tokio::sync::oneshot::Receiver<()>;
 
 fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
     egui_main()
 }
 
@@ -50,6 +54,8 @@ fn egui_main() -> anyhow::Result<()> {
         Box::new(|cc| {
             // 安装 egui extra
             egui_extras::install_image_loaders(&cc.egui_ctx);
+            // 安装图片统计加载器
+            image_loader::install_tracking_image_loader(&cc.egui_ctx);
             Ok(Box::new(app::IcaApp::new(cc)))
         }),
     )
