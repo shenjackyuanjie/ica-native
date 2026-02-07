@@ -17,10 +17,14 @@ fn tokio_rt_work_thread_default() -> u32 {
     4
 }
 
+fn image_cache_max_bytes_default() -> u64 {
+    256 * 1024 * 1024
+}
+
 /// 配置文件
 ///
 /// 考虑到允许你同时连接多个 bridge, 所以这玩意做的有点复杂
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct IcaCfg {
     /// bridge 列表
     #[serde(default)]
@@ -31,6 +35,9 @@ pub struct IcaCfg {
     /// 界面设置相关
     #[serde(default)]
     pub ui_setting: UiSetting,
+    /// 图片缓存最大内存（字节）
+    #[serde(default = "image_cache_max_bytes_default")]
+    pub image_cache_max_bytes: u64,
     /// async runtime workthread count
     /// tokio 运行线程数
     #[serde(default = "tokio_rt_work_thread_default")]
@@ -41,6 +48,18 @@ impl Display for IcaCfg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let text = toml::to_string_pretty(self).expect("faild to fmt self");
         f.write_str(&text)
+    }
+}
+
+impl Default for IcaCfg {
+    fn default() -> Self {
+        Self {
+            bridges: Vec::new(),
+            screen: Screen::default(),
+            ui_setting: UiSetting::default(),
+            image_cache_max_bytes: image_cache_max_bytes_default(),
+            tokio_rt_work_thread: tokio_rt_work_thread_default(),
+        }
     }
 }
 
