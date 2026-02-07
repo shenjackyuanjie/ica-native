@@ -111,71 +111,131 @@ impl IcaApp {
     pub fn render_chat_list_panel(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("聊天列表")
             .resizable(true)
-            .width_range(150.0..=500.0)
+            .width_range(150.0..=700.0)
             .show(ctx, |ui| {
                 // 让聊天列表条目的背景能"铺满"左右分割线之间的整块区域：
                 // 关键点：用 `ui.max_rect()` 的宽度来分配条目 rect，而不是 `ui.available_width()`
                 // 因为 `available_width()` 会受当前 layout/indent/scroll 内容区影响而变窄，导致背景留白。
                 let full_row_width = ui.max_rect().width();
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    // header
-                    ui.horizontal(|ui| {
-                        ui.label("聊天列表");
-                        if ui.button("刷新").clicked() {
-                            // 刷新逻辑留空，交由上层处理
-                        }
-                    });
-                    ui.separator();
 
-                    // rooms
-                    let room_count = self.chat_rooms.len();
-                    for idx in 0..room_count {
+                // 标题栏
+                ui.horizontal(|ui| {
+                    ui.label("聊天列表");
+                    if ui.button("刷新").clicked() {
+                        // 刷新逻辑留空，交由上层处理
+                    }
+                    if ui.button("顶部").clicked() {
+                        self.chat_list_scroll_target = ChatListScrollTarget::Top;
+                    }
+                    if ui.button("底部").clicked() {
+                        self.chat_list_scroll_target = ChatListScrollTarget::Bottom;
+                    }
+                });
+                ui.separator();
+
+                let room_count = self.chat_rooms.len();
+                // 内容矩形顶部内边距（头像与文字一起下移）
+                let content_top_padding = 4.0;
+                let content_height = 50.0;
+                let row_spacing = ui.spacing().item_spacing.y;
+                let row_height = content_height + content_top_padding + row_spacing;
+                let total_height = row_height * room_count as f32;
+
+                let scroll_area = egui::ScrollArea::vertical().id_salt("chat_list_scroll");
+
+                scroll_area.show_viewport(ui, |ui, viewport| {
+                    let (list_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(full_row_width, total_height),
+                        egui::Sense::hover(),
+                    );
+
+                    match self.chat_list_scroll_target {
+                        ChatListScrollTarget::Top => {
+                            ui.scroll_to_rect(list_rect, Some(egui::Align::Min));
+                        }
+                        ChatListScrollTarget::Bottom => {
+                            ui.scroll_to_rect(list_rect, Some(egui::Align::Max));
+                        }
+                        ChatListScrollTarget::None => {}
+                    }
+
+                    if room_count == 0 {
+                        return;
+                    }
+
+                    let viewport_top = viewport.top();
+                    let viewport_bottom = viewport.bottom();
+
+                    let mut start = (viewport_top / row_height).floor() as isize - 2;
+                    let mut end = (viewport_bottom / row_height).ceil() as isize + 2;
+
+                    if start < 0 {
+                        start = 0;
+                    }
+                    if end < 0 {
+                        end = 0;
+                    }
+
+                    let start = start as usize;
+                    let end = (end as usize).min(room_count);
+
+                    for idx in start..end {
                         let room = &self.chat_rooms[idx];
                         let room_id = room.room_id;
                         let is_selected = self.selected_room_id == Some(room_id);
 
-                        // 使用 scope 来避免同时借用 self
-                        let clicked = {
-                            let mut clicked = false;
-                            ui.scope(|ui| {
-                                let desired_size = egui::vec2(full_row_width, 56.0);
-                                let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+                        let y = list_rect.top() + idx as f32 * row_height;
+                        let row_rect = egui::Rect::from_min_size(
+                            egui::pos2(list_rect.left(), y),
+                            egui::vec2(full_row_width, row_height),
+                        );
+                        let content_rect = egui::Rect::from_min_size(
+                            egui::pos2(row_rect.left(), row_rect.top() + content_top_padding),
+                            egui::vec2(full_row_width, content_height),
+                        );
 
-                                // 先绘制背景（在内容下面）
-                                let bg_color = if is_selected {
-                                    egui::Color32::from_gray(55)
-                                } else if response.hovered() {
-                                    egui::Color32::from_gray(45)
-                                } else {
-                                    egui::Color32::TRANSPARENT
-                                };
-                                ui.painter().rect_filled(rect, 4.0, bg_color);
+                        let id = ui.make_persistent_id(("chat_list_row", idx));
+                        let response = ui.interact(row_rect, id, egui::Sense::click());
 
-                                // 在 rect 内渲染房间条目，使用单个合并的房间渲染函数
-                                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                                    // 内边距: 上
-                                    ui.add_space(4.0);
-                                    ui.horizontal(|ui| {
-                                        // 内边距: 左
-                                        ui.add_space(4.0);
-                                        self.render_room(ui, room);
-                                    });
-                                });
-
-                                if response.clicked() {
-                                    clicked = true;
-                                }
-                            });
-                            clicked
+                        let bg_color = if is_selected {
+                            egui::Color32::from_gray(55)
+                        } else if response.hovered() {
+                            egui::Color32::from_gray(45)
+                        } else {
+                            egui::Color32::TRANSPARENT
                         };
+                        ui.painter().rect_filled(row_rect, 4.0, bg_color);
 
-                        if clicked {
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Min),
+                                |ui| {
+                                    // 左侧内边距：把整行内容从分割线向右挪一点
+                                    ui.add_space(4.0);
+                                    self.render_room(ui, room);
+                                },
+                            );
+                        });
+
+                        if response.clicked() {
                             self.selected_room_id = Some(room_id);
                         }
 
-                        ui.separator();
+                        // // 分隔线稍微往上提，避免紧贴行底
+                        // let sep_y = row_rect.bottom() - row_spacing * 0.25;
+                        // ui.painter().line_segment(
+                        //     [
+                        //         egui::pos2(list_rect.left(), sep_y),
+                        //         egui::pos2(list_rect.right(), sep_y),
+                        //     ],
+                        //     ui.visuals().widgets.noninteractive.bg_stroke,
+                        // );
                     }
                 });
+
+                if !matches!(self.chat_list_scroll_target, ChatListScrollTarget::None) {
+                    self.chat_list_scroll_target = ChatListScrollTarget::None;
+                }
             });
     }
 
@@ -203,7 +263,7 @@ impl IcaApp {
             rect,
             egui::Image::from_uri(avatar_url)
                 .fit_to_exact_size(egui::vec2(avatar_size, avatar_size))
-                .corner_radius(4.0),
+                .corner_radius(8.0),
         );
         // 群聊时叠加发送者头像在右下角
         if is_group && let Some(user_id) = room.last_message.user_id {
@@ -216,7 +276,7 @@ impl IcaApp {
                 sender_rect,
                 egui::Image::from_uri(sender_url)
                     .fit_to_exact_size(egui::vec2(sender_avatar_size, sender_avatar_size))
-                    .corner_radius(2.0),
+                    .corner_radius(4.0),
             );
         }
 
@@ -224,51 +284,53 @@ impl IcaApp {
         // ui.add_space(2.0);
 
         // 内容区：名称 + 预览
-        ui.vertical(|ui| {
-            ui.add_space(4.0);
-            // 第一行：名称、@ 提示、未读数
-            ui.horizontal(|ui| {
-                // 群名称跟的上边距
-                let name_text = if room.room_name.is_empty() { "未命名聊天" } else { &room.room_name };
-                let mut text = egui::RichText::new(name_text);
-                if room.unread_count > 0 {
-                    text = text.strong();
-                }
-                ui.label(text);
-
-                match room.at {
-                    crate::ica::types::message::At::All => {
-                        ui.colored_label(egui::Color32::YELLOW, "[@全体]");
+        let content_width = ui.available_width();
+        ui.allocate_ui_with_layout(
+            egui::vec2(content_width, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                // 文字部分相对于头像部分额外的顶部内边距
+                // 用来让文字部分看着居中
+                ui.add_space(2.0);
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                // 第一行：名称、@ 提示、未读数
+                ui.horizontal(|ui| {
+                    let name_text = if room.room_name.is_empty() { "未命名聊天" } else { &room.room_name };
+                    let mut text = egui::RichText::new(name_text);
+                    if room.unread_count > 0 {
+                        text = text.strong();
                     }
-                    crate::ica::types::message::At::Bool(true) => {
-                        ui.colored_label(egui::Color32::YELLOW, "[@我]");
+                    ui.label(text);
+
+                    // match room.at {
+                    //     crate::ica::types::message::At::All => {
+                    //         ui.colored_label(egui::Color32::YELLOW, "[@全体]");
+                    //     }
+                    //     crate::ica::types::message::At::Bool(true) => {
+                    //         ui.colored_label(egui::Color32::YELLOW, "[@我]");
+                    //     }
+                    //     _ => {}
+                    // }
+
+                    // if room.unread_count > 0 {
+                    //     ui.colored_label(egui::Color32::RED, format!("({})", room.unread_count));
+                    // }
+                });
+
+                // 第二行：消息预览（群聊显示用户名: 内容）
+                ui.horizontal(|ui| {
+                    if is_group && let Some(ref username) = room.last_message.username && !username.is_empty() {
+                        ui.label(egui::RichText::new(format!("{}:", username)).size(12.0).color(egui::Color32::LIGHT_BLUE));
                     }
-                    _ => {}
-                }
-
-                if room.unread_count > 0 {
-                    ui.colored_label(egui::Color32::RED, format!("({})", room.unread_count));
-                }
-            });
-
-            // 第二行：消息预览（群聊显示用户名: 内容）
-            ui.horizontal(|ui| {
-                if is_group && let Some(ref username) = room.last_message.username && !username.is_empty() {
-                    ui.label(egui::RichText::new(format!("{}:", username)).size(12.0).color(egui::Color32::LIGHT_BLUE));
-                }
-                if let Some(ref content) = room.last_message.content && !content.is_empty() {
-                    let preview = if content.chars().count() > 20 {
-                        format!("{}...", content.chars().take(20).collect::<String>())
-                    } else {
-                        content.clone()
-                    };
-                    ui.label(egui::RichText::new(preview).size(12.0));
-                }
-            });
-        });
+                    if let Some(ref content) = room.last_message.content && !content.is_empty() {
+                        ui.label(egui::RichText::new(content).size(12.0));
+                    }
+                });
+            },
+        );
     }
 
-    // 将所有窗口渲染相关的独立函数合并到一个功能块里（内部 still 分支式处理每个窗口）
+    // 将所有窗口渲染相关的独立函数合并到一个功能块里（内部分支式处理每个窗口）
     pub fn render_windows(&mut self, ctx: &egui::Context) {
         // 定制聊天界面 (ica)
         egui::Window::new("定制聊天界面 (ica)")
@@ -321,8 +383,10 @@ impl IcaApp {
                     ui.label("版本：");
                     ui.monospace(crate::VERSION);
                 });
+                // 标题与正文之间留出一点垂直间距
                 ui.add_space(6.0);
                 ui.label("一个使用 Rust + egui 开发的跨平台原生 ica 客户端。");
+                // 正文与“开源信息”分组之间的垂直间距
                 ui.add_space(8.0);
                 ui.collapsing("开源信息", |ui| {
                     ui.label("本项目基于开源许可证发布，欢迎 Star、Issue 与 PR。");
@@ -332,6 +396,7 @@ impl IcaApp {
                         ui.add(link);
                     });
                 });
+                // “开源信息”和“致谢”分组之间的垂直间距
                 ui.add_space(8.0);
                 ui.collapsing("致谢", |ui| {
                     ui.label("感谢所有贡献者与所使用的开源项目：");
@@ -361,7 +426,7 @@ impl IcaApp {
         // 通知等级说明（以窗口方式展示图片）
         if self.open_page.notify_level {
             // 在新页面展示一张图
-            let size = ctx.screen_rect();
+            let size = ctx.content_rect();
             egui::Window::new("通知等级说明")
                 .open(&mut self.open_page.notify_level)
                 .collapsible(false)

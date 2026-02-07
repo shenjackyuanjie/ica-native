@@ -1,9 +1,16 @@
 use std::sync::Arc;
 
 use eframe::CreationContext;
+use eframe::glow;
 use tokio::runtime::Runtime;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::oneshot;
+
+use serde_json::Value as JsonValue;
 
 use crate::{assets, ica::IcaClient};
+use crate::ica;
+use crate::cfg;
 
 pub mod chat_groups;
 pub mod config_editer;
@@ -19,6 +26,14 @@ use online_mode::OnlineMode;
 use open_page::AppOpenPage;
 
 use crate::ica::types::{RoomId, room::Room};
+
+#[derive(Debug, Default, Clone, Copy)]
+pub enum ChatListScrollTarget {
+    #[default]
+    None,
+    Top,
+    Bottom,
+}
 
 pub struct IcaApp {
     /// 是否连接上了
@@ -47,12 +62,20 @@ pub struct IcaApp {
     pub config_editer: ConfigEditer,
     /// 选中的聊天室 ID
     pub selected_room_id: Option<RoomId>,
+    /// 聊天列表滚动目标
+    pub chat_list_scroll_target: ChatListScrollTarget,
     /// tokio rt
     /// 用来开 socketio
     pub runtime: Runtime,
     /// Socketio 列表
     /// 一些 Socketio 连接
     pub ica_clients: Vec<IcaClient>,
+    /// GUI 侧接收事件的 channel
+    pub ui_rx: UnboundedReceiver<JsonValue>,
+    /// 发送事件到 GUI 的 channel
+    pub ui_tx: UnboundedSender<JsonValue>,
+    /// Socketio 停止信号
+    pub socketio_stop_senders: Vec<oneshot::Sender<()>>,
 }
 
 impl IcaApp {
@@ -110,6 +133,7 @@ impl IcaApp {
     }
 
     /// 生成测试用的聊天室数据
+    #[allow(unused)]
     fn test_chat_rooms() -> Vec<Room> {
         // 生成随机房间数据
         use rand::Rng;
@@ -201,6 +225,40 @@ impl IcaApp {
 
     pub fn new(cc: &CreationContext<'_>) -> Self {
         Self::setup_fonts(&cc.egui_ctx);
+
+        let (ui_tx, ui_rx) = unbounded_channel::<JsonValue>();
+        let _ = ica::UI_SENDER.set(ui_tx.clone());
+
+        let config = cfg::get_cfg_snapshot();
+        let runtime = Self::setup_async_rt();
+
+        let mut socketio_stop_senders = Vec::new();
+        let mut ica_clients = Vec::new();
+
+        for bridge in config.bridges.clone() {
+            if !bridge.enable {
+                continue;
+            }
+            let (stop_tx, stop_rx) = oneshot::channel();
+            socketio_stop_senders.push(stop_tx);
+
+            let bridge_key = if bridge.name.is_empty() {
+                bridge.url.clone()
+            } else {
+                bridge.name.clone()
+            };
+            ica_clients.push(IcaClient {
+                bridge_key: bridge_key.clone(),
+            });
+
+            let ui_tx_clone = ui_tx.clone();
+            runtime.spawn(async move {
+                if let Err(e) = ica::main(stop_rx, &bridge, Some(ui_tx_clone)).await {
+                    tracing::error!("socketio bridge {} stopped with error: {}", bridge_key, e);
+                }
+            });
+        }
+
         Self {
             connected: false,
             custom_chat: CustomChat::default(),
@@ -209,20 +267,68 @@ impl IcaApp {
             mute_any: false,
             mute_all: false,
             notify_level: 3,
-            chat_rooms: Self::test_chat_rooms(),
+            // chat_rooms: Self::test_chat_rooms(),
+            chat_rooms: vec![],
             chat_group_selected: false,
             chat_group_idx: 0,
             chat_groups: ChatGroups::new(),
             config_editer: ConfigEditer::default(),
             selected_room_id: None,
-            runtime: Self::setup_async_rt(),
-            ica_clients: Vec::new(),
+            chat_list_scroll_target: ChatListScrollTarget::Bottom,
+            runtime,
+            ica_clients,
+            ui_rx,
+            ui_tx,
+            socketio_stop_senders,
+        }
+    }
+
+    fn set_all_rooms(&mut self, rooms: Vec<Room>) {
+        self.chat_rooms = rooms;
+    }
+
+    fn poll_socketio_events(&mut self) {
+        while let Ok(event) = self.ui_rx.try_recv() {
+            let event_name = event
+                .get("event")
+                .and_then(|v| v.as_str())
+                .expect("socketio event missing 'event'");
+
+            match event_name {
+                "setAllRooms" => {
+                    let payload = event
+                        .get("payload")
+                        .expect("setAllRooms missing payload");
+
+                    let payload_items = payload
+                        .as_array()
+                        .expect("setAllRooms payload is not array");
+
+                    let rooms_value = payload_items
+                        .first()
+                        .expect("setAllRooms payload empty");
+
+                    let rooms: Vec<Room> = serde_json::from_value(rooms_value.clone())
+                        .expect(&format!("setAllRooms parse rooms failed {:#?}", rooms_value));
+
+                    self.set_all_rooms(rooms);
+                }
+                _ => {}
+            }
         }
     }
 }
 
 impl eframe::App for IcaApp {
+    fn on_exit(&mut self, _gl: Option<&glow::Context>) {
+        for sender in self.socketio_stop_senders.drain(..) {
+            let _ = sender.send(());
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_socketio_events();
+
         // 检测 ESC 键取消选择
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.selected_room_id = None;

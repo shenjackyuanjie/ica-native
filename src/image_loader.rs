@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     mem::size_of,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -14,14 +13,18 @@ use egui::{
     ColorImage, Context,
 };
 use image::ImageFormat;
-use tracing::info;
+use lru::LruCache;
+use tracing::debug;
 
-type Cache = Arc<Mutex<HashMap<String, Entry>>>;
+use crate::cfg;
+
+type Cache = Arc<Mutex<LruCache<String, Entry>>>;
 
 #[derive(Clone)]
 pub struct TrackingImageLoader {
     cache: Cache,
     total_decoded_bytes: Arc<AtomicU64>,
+    max_cache_bytes: u64,
 }
 
 enum Entry {
@@ -37,9 +40,11 @@ impl TrackingImageLoader {
     pub const ID: &'static str = egui::generate_loader_id!(TrackingImageLoader);
 
     pub fn new() -> Self {
+        let cfg = cfg::get_cfg_snapshot();
         Self {
-            cache: Arc::new(Mutex::new(HashMap::new())),
+            cache: Arc::new(Mutex::new(LruCache::unbounded())),
             total_decoded_bytes: Arc::new(AtomicU64::new(0)),
+            max_cache_bytes: cfg.image_cache_max_bytes,
         }
     }
 
@@ -86,7 +91,47 @@ impl TrackingImageLoader {
         Ok(Arc::new(color))
     }
 
+    fn entry_bytes(entry: &Entry) -> u64 {
+        match entry {
+            Entry::Ready { byte_size, .. } => *byte_size,
+            Entry::Error(err) => err.len() as u64,
+            Entry::Pending => 0,
+        }
+    }
 
+    fn evict_if_needed(
+        cache: &mut LruCache<String, Entry>,
+        total_decoded_bytes: &AtomicU64,
+        max_cache_bytes: u64,
+    ) {
+        let mut total = total_decoded_bytes.load(Ordering::Relaxed);
+        if max_cache_bytes == 0 {
+            while let Some((uri, entry)) = cache.pop_lru() {
+                let bytes = Self::entry_bytes(&entry);
+                if bytes > 0 {
+                    total = total.saturating_sub(bytes);
+                    total_decoded_bytes.fetch_sub(bytes, Ordering::Relaxed);
+                }
+                debug!("image cache evict (max=0): uri={} bytes={}", uri, bytes);
+            }
+            return;
+        }
+
+        while total > max_cache_bytes {
+            let Some((uri, entry)) = cache.pop_lru() else {
+                break;
+            };
+            let bytes = Self::entry_bytes(&entry);
+            if bytes > 0 {
+                total = total.saturating_sub(bytes);
+                total_decoded_bytes.fetch_sub(bytes, Ordering::Relaxed);
+            }
+            debug!(
+                "image cache evict: uri={} bytes={} total={} max={}",
+                uri, bytes, total, max_cache_bytes
+            );
+        }
+    }
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -125,6 +170,7 @@ impl ImageLoader for TrackingImageLoader {
 
         let mut cache_lock = self.cache.lock();
         if let Some(entry) = cache_lock.get_mut(uri) {
+            debug!("image cache hit: uri={}", uri);
             return match entry {
                 Entry::Ready { image, .. } => Ok(ImagePoll::Ready {
                     image: image.clone(),
@@ -133,6 +179,7 @@ impl ImageLoader for TrackingImageLoader {
                 Entry::Pending => Ok(ImagePoll::Pending { size: None }),
             };
         }
+        debug!("image cache miss: uri={}", uri);
 
         match ctx.try_load_bytes(uri) {
             Ok(BytesPoll::Ready { bytes, mime, .. }) => {
@@ -144,13 +191,14 @@ impl ImageLoader for TrackingImageLoader {
                     });
                 }
 
-                cache_lock.insert(uri.to_string(), Entry::Pending);
+                cache_lock.put(uri.to_string(), Entry::Pending);
                 drop(cache_lock);
 
                 let cache = self.cache.clone();
                 let total_decoded_bytes = self.total_decoded_bytes.clone();
                 let uri = uri.to_string();
                 let ctx = ctx.clone();
+                let max_cache_bytes = self.max_cache_bytes;
 
                 std::thread::Builder::new()
                     .name(format!("TrackingImageLoader::load({uri:?})"))
@@ -167,20 +215,26 @@ impl ImageLoader for TrackingImageLoader {
                                 let bytes_h = format_bytes(byte_size);
                                 let total_h = format_bytes(total);
                                 let [w, h] = image.size;
-                                info!(
-                                    "image decoded: uri={} size={}x{} bytes={} total={}",
-                                    uri, w, h, bytes_h, total_h
+                                debug!(
+                                    "image decoded: uri={} size={}x{} bytes={} total={} max={}",
+                                    uri, w, h, bytes_h, total_h, format_bytes(max_cache_bytes)
                                 );
-                                cache.insert(
+                                cache.put(
                                     uri.clone(),
                                     Entry::Ready {
                                         image,
                                         byte_size,
                                     },
                                 );
+                                Self::evict_if_needed(
+                                    &mut cache,
+                                    &total_decoded_bytes,
+                                    max_cache_bytes,
+                                );
                             }
                             Err(err) => {
-                                cache.insert(uri.clone(), Entry::Error(err));
+                                debug!("image decode failed: uri={} err={}", uri, err);
+                                cache.put(uri.clone(), Entry::Error(err));
                             }
                         }
 
@@ -196,18 +250,36 @@ impl ImageLoader for TrackingImageLoader {
     }
 
     fn forget(&self, uri: &str) {
-        let _ = self.cache.lock().remove(uri);
+        let mut cache = self.cache.lock();
+        if let Some(entry) = cache.pop(uri) {
+            let bytes = Self::entry_bytes(&entry);
+            if bytes > 0 {
+                self.total_decoded_bytes
+                    .fetch_sub(bytes, Ordering::Relaxed);
+            }
+            debug!("image cache forget: uri={} bytes={}", uri, bytes);
+        }
     }
 
     fn forget_all(&self) {
-        self.cache.lock().clear();
+        let mut cache = self.cache.lock();
+        let mut total_removed = 0u64;
+        for (_, entry) in cache.iter() {
+            total_removed = total_removed.saturating_add(Self::entry_bytes(entry));
+        }
+        cache.clear();
+        if total_removed > 0 {
+            self.total_decoded_bytes
+                .fetch_sub(total_removed, Ordering::Relaxed);
+        }
+        debug!("image cache cleared: bytes={}", total_removed);
     }
 
     fn byte_size(&self) -> usize {
         self.cache
             .lock()
-            .values()
-            .map(|entry| match entry {
+            .iter()
+            .map(|(_, entry)| match entry {
                 Entry::Ready { byte_size, .. } => *byte_size as usize,
                 Entry::Error(err) => err.len(),
                 Entry::Pending => 0,
@@ -218,8 +290,8 @@ impl ImageLoader for TrackingImageLoader {
     fn has_pending(&self) -> bool {
         self.cache
             .lock()
-            .values()
-            .any(|entry| matches!(entry, Entry::Pending))
+            .iter()
+            .any(|(_, entry)| matches!(entry, Entry::Pending))
     }
 }
 
@@ -228,5 +300,5 @@ pub fn install_tracking_image_loader(ctx: &Context) {
         return;
     }
     ctx.add_image_loader(Arc::new(TrackingImageLoader::new()));
-    info!("installed TrackingImageLoader");
+    debug!("installed TrackingImageLoader (lru)");
 }

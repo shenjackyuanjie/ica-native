@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-eframe = "0.32.3"
-egui = "0.32.3"
-egui_extras = { version = "0.32.3", features = ["all_loaders"] }
+eframe = "0.33.3"
+egui = "0.33.3"
+egui_extras = { version = "0.33.3", features = ["all_loaders"] }
 
 anyhow = "1.0"
 
@@ -25,8 +25,8 @@ rust_socketio = { git = "ssh://git@github.com/nextdata-tech/rust-socketio.git", 
     "async",
     "rustls-tls-native-roots",
 ] }
-reqwest = { version = "0.12", default-features = false, features = [
-    "rustls-tls-native-roots",
+reqwest = { version = "0.13", default-features = false, features = [
+    # "rustls-tls-native-roots",
 ] }
 
 tokio = { version = "1.49.0", features = ["full"] }
@@ -36,3 +36,4 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["time"] }
 chrono = { version = "0.4.43", features = ["serde"] }
 rand = "0.9.2"
+lru = "0.16.3"

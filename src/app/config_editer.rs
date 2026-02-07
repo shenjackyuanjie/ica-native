@@ -52,7 +52,7 @@ impl ConfigEditer {
                 "toml",
             );
             layout_job.wrap.max_width = wrap_width;
-            ui.fonts(|f| f.layout_job(layout_job))
+            ui.ctx().fonts_mut(|f| f.layout_job(layout_job))
         };
 
         egui::ScrollArea::vertical().show(ui, |ui| {

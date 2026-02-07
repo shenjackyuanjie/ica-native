@@ -2,6 +2,7 @@ use crate::ica::types::{
     RoomId,
     message::{At, LastMessage},
 };
+use serde::{Deserialize, Serialize};
 
 /// export default interface Room {
 ///     roomId: number
@@ -18,11 +19,14 @@ use crate::ica::types::{
 ///     autoDownload?: boolean
 ///     downloadPath?: string
 /// }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Room {
+    #[serde(rename = "roomId")]
     pub room_id: RoomId,
+    #[serde(rename = "roomName")]
     pub room_name: String,
     pub index: i64,
+    #[serde(rename = "unreadCount")]
     pub unread_count: u64,
     pub priority: u8,
     pub utime: i64,
@@ -30,6 +34,7 @@ pub struct Room {
     /// 历史遗留啊,那没事了()
     // pub users: JsonValue,
     pub at: At,
+    #[serde(rename = "lastMessage")]
     pub last_message: LastMessage,
 }
 
