@@ -5,6 +5,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use hex;
 
 /// 全局配置
 pub static CONFIG: OnceLock<RwLock<IcaCfg>> = OnceLock::new();
@@ -48,6 +49,37 @@ fn ica_bridge_enable_default() -> bool {
     true
 }
 
+impl IcaCfg {
+    fn validate_private_keys(&self) {
+        for (idx, bridge) in self.bridges.iter().enumerate() {
+            if !bridge.enable {
+                continue;
+            }
+            if bridge.private_key.trim().is_empty() {
+                panic!(
+                    "bridge private_key 为空: index={} name={} url={}",
+                    idx, bridge.name, bridge.url
+                );
+            }
+            let bytes = match hex::decode(&bridge.private_key) {
+                Ok(b) => b,
+                Err(e) => {
+                    panic!(
+                        "bridge private_key 解析失败: index={} name={} url={} err={}",
+                        idx, bridge.name, bridge.url, e
+                    );
+                }
+            };
+            if bytes.len() != 32 {
+                panic!(
+                    "bridge private_key 长度不是32字节: index={} name={} url={} len={}",
+                    idx, bridge.name, bridge.url, bytes.len()
+                );
+            }
+        }
+    }
+}
+
 /// 具体 bridge 的配置
 ///
 /// ## 登录功能
@@ -59,6 +91,8 @@ fn ica_bridge_enable_default() -> bool {
 /// 因此其实这玩意挺简洁的就是了
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct IcaBridge {
+    /// bridge 名称（用于区分多 bridge）
+    pub name: String,
     /// socketio 服务器的 url
     pub url: String,
     /// socketio 的 private key (ed25519)
@@ -162,6 +196,7 @@ pub fn init_cfg() {
             let cfg: IcaCfg = toml::from_str(&content)
                 .map_err(|e| format!("配置文件解析为 toml 失败 {e}"))
                 .unwrap();
+            cfg.validate_private_keys();
             CONFIG_PATH.get_or_init(|| p);
             CONFIG.get_or_init(|| RwLock::new(cfg));
             return;
@@ -205,6 +240,7 @@ pub fn init_cfg() {
                     let cfg: IcaCfg = toml::from_str(&content)
                         .map_err(|e| format!("配置文件解析为 toml 失败 {e} {path:?}"))
                         .unwrap();
+                    cfg.validate_private_keys();
                     CONFIG_PATH.get_or_init(|| p);
                     CONFIG.get_or_init(|| RwLock::new(cfg));
                     return;
@@ -245,6 +281,7 @@ pub fn init_cfg() {
     let cfg: IcaCfg = toml::from_str(&content)
         .map_err(|e| format!("配置文件解析为 toml 失败 {e}"))
         .unwrap();
+    cfg.validate_private_keys();
     CONFIG_PATH.get_or_init(|| DEFAULT_CFG_PATH.to_string());
     CONFIG.get_or_init(|| RwLock::new(cfg));
 }
@@ -304,6 +341,7 @@ pub fn reload_cfg() -> anyhow::Result<()> {
 
     let content = std::fs::read_to_string(path)?;
     let new_cfg: IcaCfg = toml::from_str(&content)?;
+    new_cfg.validate_private_keys();
 
     let config_lock = CONFIG.get().expect("配置未初始化");
 

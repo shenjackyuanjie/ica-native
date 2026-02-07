@@ -154,7 +154,7 @@ impl IcaApp {
             // 随机生成消息内容
             let mut message = message_templates[message_idx].to_string();
             if message.contains("{}") {
-                let replacements = vec!["游戏", "电影", "书", "餐厅", "音乐", "软件"];
+                let replacements = ["游戏", "电影", "书", "餐厅", "音乐", "软件"];
                 let replacement = replacements[rng.random_range(0..replacements.len())];
                 message = message.replace("{}", replacement);
             }
@@ -175,7 +175,7 @@ impl IcaApp {
                 unread_count: rng.random_range(0..100),
                 priority: rng.random_range(1..4),
                 utime: 1700000000 + rng.random_range(0..100000),
-                at: match rng.random_range(0..3) {
+                at: match rng.random_range(0..5) {
                     0 => crate::ica::types::message::At::All,
                     1 => crate::ica::types::message::At::Bool(rng.random_bool(0.2)),
                     _ => crate::ica::types::message::At::None,
