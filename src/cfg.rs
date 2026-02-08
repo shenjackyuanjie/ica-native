@@ -1,11 +1,11 @@
 use std::{
     fmt::Display,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{OnceLock, RwLock},
 };
 
-use serde::{Deserialize, Serialize};
 use hex;
+use serde::{Deserialize, Serialize};
 
 /// 全局配置
 pub static CONFIG: OnceLock<RwLock<IcaCfg>> = OnceLock::new();
@@ -35,6 +35,9 @@ pub struct IcaCfg {
     /// 界面设置相关
     #[serde(default)]
     pub ui_setting: UiSetting,
+    /// 缓存路径（可选）。如果未设置，程序会使用默认缓存位置（例如临时目录或内置路径）。
+    #[serde(default)]
+    pub cache_path: Option<String>,
     /// 图片缓存最大内存（字节）
     #[serde(default = "image_cache_max_bytes_default")]
     pub image_cache_max_bytes: u64,
@@ -57,6 +60,7 @@ impl Default for IcaCfg {
             bridges: Vec::new(),
             screen: Screen::default(),
             ui_setting: UiSetting::default(),
+            cache_path: None,
             image_cache_max_bytes: image_cache_max_bytes_default(),
             tokio_rt_work_thread: tokio_rt_work_thread_default(),
         }
@@ -92,10 +96,72 @@ impl IcaCfg {
             if bytes.len() != 32 {
                 panic!(
                     "bridge private_key 长度不是32字节: index={} name={} url={} len={}",
-                    idx, bridge.name, bridge.url, bytes.len()
+                    idx,
+                    bridge.name,
+                    bridge.url,
+                    bytes.len()
                 );
             }
         }
+    }
+
+    /// 获取缓存路径
+    pub fn get_cache_path(&self) -> PathBuf {
+        // 如果配置中指定了路径，优先使用
+        if let Some(ref path) = self.cache_path {
+            return PathBuf::from(path);
+        }
+
+        // 根据平台选择默认缓存路径
+        #[cfg(windows)]
+        {
+            std::env::temp_dir().join("ica_native")
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            // Linux: 检查 XDG_CACHE_HOME，否则使用 ~/.cache
+            if let Ok(cache_home) = std::env::var("XDG_CACHE_HOME") {
+                PathBuf::from(cache_home).join("ica_native")
+            } else if let Ok(home) = std::env::var("HOME") {
+                PathBuf::from(home).join(".cache").join("ica_native")
+            } else {
+                PathBuf::from("/tmp").join("ica_native")
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            // macOS: 使用 ~/Library/Caches
+            if let Ok(home) = std::env::var("HOME") {
+                PathBuf::from(home)
+                    .join("Library")
+                    .join("Caches")
+                    .join("ica_native")
+            } else {
+                PathBuf::from("/tmp").join("ica_native")
+            }
+        }
+
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        {
+            // 其他未知平台，使用当前目录
+            PathBuf::from("./ica_native")
+        }
+    }
+
+    /// 获取图片缓存路径
+    ///
+    /// 返回图片缓存应该使用的目录路径
+    ///
+    /// 优先级：
+    /// 1. 配置中的 `image_cache_path`（如果有）
+    /// 2. 平台特定的默认缓存目录
+    ///    - Windows: 用户临时目录
+    ///    - Linux/macOS: 系统默认缓存目录
+    /// 3. 回退到 `./ica_native_image_cache`
+    pub fn get_image_cache_path(&self) -> PathBuf {
+        self.get_cache_path().join("image_cache")
     }
 }
 
@@ -387,4 +453,21 @@ pub fn get_cfg_snapshot() -> IcaCfg {
     let cfg = config_lock.read().expect("配置读锁被污染");
 
     cfg.clone()
+}
+
+/// 获取图片缓存路径
+///
+/// 这是一个便捷函数，直接从全局配置中获取图片缓存路径
+///
+/// # Example
+/// ```
+/// let cache_path = get_image_cache_path();
+/// println!("图片缓存路径: {:?}", cache_path);
+/// ```
+pub fn get_image_cache_path() -> PathBuf {
+    let config_lock = CONFIG.get().expect("配置未初始化");
+
+    let cfg = config_lock.read().expect("配置读锁被污染");
+
+    cfg.get_image_cache_path()
 }
