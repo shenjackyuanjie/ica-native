@@ -1,3 +1,10 @@
+//! 自定义图片加载器，带 LRU 缓存与解码统计。
+//! 仅处理非动图/非 SVG/WEBP/GIF 的图片，并在后台线程解码。
+//! 缓存大小由配置项 `image_cache_max_bytes` 控制。
+//!
+//! Powered by GPT-5.2 Codex (github copilot 啥时候上 GPT 5.3 Codex 啊啊啊啊)
+//!
+//! (起因是我让他写了个图片加载内存使用量追踪)
 use std::{
     mem::size_of,
     sync::{
@@ -18,8 +25,10 @@ use tracing::debug;
 
 use crate::cfg;
 
+/// 缓存容器，使用 LRU 管理已解码的图片。
 type Cache = Arc<Mutex<LruCache<String, Entry>>>;
 
+/// 具有缓存与字节统计功能的自定义图片加载器。
 #[derive(Clone)]
 pub struct TrackingImageLoader {
     cache: Cache,
@@ -27,18 +36,24 @@ pub struct TrackingImageLoader {
     max_cache_bytes: u64,
 }
 
+/// 缓存条目状态。
 enum Entry {
+    /// 等待解码完成。
     Pending,
+    /// 已解码完成的图片。
     Ready {
         image: Arc<ColorImage>,
         byte_size: u64,
     },
+    /// 解码错误信息。
     Error(String),
 }
 
 impl TrackingImageLoader {
+    /// 图片加载器在 `egui` 中的唯一 ID。
     pub const ID: &'static str = egui::generate_loader_id!(TrackingImageLoader);
 
+    /// 创建新的加载器实例，读取配置中的缓存上限。
     pub fn new() -> Self {
         let cfg = cfg::get_cfg_snapshot();
         Self {
@@ -48,6 +63,7 @@ impl TrackingImageLoader {
         }
     }
 
+    /// 根据文件扩展名判断是否支持（排除 svg/gif/webp）。
     fn is_supported_uri(uri: &str) -> bool {
         let Some(ext) = std::path::Path::new(uri)
             .extension()
@@ -63,6 +79,7 @@ impl TrackingImageLoader {
         ImageFormat::from_extension(ext).is_some_and(|format| format.reading_enabled())
     }
 
+    /// 根据 MIME 判断是否支持（排除 svg/gif/webp）。
     fn is_supported_mime(mime: &str) -> bool {
         if mime.contains("image/svg") || mime.contains("image/gif") || mime.contains("image/webp") {
             return false;
@@ -82,6 +99,18 @@ impl TrackingImageLoader {
         ImageFormat::from_mime_type(mime).is_some_and(|format| format.reading_enabled())
     }
 
+    /// 在 MIME 缺失时，从内容判断是否为 SVG。
+    fn is_svg_bytes(bytes: &Bytes) -> bool {
+        let Ok(text) = std::str::from_utf8(bytes.as_ref()) else {
+            return false;
+        };
+        let text = text.trim_start();
+        text.starts_with("<svg")
+            || text.starts_with("<?xml")
+                && text.contains("<svg")
+    }
+
+    /// 解码图片字节为 `egui::ColorImage`。
     fn decode_image(bytes: &Bytes) -> Result<Arc<ColorImage>, String> {
         let img = image::load_from_memory(bytes.as_ref()).map_err(|e| e.to_string())?;
         let rgba = img.to_rgba8();
@@ -91,14 +120,16 @@ impl TrackingImageLoader {
         Ok(Arc::new(color))
     }
 
+    /// 统计缓存条目占用的字节数（仅计入已解码图片）。
     fn entry_bytes(entry: &Entry) -> u64 {
         match entry {
             Entry::Ready { byte_size, .. } => *byte_size,
-            Entry::Error(err) => err.len() as u64,
+            Entry::Error(_) => 0,
             Entry::Pending => 0,
         }
     }
 
+    /// 当总字节数超过上限时按 LRU 进行逐出。
     fn evict_if_needed(
         cache: &mut LruCache<String, Entry>,
         total_decoded_bytes: &AtomicU64,
@@ -134,6 +165,7 @@ impl TrackingImageLoader {
     }
 }
 
+/// 将字节数格式化为可读字符串。
 fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = 1024.0 * 1024.0;
@@ -151,16 +183,19 @@ fn format_bytes(bytes: u64) -> String {
 }
 
 impl Default for TrackingImageLoader {
+    /// 等同于 `TrackingImageLoader::new`。
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl ImageLoader for TrackingImageLoader {
+    /// 返回加载器 ID。
     fn id(&self) -> &str {
         Self::ID
     }
 
+    /// 加载图片（必要时后台解码），并返回 `egui` 轮询结果。
     fn load(&self, ctx: &Context, uri: &str, _: SizeHint) -> ImageLoadResult {
         let uri = decode_animated_image_uri(uri).map_or(uri, |(uri, _)| uri);
 
@@ -183,12 +218,13 @@ impl ImageLoader for TrackingImageLoader {
 
         match ctx.try_load_bytes(uri) {
             Ok(BytesPoll::Ready { bytes, mime, .. }) => {
-                if let Some(mime) = mime
-                    && !Self::is_supported_mime(&mime)
+                if let Some(ref mime) = mime
+                    && !Self::is_supported_mime(mime)
                 {
-                    return Err(LoadError::FormatNotSupported {
-                        detected_format: Some(mime),
-                    });
+                    return Err(LoadError::NotSupported);
+                }
+                if mime.is_none() && Self::is_svg_bytes(&bytes) {
+                    return Err(LoadError::NotSupported);
                 }
 
                 cache_lock.put(uri.to_string(), Entry::Pending);
@@ -249,6 +285,7 @@ impl ImageLoader for TrackingImageLoader {
         }
     }
 
+    /// 忘记指定 URI 的缓存条目。
     fn forget(&self, uri: &str) {
         let mut cache = self.cache.lock();
         if let Some(entry) = cache.pop(uri) {
@@ -261,6 +298,7 @@ impl ImageLoader for TrackingImageLoader {
         }
     }
 
+    /// 清空所有缓存条目。
     fn forget_all(&self) {
         let mut cache = self.cache.lock();
         let mut total_removed = 0u64;
@@ -275,18 +313,20 @@ impl ImageLoader for TrackingImageLoader {
         debug!("image cache cleared: bytes={}", total_removed);
     }
 
+    /// 返回当前缓存占用的字节数（仅计入已解码图片）。
     fn byte_size(&self) -> usize {
         self.cache
             .lock()
             .iter()
             .map(|(_, entry)| match entry {
                 Entry::Ready { byte_size, .. } => *byte_size as usize,
-                Entry::Error(err) => err.len(),
+                Entry::Error(_) => 0,
                 Entry::Pending => 0,
             })
             .sum()
     }
 
+    /// 是否存在正在解码的条目。
     fn has_pending(&self) -> bool {
         self.cache
             .lock()
@@ -295,6 +335,7 @@ impl ImageLoader for TrackingImageLoader {
     }
 }
 
+/// 在 `egui::Context` 上安装该图片加载器（若尚未安装）。
 pub fn install_tracking_image_loader(ctx: &Context) {
     if ctx.is_loader_installed(TrackingImageLoader::ID) {
         return;

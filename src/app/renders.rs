@@ -1,5 +1,5 @@
 use super::*;
-use egui::{Button, Hyperlink, Image, Label};
+use egui::{Button, Hyperlink, Image, Label, RichText};
 
 impl IcaApp {
     // 顶栏：将多个 menu 合并为一个“功能块”
@@ -79,7 +79,7 @@ impl IcaApp {
                     if ui.add(btn).clicked() {
                         self.chat_group_selected = false;
                     };
-                    let mut text = egui::RichText::new("所有聊天");
+                    let mut text = RichText::new("所有聊天");
                     if !self.chat_group_selected {
                         text = text.strong();
                     }
@@ -296,12 +296,12 @@ impl IcaApp {
                 // 第一行：名称、@ 提示、未读数
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if let Some(ref timestamp) = room.last_message.timestamp && !timestamp.is_empty() {
-                        ui.label(egui::RichText::new(timestamp).size(10.0).color(egui::Color32::from_gray(140)));
+                        ui.label(RichText::new(timestamp).size(10.0).color(egui::Color32::from_gray(140)));
                     }
 
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         let name_text = if room.room_name.is_empty() { "未命名聊天" } else { &room.room_name };
-                        let mut text = egui::RichText::new(name_text);
+                        let mut text = RichText::new(name_text);
                         if room.unread_count > 0 {
                             text = text.strong();
                         }
@@ -348,10 +348,10 @@ impl IcaApp {
 
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         if is_group && let Some(ref username) = room.last_message.username && !username.is_empty() {
-                            ui.label(egui::RichText::new(format!("{}:", username)).size(12.0).color(egui::Color32::LIGHT_BLUE));
+                            ui.label(RichText::new(format!("{}:", username)).size(12.0).color(egui::Color32::LIGHT_BLUE));
                         }
                         if let Some(ref content) = room.last_message.content && !content.is_empty() {
-                            ui.label(egui::RichText::new(content).size(12.0));
+                            ui.label(RichText::new(content).size(12.0));
                         }
                     });
                 });
