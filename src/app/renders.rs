@@ -207,14 +207,11 @@ impl IcaApp {
                         ui.painter().rect_filled(row_rect, 4.0, bg_color);
 
                         ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
-                            ui.with_layout(
-                                egui::Layout::left_to_right(egui::Align::Min),
-                                |ui| {
-                                    // 左侧内边距：把整行内容从分割线向右挪一点
-                                    ui.add_space(4.0);
-                                    self.render_room(ui, room);
-                                },
-                            );
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                                // 左侧内边距：把整行内容从分割线向右挪一点
+                                ui.add_space(4.0);
+                                self.render_room(ui, room);
+                            });
                         });
 
                         if response.clicked() {
@@ -255,7 +252,8 @@ impl IcaApp {
         let sender_avatar_size = 18.0;
 
         // 使用 LayerId 叠加两个头像
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(avatar_size, avatar_size), egui::Sense::hover());
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(avatar_size, avatar_size), egui::Sense::hover());
 
         // 主头像（群头像或私聊头像）
         let avatar_url = room.avatar_url();
@@ -269,7 +267,10 @@ impl IcaApp {
         if is_group && let Some(user_id) = room.last_message.user_id {
             let sender_url = format!("https://q1.qlogo.cn/g?b=qq&nk={}&s=140", user_id);
             let sender_rect = egui::Rect::from_min_size(
-                egui::pos2(rect.right() - sender_avatar_size - 2.0, rect.bottom() - sender_avatar_size - 2.0),
+                egui::pos2(
+                    rect.right() - sender_avatar_size - 2.0,
+                    rect.bottom() - sender_avatar_size - 2.0,
+                ),
                 egui::vec2(sender_avatar_size, sender_avatar_size),
             );
             ui.put(
@@ -295,12 +296,22 @@ impl IcaApp {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                 // 第一行：名称、@ 提示、未读数
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some(ref timestamp) = room.last_message.timestamp && !timestamp.is_empty() {
-                        ui.label(RichText::new(timestamp).size(10.0).color(egui::Color32::from_gray(140)));
+                    if let Some(ref timestamp) = room.last_message.timestamp
+                        && !timestamp.is_empty()
+                    {
+                        ui.label(
+                            RichText::new(timestamp)
+                                .size(10.0)
+                                .color(egui::Color32::from_gray(140)),
+                        );
                     }
 
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        let name_text = if room.room_name.is_empty() { "未命名聊天" } else { &room.room_name };
+                        let name_text = if room.room_name.is_empty() {
+                            "未命名聊天"
+                        } else {
+                            &room.room_name
+                        };
                         let mut text = RichText::new(name_text);
                         if room.unread_count > 0 {
                             text = text.strong();
@@ -347,10 +358,19 @@ impl IcaApp {
                     }
 
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        if is_group && let Some(ref username) = room.last_message.username && !username.is_empty() {
-                            ui.label(RichText::new(format!("{}:", username)).size(12.0).color(egui::Color32::LIGHT_BLUE));
+                        if is_group
+                            && let Some(ref username) = room.last_message.username
+                            && !username.is_empty()
+                        {
+                            ui.label(
+                                RichText::new(format!("{}:", username))
+                                    .size(12.0)
+                                    .color(egui::Color32::LIGHT_BLUE),
+                            );
                         }
-                        if let Some(ref content) = room.last_message.content && !content.is_empty() {
+                        if let Some(ref content) = room.last_message.content
+                            && !content.is_empty()
+                        {
                             ui.label(RichText::new(content).size(12.0));
                         }
                     });
@@ -389,7 +409,11 @@ impl IcaApp {
                 let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Hidden, "隐身");
                 let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Busy, "忙碌");
                 let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::PingMe, "Q我吧");
-                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::DoNotDisturb, "请勿打扰");
+                let _ = ui.selectable_value(
+                    &mut self.online_mode,
+                    OnlineMode::DoNotDisturb,
+                    "请勿打扰",
+                );
             });
 
         // 验证消息

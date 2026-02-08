@@ -1,7 +1,10 @@
 use std::fmt;
 
 use chrono::DateTime;
-use serde::{de::{self, Visitor}, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{self, Visitor},
+};
 use serde_json::{Value as JsonValue, json};
 
 use crate::ica::types::{MessageId, RoomId, UserId, files::MessageFile};
@@ -188,7 +191,8 @@ impl<'de> Deserialize<'de> for Message {
         let json = JsonValue::deserialize(deserializer)?;
 
         // 消息 id，必须存在
-        let msg_id = json.get("_id")
+        let msg_id = json
+            .get("_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| de::Error::custom("missing or invalid _id"))?
             .to_string();
@@ -197,13 +201,15 @@ impl<'de> Deserialize<'de> for Message {
         let sender_id = json.get("senderId").and_then(|v| v.as_i64()).unwrap_or(-1);
 
         // 发送者名字 必有
-        let sender_name = json.get("username")
+        let sender_name = json
+            .get("username")
             .and_then(|v| v.as_str())
             .ok_or_else(|| de::Error::custom("missing or invalid username"))?
             .to_string();
 
         // 消息内容
-        let content = json.get("content")
+        let content = json
+            .get("content")
             .and_then(|v| v.as_str())
             .ok_or_else(|| de::Error::custom("missing or invalid content"))?
             .to_string();
@@ -213,16 +219,22 @@ impl<'de> Deserialize<'de> for Message {
 
         // 消息时间 (优先使用 time 字段，没有则使用当前时间)
         let current = chrono::Utc::now();
-        let time = json.get("time")
+        let time = json
+            .get("time")
             .and_then(|v| v.as_i64())
             .map(|t| DateTime::from_timestamp_micros(t).unwrap_or(current))
             .unwrap_or(current);
 
         // 身份
-        let role = json.get("role").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+        let role = json
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
 
         // 文件列表
-        let value_files = json.get("files")
+        let value_files = json
+            .get("files")
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_else(Vec::new);
@@ -250,17 +262,30 @@ impl<'de> Deserialize<'de> for Message {
             .unwrap_or(At::None);
 
         // 是否已撤回
-        let deleted = json.get("deleted").and_then(|v| v.as_bool()).unwrap_or(false);
+        let deleted = json
+            .get("deleted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         // 是否是系统消息
-        let system = json.get("system").and_then(|v| v.as_bool()).unwrap_or(false);
+        let system = json
+            .get("system")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         // mirai
         let mirai = json.get("mirai").cloned().unwrap_or(JsonValue::Null);
         // reveal
-        let reveal = json.get("reveal").and_then(|v| v.as_bool()).unwrap_or(false);
+        let reveal = json
+            .get("reveal")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         // flash
         let flash = json.get("flash").and_then(|v| v.as_bool()).unwrap_or(false);
         // "群主授予的头衔"
-        let title = json.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let title = json
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         // anonymous id
         let anonymous_id = json.get("anonymousId").and_then(|v| v.as_i64());
         // 是否已被隐藏
@@ -324,9 +349,13 @@ impl Message {
     }
 
     /// 获取回复
-    pub fn get_reply(&self) -> Option<&ReplyMessage> { self.reply.as_ref() }
+    pub fn get_reply(&self) -> Option<&ReplyMessage> {
+        self.reply.as_ref()
+    }
 
-    pub fn get_reply_mut(&mut self) -> Option<&mut ReplyMessage> { self.reply.as_mut() }
+    pub fn get_reply_mut(&mut self) -> Option<&mut ReplyMessage> {
+        self.reply.as_mut()
+    }
 }
 
 /// 这才是 NewMessage
@@ -339,7 +368,9 @@ pub struct NewMessage {
 }
 
 impl NewMessage {
-    pub fn new(room_id: RoomId, msg: Message) -> Self { Self { room_id, msg } }
+    pub fn new(room_id: RoomId, msg: Message) -> Self {
+        Self { room_id, msg }
+    }
 
     /// 创建一条对这条消息的回复
     pub fn reply_with(&self, content: &str) -> SendMessage {
@@ -389,7 +420,9 @@ impl SendMessage {
         }
     }
 
-    pub fn as_value(&self) -> JsonValue { serde_json::to_value(self).unwrap() }
+    pub fn as_value(&self) -> JsonValue {
+        serde_json::to_value(self).unwrap()
+    }
 
     /// 设置消息的图片
     ///
@@ -419,5 +452,7 @@ impl DeleteMessage {
         }
     }
 
-    pub fn as_value(&self) -> JsonValue { serde_json::to_value(self).unwrap() }
+    pub fn as_value(&self) -> JsonValue {
+        serde_json::to_value(self).unwrap()
+    }
 }

@@ -8,16 +8,15 @@
 use std::{
     mem::size_of,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
 };
 
 use egui::{
-    decode_animated_image_uri,
+    ColorImage, Context, decode_animated_image_uri,
     load::{Bytes, BytesPoll, ImageLoadResult, ImageLoader, ImagePoll, LoadError, SizeHint},
     mutex::Mutex,
-    ColorImage, Context,
 };
 use image::ImageFormat;
 use lru::LruCache;
@@ -105,9 +104,7 @@ impl TrackingImageLoader {
             return false;
         };
         let text = text.trim_start();
-        text.starts_with("<svg")
-            || text.starts_with("<?xml")
-                && text.contains("<svg")
+        text.starts_with("<svg") || text.starts_with("<?xml") && text.contains("<svg")
     }
 
     /// 解码图片字节为 `egui::ColorImage`。
@@ -253,15 +250,14 @@ impl ImageLoader for TrackingImageLoader {
                                 let [w, h] = image.size;
                                 debug!(
                                     "image decoded: uri={} size={}x{} bytes={} total={} max={}",
-                                    uri, w, h, bytes_h, total_h, format_bytes(max_cache_bytes)
+                                    uri,
+                                    w,
+                                    h,
+                                    bytes_h,
+                                    total_h,
+                                    format_bytes(max_cache_bytes)
                                 );
-                                cache.put(
-                                    uri.clone(),
-                                    Entry::Ready {
-                                        image,
-                                        byte_size,
-                                    },
-                                );
+                                cache.put(uri.clone(), Entry::Ready { image, byte_size });
                                 Self::evict_if_needed(
                                     &mut cache,
                                     &total_decoded_bytes,
@@ -291,8 +287,7 @@ impl ImageLoader for TrackingImageLoader {
         if let Some(entry) = cache.pop(uri) {
             let bytes = Self::entry_bytes(&entry);
             if bytes > 0 {
-                self.total_decoded_bytes
-                    .fetch_sub(bytes, Ordering::Relaxed);
+                self.total_decoded_bytes.fetch_sub(bytes, Ordering::Relaxed);
             }
             debug!("image cache forget: uri={} bytes={}", uri, bytes);
         }

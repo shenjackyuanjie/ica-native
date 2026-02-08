@@ -2,10 +2,10 @@ use ed25519_dalek::{Signature, Signer, SigningKey};
 use hex;
 use serde_json::Value as JsonValue;
 use serde_json::json;
-use tracing::{event, Level};
+use tracing::{Level, event};
 
-use rust_socketio::asynchronous::Client;
 use rust_socketio::Payload;
+use rust_socketio::asynchronous::Client;
 
 /// 一些类型别名从 types 模块引入
 use crate::ica::types::message::{DeleteMessage, SendMessage};
@@ -50,11 +50,10 @@ pub async fn sign_with_key(payload: Payload, client: Client, private_key_hex: St
     };
 
     // 把私钥 hex 解为 32 字节数组
-    let array_key_res: Result<[u8; 32], _> = hex::decode(&private_key_hex)
-        .and_then(|v| {
-            v.try_into()
-                .map_err(|_| hex::FromHexError::InvalidStringLength)
-        });
+    let array_key_res: Result<[u8; 32], _> = hex::decode(&private_key_hex).and_then(|v| {
+        v.try_into()
+            .map_err(|_| hex::FromHexError::InvalidStringLength)
+    });
 
     let array_key = match array_key_res {
         Ok(a) => a,
@@ -94,7 +93,10 @@ pub async fn sign_callback(payload: Payload, client: Client) {
     let private_key_hex = match cfg.bridges.first() {
         Some(b) => b.private_key.clone(),
         None => {
-            event!(Level::WARN, "requireAuth: no bridge configured to sign auth");
+            event!(
+                Level::WARN,
+                "requireAuth: no bridge configured to sign auth"
+            );
             return;
         }
     };
@@ -156,14 +158,16 @@ pub async fn delete_message(client: &Client, message: &DeleteMessage) -> bool {
 /// 向群发送签到（仅限群聊，即 room_id.is_room() 为 true）
 pub async fn send_room_sign_in(client: &Client, room_id: RoomId) -> bool {
     if room_id.is_positive() {
-        event!(Level::WARN, "send_room_sign_in: cannot send sign to private chat");
+        event!(
+            Level::WARN,
+            "send_room_sign_in: cannot send sign to private chat"
+        );
         return false;
     }
     let data = json!(room_id.abs());
     match client.emit("sendGroupSign", data).await {
         Ok(_) => {
-            event!(
-Level::INFO, "sent group sign to room {}", room_id);
+            event!(Level::INFO, "sent group sign to room {}", room_id);
             true
         }
         Err(e) => {

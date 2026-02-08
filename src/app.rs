@@ -8,9 +8,9 @@ use tokio::sync::oneshot;
 
 use serde_json::Value as JsonValue;
 
-use crate::{assets, ica::IcaClient};
-use crate::ica;
 use crate::cfg;
+use crate::ica;
+use crate::{assets, ica::IcaClient};
 
 pub mod chat_groups;
 pub mod config_editer;
@@ -137,8 +137,8 @@ impl IcaApp {
     fn test_chat_rooms() -> Vec<Room> {
         // 生成随机房间数据
         use rand::Rng;
-        use rand::seq::SliceRandom;
         use rand::rng;
+        use rand::seq::SliceRandom;
         let mut rooms = Vec::with_capacity(50);
         let room_names = vec![
             "测试群聊",
@@ -153,7 +153,18 @@ impl IcaApp {
             "运动健身",
         ];
 
-        let user_names = vec!["张三", "李四", "王五", "赵六", "钱七", "孙八", "周九", "吴十", "郑十一", "王十二"];
+        let user_names = vec![
+            "张三",
+            "李四",
+            "王五",
+            "赵六",
+            "钱七",
+            "孙八",
+            "周九",
+            "吴十",
+            "郑十一",
+            "王十二",
+        ];
 
         let message_templates = vec![
             "大家好！今天天气不错",
@@ -185,7 +196,11 @@ impl IcaApp {
 
             // 随机添加表情或标签
             if rng.random_bool(0.3) {
-                message += if rng.random_bool(0.5) { " 😊" } else { " #标签" };
+                message += if rng.random_bool(0.5) {
+                    " 😊"
+                } else {
+                    " #标签"
+                };
             }
 
             rooms.push(Room {
@@ -296,20 +311,17 @@ impl IcaApp {
 
             match event_name {
                 "setAllRooms" => {
-                    let payload = event
-                        .get("payload")
-                        .expect("setAllRooms missing payload");
+                    let payload = event.get("payload").expect("setAllRooms missing payload");
 
                     let payload_items = payload
                         .as_array()
                         .expect("setAllRooms payload is not array");
 
-                    let rooms_value = payload_items
-                        .first()
-                        .expect("setAllRooms payload empty");
+                    let rooms_value = payload_items.first().expect("setAllRooms payload empty");
 
-                    let rooms: Vec<Room> = serde_json::from_value(rooms_value.clone())
-                        .expect(&format!("setAllRooms parse rooms failed {:#?}", rooms_value));
+                    let rooms: Vec<Room> = serde_json::from_value(rooms_value.clone()).expect(
+                        &format!("setAllRooms parse rooms failed {:#?}", rooms_value),
+                    );
 
                     self.set_all_rooms(rooms);
                 }

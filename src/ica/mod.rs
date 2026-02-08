@@ -1,21 +1,20 @@
 use rust_socketio::asynchronous::{Client, ClientBuilder};
 use rust_socketio::{Payload, TransportType};
 
-
 use crate::StopGetter;
 use crate::cfg::IcaBridge;
 
-use std::sync::OnceLock;
 use futures_util::future::BoxFuture;
+use std::sync::OnceLock;
 
 use serde_json::Value as JsonValue;
 use serde_json::json;
 
 use tokio::sync::mpsc::UnboundedSender;
 
+pub mod client;
 pub mod events;
 pub mod types;
-pub mod client;
 
 /// icalingua 客户端的兼容版本号
 pub const ICA_PROTOCOL_VERSION: &str = "2.12.28";
@@ -58,19 +57,22 @@ pub async fn main(
     let start_connect_time = std::time::Instant::now();
 
     // build client with per-bridge closures that capture private_key and local_tx
-    let mut builder = ClientBuilder::new(bridge_cfg.url.clone())
-        .transport_type(TransportType::Websocket);
+    let mut builder =
+        ClientBuilder::new(bridge_cfg.url.clone()).transport_type(TransportType::Websocket);
 
     // requireAuth: use sign_with_key implemented in client module (accepts key param)
     {
         let pk = private_key.clone();
-        builder = builder.on("requireAuth", move |payload: Payload, client: Client| -> BoxFuture<'static, ()> {
-            let pk = pk.clone();
-            Box::pin(async move {
-                // client::sign_with_key should be implemented to accept (Payload, Client, String)
-                client::sign_with_key(payload, client, pk).await;
-            })
-        });
+        builder = builder.on(
+            "requireAuth",
+            move |payload: Payload, client: Client| -> BoxFuture<'static, ()> {
+                let pk = pk.clone();
+                Box::pin(async move {
+                    // client::sign_with_key should be implemented to accept (Payload, Client, String)
+                    client::sign_with_key(payload, client, pk).await;
+                })
+            },
+        );
     }
 
     // helper to create per-bridge event callback closures
@@ -115,7 +117,10 @@ pub async fn main(
         Ok(client) => {
             tracing::info!(
                 "{}",
-                format!("socketio connected time: {:?}", start_connect_time.elapsed())
+                format!(
+                    "socketio connected time: {:?}",
+                    start_connect_time.elapsed()
+                )
             );
             client
         }

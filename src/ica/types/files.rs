@@ -19,6 +19,10 @@ pub struct MessageFile {
 }
 
 impl MessageFile {
-    pub fn get_name(&self) -> Option<&String> { self.name.as_ref() }
-    pub fn get_fid(&self) -> Option<&String> { self.fid.as_ref() }
+    pub fn get_name(&self) -> Option<&String> {
+        self.name.as_ref()
+    }
+    pub fn get_fid(&self) -> Option<&String> {
+        self.fid.as_ref()
+    }
 }
