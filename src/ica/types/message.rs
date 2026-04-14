@@ -191,11 +191,11 @@ impl<'de> Deserialize<'de> for Message {
         let json = JsonValue::deserialize(deserializer)?;
 
         // 消息 id，必须存在
-        let msg_id = json
-            .get("_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| de::Error::custom("missing or invalid _id"))?
-            .to_string();
+        let msg_id = match json.get("_id") {
+            Some(JsonValue::String(value)) => value.clone(),
+            Some(JsonValue::Number(value)) => value.to_string(),
+            _ => return Err(de::Error::custom("missing or invalid _id")),
+        };
 
         // 发送者 id (Optional)
         let sender_id = json.get("senderId").and_then(|v| v.as_i64()).unwrap_or(-1);
@@ -242,6 +242,24 @@ impl<'de> Deserialize<'de> for Message {
         for file in &value_files {
             if let Ok(file) = serde_json::from_value::<MessageFile>(file.clone()) {
                 files.push(file);
+            }
+        }
+        if let Some(file_value) = json.get("file")
+            && !file_value.is_null()
+            && let Ok(file) = serde_json::from_value::<MessageFile>(file_value.clone())
+            && !files.iter().any(|existing| existing == &file)
+        {
+            files.push(file);
+        }
+        for file in &files {
+            let file_type = file.file_type.to_ascii_lowercase();
+            if (file_type == "image" || file_type.starts_with("image/")) && file.url.trim().is_empty() {
+                tracing::warn!(
+                    "image file missing url: msg_id={} sender={} raw_file={}",
+                    msg_id,
+                    sender_name,
+                    serde_json::to_string(file).unwrap_or_else(|_| "<serialize failed>".to_string())
+                );
             }
         }
 

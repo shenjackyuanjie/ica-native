@@ -6,7 +6,10 @@
 //!
 //! (起因是我让他写了个图片加载内存使用量追踪)
 use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
     mem::size_of,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -20,7 +23,7 @@ use egui::{
 };
 use image::ImageFormat;
 use lru::LruCache;
-use tracing::debug;
+use tracing::{debug, info, warn};
 
 use crate::cfg;
 
@@ -33,6 +36,10 @@ pub struct TrackingImageLoader {
     cache: Cache,
     total_decoded_bytes: Arc<AtomicU64>,
     max_cache_bytes: u64,
+    /// 磁盘缓存目录，为 None 时禁用落盘。
+    disk_cache_dir: Option<PathBuf>,
+    /// 磁盘缓存最大字节数。
+    disk_max_bytes: u64,
 }
 
 /// 缓存条目状态。
@@ -55,10 +62,25 @@ impl TrackingImageLoader {
     /// 创建新的加载器实例，读取配置中的缓存上限。
     pub fn new() -> Self {
         let cfg = cfg::get_cfg_snapshot();
+        let disk_cache_dir = {
+            let path = cfg.get_image_cache_path();
+            match std::fs::create_dir_all(&path) {
+                Ok(()) => {
+                    info!("disk image cache dir: {:?}", path);
+                    Some(path)
+                }
+                Err(e) => {
+                    warn!("无法创建磁盘缓存目录 {:?}: {}, 将禁用磁盘缓存", path, e);
+                    None
+                }
+            }
+        };
         Self {
             cache: Arc::new(Mutex::new(LruCache::unbounded())),
             total_decoded_bytes: Arc::new(AtomicU64::new(0)),
             max_cache_bytes: cfg.image_cache_max_bytes,
+            disk_cache_dir,
+            disk_max_bytes: cfg.disk_image_cache_max_bytes,
         }
     }
 
@@ -160,6 +182,170 @@ impl TrackingImageLoader {
             );
         }
     }
+
+    /// 判断 URI 是否为头像类 URL（qlogo.cn 域名）。
+    fn is_avatar_uri(uri: &str) -> bool {
+        uri.contains("qlogo.cn")
+    }
+
+    /// URI → 磁盘缓存文件路径（通过哈希映射）。
+    /// 头像放入 `avatar/`，其他图片放入 `image/`。
+    fn uri_to_cache_path(&self, uri: &str) -> Option<PathBuf> {
+        let dir = self.disk_cache_dir.as_ref()?;
+        let mut hasher = DefaultHasher::new();
+        uri.hash(&mut hasher);
+        let hash = hasher.finish();
+        let subdir = if Self::is_avatar_uri(uri) {
+            "avatar"
+        } else {
+            "image"
+        };
+        Some(dir.join(subdir).join(format!("{:016x}.img", hash)))
+    }
+
+    /// 尝试从磁盘缓存读取原始字节。
+    fn try_load_from_disk(&self, uri: &str) -> Option<Vec<u8>> {
+        let path = self.uri_to_cache_path(uri)?;
+        std::fs::read(&path).ok()
+    }
+
+    /// 在后台线程解码并缓存图片。
+    /// `disk_save_path` 为 Some 时，解码成功后将原始字节保存到磁盘。
+    fn spawn_decode_and_cache(
+        &self,
+        uri: String,
+        bytes: Bytes,
+        ctx: Context,
+        disk_save_path: Option<PathBuf>,
+    ) {
+        let cache = self.cache.clone();
+        let total_decoded_bytes = self.total_decoded_bytes.clone();
+        let max_cache_bytes = self.max_cache_bytes;
+        let disk_cache_dir = self.disk_cache_dir.clone();
+        let disk_max_bytes = self.disk_max_bytes;
+
+        std::thread::Builder::new()
+            .name(format!("TrackingImageLoader::load({uri:?})"))
+            .spawn(move || {
+                let result = Self::decode_image(&bytes);
+                let mut cache = cache.lock();
+                match result {
+                    Ok(image) => {
+                        // 写入磁盘缓存
+                        if let Some(disk_path) = disk_save_path {
+                            if let Some(parent) = disk_path.parent() {
+                                let _ = std::fs::create_dir_all(parent);
+                            }
+                            if let Err(e) = std::fs::write(&disk_path, bytes.as_ref()) {
+                                warn!(
+                                    "disk cache write failed: path={} err={}",
+                                    disk_path.display(),
+                                    e
+                                );
+                            } else {
+                                debug!(
+                                    "disk cache saved: uri={} path={} raw_bytes={}",
+                                    uri,
+                                    disk_path.display(),
+                                    format_bytes(bytes.len() as u64)
+                                );
+                                // 磁盘淮汰
+                                if let Some(ref dir) = disk_cache_dir {
+                                    Self::evict_disk_if_needed(dir, disk_max_bytes);
+                                }
+                            }
+                        }
+
+                        let byte_size =
+                            (image.pixels.len() * size_of::<egui::Color32>()) as u64;
+                        let total = total_decoded_bytes
+                            .fetch_add(byte_size, Ordering::Relaxed)
+                            + byte_size;
+                        let [w, h] = image.size;
+                        info!(
+                            "image decoded: uri={} size={}x{} bytes={} total={} max={}",
+                            uri,
+                            w,
+                            h,
+                            format_bytes(byte_size),
+                            format_bytes(total),
+                            format_bytes(max_cache_bytes)
+                        );
+                        cache.put(uri.clone(), Entry::Ready { image, byte_size });
+                        Self::evict_if_needed(
+                            &mut cache,
+                            &total_decoded_bytes,
+                            max_cache_bytes,
+                        );
+                    }
+                    Err(err) => {
+                        warn!("image decode failed: uri={} err={}", uri, err);
+                        cache.put(uri.clone(), Entry::Error(err));
+                    }
+                }
+                ctx.request_repaint();
+            })
+            .expect("failed to spawn image decode thread");
+    }
+
+    /// 当磁盘缓存总大小超过上限时，按修改时间从旧到新逐出。
+    /// 优先清除普通图片，头像放后面。
+    fn evict_disk_if_needed(dir: &PathBuf, max_bytes: u64) {
+        if max_bytes == 0 {
+            // 0 表示不限制
+            return;
+        }
+        // 先收集 image/，再收集 avatar/，这样排序后同时间的图片排在头像前面
+        let subdirs = [dir.join("image"), dir.join("avatar")];
+        let mut image_files: Vec<(PathBuf, u64, std::time::SystemTime)> = Vec::new();
+        let mut avatar_files: Vec<(PathBuf, u64, std::time::SystemTime)> = Vec::new();
+        let mut total: u64 = 0;
+        for (idx, subdir) in subdirs.iter().enumerate() {
+            let entries = match std::fs::read_dir(subdir) {
+                Ok(e) => e,
+                Err(_) => continue, // 子目录可能不存在
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                if let Ok(meta) = entry.metadata() {
+                    let size = meta.len();
+                    let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+                    total += size;
+                    if idx == 0 {
+                        image_files.push((path, size, modified));
+                    } else {
+                        avatar_files.push((path, size, modified));
+                    }
+                }
+            }
+        }
+        if total <= max_bytes {
+            return;
+        }
+        // 普通图片按时间升序排在前面，头像按时间升序排在后面
+        image_files.sort_by_key(|(_, _, t)| *t);
+        avatar_files.sort_by_key(|(_, _, t)| *t);
+        let all_files = image_files.iter().chain(avatar_files.iter());
+        for (path, size, _) in all_files {
+            if total <= max_bytes {
+                break;
+            }
+            if let Err(e) = std::fs::remove_file(path) {
+                warn!("disk cache evict: remove failed: {} err={}", path.display(), e);
+            } else {
+                debug!(
+                    "disk cache evict: removed {} size={} total_after={}",
+                    path.display(),
+                    format_bytes(*size),
+                    format_bytes(total.saturating_sub(*size))
+                );
+                total = total.saturating_sub(*size);
+            }
+        }
+    }
 }
 
 /// 将字节数格式化为可读字符串。
@@ -176,6 +362,20 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.2}KB", b / KB)
     } else {
         format!("{}B", bytes)
+    }
+}
+
+fn normalize_image_load_error(uri: &str, err: LoadError) -> LoadError {
+    let err_text = err.to_string();
+    let lower_text = err_text.to_ascii_lowercase();
+    if lower_text.contains("download url has expired")
+        || err_text.contains("retcode\":-5503007")
+        || err_text.contains("retcode=-5503007")
+    {
+        warn!("image url expired: uri={} err={}", uri, err_text);
+        LoadError::Loading("图片链接已过期，需要重新获取 URL".to_string())
+    } else {
+        LoadError::Loading(err_text)
     }
 }
 
@@ -211,8 +411,27 @@ impl ImageLoader for TrackingImageLoader {
                 Entry::Pending => Ok(ImagePoll::Pending { size: None }),
             };
         }
-        debug!("image cache miss: uri={}", uri);
+        info!("image cache miss: uri={}", uri);
 
+        // 1. 尝试磁盘缓存
+        if let Some(disk_bytes) = self.try_load_from_disk(uri) {
+            info!(
+                "disk cache hit: uri={} raw_bytes={}",
+                uri,
+                format_bytes(disk_bytes.len() as u64)
+            );
+            let bytes: Bytes = Bytes::Shared(Arc::from(disk_bytes));
+            if Self::is_svg_bytes(&bytes) {
+                return Err(LoadError::NotSupported);
+            }
+            cache_lock.put(uri.to_string(), Entry::Pending);
+            drop(cache_lock);
+            // 从磁盘加载，不需要再写回磁盘
+            self.spawn_decode_and_cache(uri.to_string(), bytes, ctx.clone(), None);
+            return Ok(ImagePoll::Pending { size: None });
+        }
+
+        // 2. 网络加载
         match ctx.try_load_bytes(uri) {
             Ok(BytesPoll::Ready { bytes, mime, .. }) => {
                 if let Some(ref mime) = mime
@@ -227,57 +446,26 @@ impl ImageLoader for TrackingImageLoader {
                 cache_lock.put(uri.to_string(), Entry::Pending);
                 drop(cache_lock);
 
-                let cache = self.cache.clone();
-                let total_decoded_bytes = self.total_decoded_bytes.clone();
-                let uri = uri.to_string();
-                let ctx = ctx.clone();
-                let max_cache_bytes = self.max_cache_bytes;
-
-                std::thread::Builder::new()
-                    .name(format!("TrackingImageLoader::load({uri:?})"))
-                    .spawn(move || {
-                        let result = Self::decode_image(&bytes);
-                        let mut cache = cache.lock();
-                        match result {
-                            Ok(image) => {
-                                let byte_size =
-                                    (image.pixels.len() * size_of::<egui::Color32>()) as u64;
-                                let total = total_decoded_bytes
-                                    .fetch_add(byte_size, Ordering::Relaxed)
-                                    + byte_size;
-                                let bytes_h = format_bytes(byte_size);
-                                let total_h = format_bytes(total);
-                                let [w, h] = image.size;
-                                debug!(
-                                    "image decoded: uri={} size={}x{} bytes={} total={} max={}",
-                                    uri,
-                                    w,
-                                    h,
-                                    bytes_h,
-                                    total_h,
-                                    format_bytes(max_cache_bytes)
-                                );
-                                cache.put(uri.clone(), Entry::Ready { image, byte_size });
-                                Self::evict_if_needed(
-                                    &mut cache,
-                                    &total_decoded_bytes,
-                                    max_cache_bytes,
-                                );
-                            }
-                            Err(err) => {
-                                debug!("image decode failed: uri={} err={}", uri, err);
-                                cache.put(uri.clone(), Entry::Error(err));
-                            }
-                        }
-
-                        ctx.request_repaint();
-                    })
-                    .expect("failed to spawn image decode thread");
+                // 解码成功后写入磁盘缓存
+                let disk_save_path = self.uri_to_cache_path(uri);
+                self.spawn_decode_and_cache(
+                    uri.to_string(),
+                    bytes,
+                    ctx.clone(),
+                    disk_save_path,
+                );
 
                 Ok(ImagePoll::Pending { size: None })
             }
             Ok(BytesPoll::Pending { size }) => Ok(ImagePoll::Pending { size }),
-            Err(err) => Err(err),
+            Err(err) => {
+                warn!("image byte load failed: uri={} err={}", uri, err);
+                let normalized = normalize_image_load_error(uri, err);
+                if let LoadError::Loading(message) = &normalized {
+                    cache_lock.put(uri.to_string(), Entry::Error(message.clone()));
+                }
+                Err(normalized)
+            }
         }
     }
 
@@ -336,5 +524,5 @@ pub fn install_tracking_image_loader(ctx: &Context) {
         return;
     }
     ctx.add_image_loader(Arc::new(TrackingImageLoader::new()));
-    debug!("installed TrackingImageLoader (lru)");
+    info!("installed TrackingImageLoader (lru)");
 }

@@ -21,6 +21,10 @@ fn image_cache_max_bytes_default() -> u64 {
     256 * 1024 * 1024
 }
 
+fn disk_image_cache_max_bytes_default() -> u64 {
+    1024 * 1024 * 1024
+}
+
 /// 配置文件
 ///
 /// 考虑到允许你同时连接多个 bridge, 所以这玩意做的有点复杂
@@ -41,6 +45,9 @@ pub struct IcaCfg {
     /// 图片缓存最大内存（字节）
     #[serde(default = "image_cache_max_bytes_default")]
     pub image_cache_max_bytes: u64,
+    /// 图片磁盘缓存最大字节数（默认 1GB）
+    #[serde(default = "disk_image_cache_max_bytes_default")]
+    pub disk_image_cache_max_bytes: u64,
     /// async runtime workthread count
     /// tokio 运行线程数
     #[serde(default = "tokio_rt_work_thread_default")]
@@ -62,6 +69,7 @@ impl Default for IcaCfg {
             ui_setting: UiSetting::default(),
             cache_path: None,
             image_cache_max_bytes: image_cache_max_bytes_default(),
+            disk_image_cache_max_bytes: disk_image_cache_max_bytes_default(),
             tokio_rt_work_thread: tokio_rt_work_thread_default(),
         }
     }
@@ -227,9 +235,47 @@ impl Default for Screen {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReEditDraftConflictMode {
+    Overwrite,
+    Append,
+    SkipIfNonEmpty,
+}
+
+fn reedit_draft_conflict_mode_default() -> ReEditDraftConflictMode {
+    ReEditDraftConflictMode::Overwrite
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UiSetting {
-    // todo
+    /// 选择会话后是否自动清空聊天列表搜索框
+    #[serde(default = "clear_search_on_room_select_default")]
+    pub clear_search_on_room_select: bool,
+    /// 发送消息后是否自动滚动到底部
+    #[serde(default = "scroll_to_bottom_after_send_default")]
+    pub scroll_to_bottom_after_send: bool,
+    /// 已撤回消息重新编辑时，遇到已有草稿如何处理
+    #[serde(default = "reedit_draft_conflict_mode_default")]
+    pub reedit_draft_conflict_mode: ReEditDraftConflictMode,
+}
+
+fn clear_search_on_room_select_default() -> bool {
+    true
+}
+
+fn scroll_to_bottom_after_send_default() -> bool {
+    true
+}
+
+impl Default for UiSetting {
+    fn default() -> Self {
+        Self {
+            clear_search_on_room_select: clear_search_on_room_select_default(),
+            scroll_to_bottom_after_send: scroll_to_bottom_after_send_default(),
+            reedit_draft_conflict_mode: reedit_draft_conflict_mode_default(),
+        }
+    }
 }
 
 /// 默认配置文件路径

@@ -1,6 +1,7 @@
 use std::{
-    collections::{HashMap, HashSet},
-    fmt::Display,
+    cmp::Reverse,
+    collections::HashSet,
+    path::Path,
     sync::Arc,
 };
 
@@ -12,7 +13,7 @@ use tokio::sync::oneshot;
 
 use serde_json::Value as JsonValue;
 
-use crate::cfg;
+use crate::cfg::{self, ReEditDraftConflictMode};
 use crate::ica;
 use crate::{
     assets,
@@ -22,164 +23,24 @@ use crate::{
 pub mod chat_groups;
 pub mod config_editer;
 pub mod custom_chat;
+pub mod events;
 pub mod online_mode;
 pub mod open_page;
 pub mod renders;
+pub mod state;
 
 use chat_groups::ChatGroups;
 use config_editer::ConfigEditer;
 use custom_chat::CustomChat;
 use online_mode::OnlineMode;
 use open_page::AppOpenPage;
+pub use state::*;
 
 use crate::ica::types::{
     RoomId,
-    message::{Message, NewMessage, SendMessage},
-    online_data::OnlineData,
-    room::{JoinRequestRoom, Room},
+    message::{DeleteMessage, Message, ReplyMessage, SendMessage},
+    room::Room,
 };
-
-#[derive(Debug, Default, Clone, Copy)]
-pub enum ChatListScrollTarget {
-    #[default]
-    None,
-    Top,
-    Bottom,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum SocketState {
-    #[default]
-    Connecting,
-    Connected,
-    Disconnected,
-    Failed,
-}
-
-impl Display for SocketState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SocketState::Connecting => write!(f, "连接中"),
-            SocketState::Connected => write!(f, "已连接"),
-            SocketState::Disconnected => write!(f, "已断开"),
-            SocketState::Failed => write!(f, "连接失败"),
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum AuthState {
-    #[default]
-    Unknown,
-    Pending,
-    Succeeded,
-    Failed,
-}
-
-impl Display for AuthState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AuthState::Unknown => write!(f, "未开始"),
-            AuthState::Pending => write!(f, "认证中"),
-            AuthState::Succeeded => write!(f, "已认证"),
-            AuthState::Failed => write!(f, "认证失败"),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-/// 单个 bridge 在 GUI 侧维护的完整状态。
-///
-/// 这里既存连接状态，也存房间列表、消息缓存、验证消息和草稿，
-/// 这样切换 bridge 时不需要把全局状态来回覆写。
-pub struct BridgeState {
-    pub bridge_key: String,
-    pub rooms: Vec<Room>,
-    pub messages_by_room: HashMap<RoomId, Vec<Message>>,
-    pub join_requests: Vec<JoinRequestRoom>,
-    pub selected_room_id: Option<RoomId>,
-    pub draft_by_room: HashMap<RoomId, String>,
-    pub requested_rooms: HashSet<RoomId>,
-    pub socket_state: SocketState,
-    pub auth_state: AuthState,
-    pub online_data: OnlineData,
-    pub last_error: Option<String>,
-    pub last_event: Option<String>,
-}
-
-impl BridgeState {
-    pub fn new(bridge_key: String) -> Self {
-        Self {
-            bridge_key,
-            rooms: Vec::new(),
-            messages_by_room: HashMap::new(),
-            join_requests: Vec::new(),
-            selected_room_id: None,
-            draft_by_room: HashMap::new(),
-            requested_rooms: HashSet::new(),
-            socket_state: SocketState::Connecting,
-            auth_state: AuthState::Unknown,
-            online_data: OnlineData::default(),
-            last_error: None,
-            last_event: None,
-        }
-    }
-
-    fn preview_content(message: &Message) -> String {
-        if message.deleted {
-            "[已撤回]".to_string()
-        } else if !message.content.is_empty() {
-            message.content.clone()
-        } else if !message.files.is_empty() {
-            format!("[{} 个文件]", message.files.len())
-        } else if message.system {
-            "[系统消息]".to_string()
-        } else {
-            "[空消息]".to_string()
-        }
-    }
-
-    pub fn sync_room_preview(&mut self, room_id: RoomId, message: &Message) {
-        let Some(room) = self.rooms.iter_mut().find(|room| room.room_id == room_id) else {
-            return;
-        };
-
-        room.last_message.content = Some(Self::preview_content(message));
-        room.last_message.username = Some(message.sender_name.clone());
-        room.last_message.user_id = Some(message.sender_id);
-        room.last_message.timestamp = Some(message.time.format("%H:%M:%S").to_string());
-    }
-
-    pub fn upsert_message(&mut self, room_id: RoomId, message: Message) {
-        let messages = self.messages_by_room.entry(room_id).or_default();
-        if let Some(existing) = messages.iter_mut().find(|item| item.msg_id == message.msg_id) {
-            *existing = message;
-        } else {
-            messages.push(message);
-        }
-    }
-
-    pub fn mark_message_deleted(&mut self, msg_id: &str) {
-        for messages in self.messages_by_room.values_mut() {
-            if let Some(message) = messages.iter_mut().find(|item| item.msg_id == msg_id) {
-                message.deleted = true;
-                break;
-            }
-        }
-    }
-
-    pub fn upsert_join_request(&mut self, request: JoinRequestRoom) {
-        if let Some(existing) = self
-            .join_requests
-            .iter_mut()
-            .find(|item| item.flag == request.flag)
-        {
-            *existing = request;
-        } else {
-            self.join_requests.insert(0, request);
-        }
-    }
-}
 
 pub struct IcaApp {
     /// 聊天界面定制选项
@@ -204,6 +65,12 @@ pub struct IcaApp {
     pub config_editer: ConfigEditer,
     /// 聊天列表滚动目标
     pub chat_list_scroll_target: ChatListScrollTarget,
+    /// 选中会话后是否自动清空搜索框
+    pub clear_search_on_room_select: bool,
+    /// 发送消息后是否自动滚动到底部
+    pub scroll_to_bottom_after_send: bool,
+    /// 已撤回消息重新编辑时，遇到已有草稿如何处理
+    pub reedit_draft_conflict_mode: ReEditDraftConflictMode,
     /// 当前选中的 bridge
     pub active_bridge_idx: Option<usize>,
     /// 每个 bridge 的界面状态
@@ -432,7 +299,10 @@ impl IcaApp {
             chat_group_idx: 0,
             chat_groups: ChatGroups::new(),
             config_editer: ConfigEditer::default(),
-            chat_list_scroll_target: ChatListScrollTarget::Bottom,
+            chat_list_scroll_target: ChatListScrollTarget::Top,
+            clear_search_on_room_select: config.ui_setting.clear_search_on_room_select,
+            scroll_to_bottom_after_send: config.ui_setting.scroll_to_bottom_after_send,
+            reedit_draft_conflict_mode: config.ui_setting.reedit_draft_conflict_mode,
             active_bridge_idx: if bridge_states.is_empty() { None } else { Some(0) },
             bridge_states,
             runtime,
@@ -453,142 +323,19 @@ impl IcaApp {
             .and_then(|idx| self.bridge_states.get_mut(idx))
     }
 
-    fn bridge_state_mut(&mut self, bridge_key: &str) -> Option<&mut BridgeState> {
-        self.bridge_states
-            .iter_mut()
-            .find(|state| state.bridge_key == bridge_key)
-    }
-
-    /// socket.io 的事件 payload 基本都是数组包装，真正的数据通常在第一个元素里。
-    fn first_payload_value(payload: &JsonValue) -> Option<&JsonValue> {
-        payload.as_array().and_then(|values| values.first())
-    }
-
-    /// 统一提取事件里常见的 `message` 字段，避免每个分支都手动抄一遍。
-    fn payload_message(payload: &JsonValue) -> Option<String> {
-        payload
-            .get("message")
-            .and_then(|value| value.as_str())
-            .map(ToString::to_string)
-    }
-
-    /// 把某个 bridge 发来的事件应用到对应的本地状态上。
-    ///
-    /// 这里故意不做 UI 逻辑，只做“事件 -> 状态”的映射，方便后续继续补事件类型。
-    fn apply_socketio_event(state: &mut BridgeState, event_name: &str, payload: &JsonValue) {
-        match event_name {
-            "socketConnecting" => {
-                state.socket_state = SocketState::Connecting;
-                state.auth_state = AuthState::Unknown;
-                state.last_error = None;
-            }
-            "socketReconnecting" => {
-                state.socket_state = SocketState::Connecting;
-                state.last_error = Self::payload_message(payload);
-            }
-            "socketConnected" => {
-                state.socket_state = SocketState::Connected;
-                state.last_error = None;
-            }
-            "socketDisconnected" => {
-                state.socket_state = SocketState::Disconnected;
-                state.last_error = Self::payload_message(payload);
-            }
-            "socketConnectFailed" => {
-                state.socket_state = SocketState::Failed;
-                state.last_error = Self::payload_message(payload);
-            }
-            "socketRetryScheduled" => {
-                state.socket_state = SocketState::Connecting;
-                state.last_error = Self::payload_message(payload);
-            }
-            "socketReconnectExhausted" => {
-                state.socket_state = SocketState::Failed;
-                state.last_error = Self::payload_message(payload);
-            }
-            "requireAuth" => {
-                state.auth_state = AuthState::Pending;
-            }
-            "authSucceed" => {
-                state.auth_state = AuthState::Succeeded;
-                state.last_error = None;
-            }
-            "authFailed" => {
-                state.auth_state = AuthState::Failed;
-                state.last_error = Some("bridge 认证失败".to_string());
-            }
-            "onlineData" => {
-                if let Some(value) = Self::first_payload_value(payload) {
-                    state.online_data = OnlineData::new_from_json(value);
-                }
-            }
-            "setAllRooms" => {
-                if let Some(value) = Self::first_payload_value(payload) {
-                    match serde_json::from_value::<Vec<Room>>(value.clone()) {
-                        Ok(rooms) => state.rooms = rooms,
-                        Err(e) => {
-                            state.last_error = Some(format!("setAllRooms 解析失败: {}", e));
-                        }
-                    }
-                }
-            }
-            "setMessages" => {
-                if let Some(value) = Self::first_payload_value(payload) {
-                    let room_id = value["roomId"].as_i64().unwrap_or_default();
-                    match serde_json::from_value::<Vec<Message>>(value["messages"].clone()) {
-                        Ok(messages) => {
-                            state.requested_rooms.insert(room_id);
-                            state.messages_by_room.insert(room_id, messages);
-                        }
-                        Err(e) => {
-                            state.last_error = Some(format!("setMessages 解析失败: {}", e));
-                        }
-                    }
-                }
-            }
-            "addMessage" => {
-                if let Some(value) = Self::first_payload_value(payload) {
-                    match serde_json::from_value::<NewMessage>(value.clone()) {
-                        Ok(new_message) => {
-                            let room_id = new_message.room_id;
-                            state.requested_rooms.insert(room_id);
-                            state.sync_room_preview(room_id, &new_message.msg);
-                            state.upsert_message(room_id, new_message.msg);
-                        }
-                        Err(e) => {
-                            state.last_error = Some(format!("addMessage 解析失败: {}", e));
-                        }
-                    }
-                }
-            }
-            "deleteMessage" => {
-                if let Some(msg_id) = Self::first_payload_value(payload).and_then(|value| value.as_str()) {
-                    state.mark_message_deleted(msg_id);
-                }
-            }
-            "handleRequest" => {
-                if let Some(value) = Self::first_payload_value(payload) {
-                    match serde_json::from_value::<JoinRequestRoom>(value.clone()) {
-                        Ok(request) => {
-                            state.upsert_join_request(request);
-                        }
-                        Err(e) => {
-                            state.last_error = Some(format!("handleRequest 解析失败: {}", e));
-                        }
-                    }
-                }
-            }
-            "commandFailed" => {
-                state.last_error = Self::payload_message(payload);
-            }
-            _ => {}
-        }
-    }
-
-    pub fn request_room_messages(&self, bridge_idx: usize, room_id: RoomId) {
+    pub fn request_room_messages(&mut self, bridge_idx: usize, room_id: RoomId, scroll_to_bottom: bool) {
         let Some(client) = self.ica_clients.get(bridge_idx) else {
             return;
         };
+
+        if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+            if scroll_to_bottom {
+                state.pending_message_scroll_to_bottom.insert(room_id);
+            } else {
+                state.pending_message_scroll_to_bottom.remove(&room_id);
+                state.message_scroll_to_bottom.remove(&room_id);
+            }
+        }
 
         // 房间历史消息通过 socket 任务去拉，GUI 本身不直接碰底层 client。
         if let Err(e) = client.command_tx.send(IcaCommand::FetchMessages(room_id)) {
@@ -596,15 +343,339 @@ impl IcaApp {
         }
     }
 
+    pub fn request_system_messages(&self, bridge_idx: usize) {
+        let Some(client) = self.ica_clients.get(bridge_idx) else {
+            return;
+        };
+
+        if let Err(e) = client.command_tx.send(IcaCommand::GetSystemMsg) {
+            tracing::warn!("send getSystemMsg command failed: {}", e);
+        }
+    }
+
+    pub fn visible_rooms(&self, bridge_idx: usize) -> Vec<Room> {
+        let Some(state) = self.bridge_states.get(bridge_idx) else {
+            return Vec::new();
+        };
+
+        let query = state.room_search_query.trim().to_uppercase();
+        let mut rooms: Vec<_> = state
+            .rooms
+            .iter()
+            .filter(|room| {
+                query.is_empty()
+                    || room.room_name.to_uppercase().contains(&query)
+                    || room.room_id.to_string().contains(query.as_str())
+            })
+            .cloned()
+            .collect();
+
+        rooms.sort_by_key(|room| Reverse(room.index > 0));
+        rooms
+    }
+
+    fn extract_raw_chain(message: &Message) -> Option<JsonValue> {
+        match &message.raw_msg {
+            JsonValue::Array(values) if !values.is_empty() => Some(JsonValue::Array(values.clone())),
+            JsonValue::Object(map) if map.contains_key("type") => {
+                Some(JsonValue::Array(vec![message.raw_msg.clone()]))
+            }
+            _ => None,
+        }
+    }
+
+    fn send_raw_chain(&mut self, room_id: RoomId, chain: JsonValue) -> bool {
+        let Some(bridge_idx) = self.active_bridge_idx else {
+            return false;
+        };
+
+        if let Err(e) = self.ica_clients[bridge_idx]
+            .command_tx
+            .send(IcaCommand::SendRawMessage { room_id, content: chain })
+        {
+            tracing::warn!("send raw sendMessage command failed: {}", e);
+            if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+                state.last_error = Some(format!("原样发送命令发送失败: {}", room_id));
+            }
+            return false;
+        }
+
+        if self.scroll_to_bottom_after_send && let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+            state.pending_send_scroll_to_bottom.insert(room_id);
+        }
+        true
+    }
+
+    fn clone_message_from_active_bridge(&self, room_id: RoomId, message_id: &str) -> Option<Message> {
+        let bridge_idx = self.active_bridge_idx?;
+        self.bridge_states
+            .get(bridge_idx)?
+            .find_message(room_id, message_id)
+            .cloned()
+    }
+
+    fn selected_forward_messages(&self, bridge_idx: usize, room_id: RoomId) -> Vec<Message> {
+        let Some(state) = self.bridge_states.get(bridge_idx) else {
+            return Vec::new();
+        };
+        if state.forward_room_id != Some(room_id) {
+            return Vec::new();
+        }
+
+        let selected_ids: HashSet<&str> = state
+            .forward_selected_message_ids
+            .iter()
+            .map(String::as_str)
+            .collect();
+
+        state
+            .messages_by_room
+            .get(&room_id)
+            .into_iter()
+            .flatten()
+            .filter(|message| selected_ids.contains(message.msg_id.as_str()))
+            .cloned()
+            .collect()
+    }
+
+    fn send_message_clone_to_room(&mut self, target_room_id: RoomId, message: &Message) -> bool {
+        if let Some(chain) = Self::extract_raw_chain(message) {
+            return self.send_raw_chain(target_room_id, chain);
+        }
+
+        let Some(bridge_idx) = self.active_bridge_idx else {
+            return false;
+        };
+
+        if message.content.trim().is_empty() {
+            if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+                state.last_error = Some("该消息缺少可复用的原始节点，无法原样发送".to_string());
+            }
+            return false;
+        }
+
+        let outgoing = SendMessage::new(
+            message.content.clone(),
+            target_room_id,
+            message.reply.clone(),
+        );
+
+        if let Err(e) = self.ica_clients[bridge_idx]
+            .command_tx
+            .send(IcaCommand::SendMessage(outgoing))
+        {
+            tracing::warn!("send cloned sendMessage command failed: {}", e);
+            if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+                state.last_error = Some(format!("消息发送失败: {}", target_room_id));
+            }
+            return false;
+        }
+
+        if !message.files.is_empty() && let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+            state.last_error = Some("部分附件消息缺少原始节点，已退化为纯文本发送".to_string());
+        }
+
+        if self.scroll_to_bottom_after_send && let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+            state.pending_send_scroll_to_bottom.insert(target_room_id);
+        }
+        true
+    }
+
+    pub fn copy_message_to_draft(&mut self, room_id: RoomId, message_id: String) {
+        let Some(message) = self.clone_message_from_active_bridge(room_id, &message_id) else {
+            return;
+        };
+
+        if let Some(state) = self.active_bridge_state_mut() {
+            state.draft_by_room.insert(room_id, message.content.clone());
+            if let Some(reply) = message.reply.clone() {
+                state.reply_to_by_room.insert(room_id, reply);
+            } else {
+                state.reply_to_by_room.remove(&room_id);
+            }
+            if !message.files.is_empty() {
+                state.last_error = Some("复制到编辑区暂不恢复附件，如需原样发送请使用 +1 或 转发".to_string());
+            }
+        }
+    }
+
+    pub fn plus_one_message(&mut self, room_id: RoomId, message_id: String) {
+        let Some(message) = self.clone_message_from_active_bridge(room_id, &message_id) else {
+            return;
+        };
+        let _ = self.send_message_clone_to_room(room_id, &message);
+    }
+
+    pub fn begin_forward_selection(&mut self, room_id: RoomId, message_id: String, open_picker: bool) {
+        if let Some(state) = self.active_bridge_state_mut() {
+            state.replace_forward_selection(room_id, message_id);
+            state.forward_target_picker_open = open_picker;
+            if open_picker {
+                state.forward_target_search_query.clear();
+            }
+        }
+    }
+
+    pub fn toggle_forward_message_selection(&mut self, room_id: RoomId, message_id: String) {
+        if let Some(state) = self.active_bridge_state_mut() {
+            state.toggle_forward_selection(room_id, message_id);
+        }
+    }
+
+    pub fn plus_one_forward_selection(&mut self, room_id: RoomId) {
+        let Some(bridge_idx) = self.active_bridge_idx else {
+            return;
+        };
+        let messages = self.selected_forward_messages(bridge_idx, room_id);
+        if messages.is_empty() {
+            return;
+        }
+
+        let mut failed = 0_usize;
+        for message in &messages {
+            if !self.send_message_clone_to_room(room_id, message) {
+                failed += 1;
+            }
+        }
+
+        if failed > 0 && let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+            state.last_error = Some(format!("有 {} 条消息无法完整 +1", failed));
+        }
+    }
+
+    pub fn open_forward_target_picker(&mut self, room_id: RoomId) {
+        if let Some(state) = self.active_bridge_state_mut() && state.is_forward_selection_active(room_id) {
+            state.forward_target_picker_open = true;
+            state.forward_target_search_query.clear();
+        }
+    }
+
+    pub fn clear_forward_selection(&mut self) {
+        if let Some(state) = self.active_bridge_state_mut() {
+            state.clear_forward_selection();
+        }
+    }
+
+    pub fn forward_selected_messages_to_room(&mut self, target_room_id: RoomId) {
+        let Some(bridge_idx) = self.active_bridge_idx else {
+            return;
+        };
+        let Some(source_room_id) = self.bridge_states[bridge_idx].forward_room_id else {
+            return;
+        };
+        let messages = self.selected_forward_messages(bridge_idx, source_room_id);
+        if messages.is_empty() {
+            self.bridge_states[bridge_idx].clear_forward_selection();
+            return;
+        }
+
+        let mut failed = 0_usize;
+        for message in &messages {
+            if !self.send_message_clone_to_room(target_room_id, message) {
+                failed += 1;
+            }
+        }
+
+        if failed > 0 {
+            self.bridge_states[bridge_idx].last_error = Some(format!("有 {} 条消息无法完整转发", failed));
+        }
+        self.bridge_states[bridge_idx].clear_forward_selection();
+    }
+
+    pub fn set_room_pinned(&mut self, bridge_idx: usize, room_id: RoomId, pin: bool) {
+        let Some(state) = self.bridge_states.get_mut(bridge_idx) else {
+            return;
+        };
+
+        let previous_index = state
+            .rooms
+            .iter()
+            .find(|room| room.room_id == room_id)
+            .map(|room| room.index)
+            .unwrap_or_default();
+
+        if let Some(room) = state.rooms.iter_mut().find(|room| room.room_id == room_id) {
+            room.index = if pin { 1 } else { 0 };
+        }
+
+        if let Err(e) = self.ica_clients[bridge_idx]
+            .command_tx
+            .send(IcaCommand::PinRoom { room_id, pin })
+        {
+            tracing::warn!("send pinRoom command failed: {}", e);
+            if let Some(room) = self.bridge_states[bridge_idx]
+                .rooms
+                .iter_mut()
+                .find(|room| room.room_id == room_id)
+            {
+                room.index = previous_index;
+            }
+            self.bridge_states[bridge_idx].last_error = Some(format!("置顶命令发送失败: {}", room_id));
+        }
+    }
+
+    pub fn set_clear_search_on_room_select(&mut self, enabled: bool) {
+        self.clear_search_on_room_select = enabled;
+        cfg::update_and_save_cfg(|cfg| {
+            cfg.ui_setting.clear_search_on_room_select = enabled;
+        });
+    }
+
+    pub fn set_scroll_to_bottom_after_send(&mut self, enabled: bool) {
+        self.scroll_to_bottom_after_send = enabled;
+        cfg::update_and_save_cfg(|cfg| {
+            cfg.ui_setting.scroll_to_bottom_after_send = enabled;
+        });
+    }
+
+    pub fn set_reedit_draft_conflict_mode(&mut self, mode: ReEditDraftConflictMode) {
+        self.reedit_draft_conflict_mode = mode;
+        cfg::update_and_save_cfg(|cfg| {
+            cfg.ui_setting.reedit_draft_conflict_mode = mode;
+        });
+    }
+
+    fn image_mime_type(path: &Path) -> Option<&'static str> {
+        let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
+        match ext.as_str() {
+            "png" => Some("image/png"),
+            "jpg" | "jpeg" => Some("image/jpeg"),
+            "gif" => Some("image/gif"),
+            "webp" => Some("image/webp"),
+            "bmp" => Some("image/bmp"),
+            _ => None,
+        }
+    }
+
+    fn load_pending_image(path: &Path) -> anyhow::Result<PendingImage> {
+        let mime_type = Self::image_mime_type(path)
+            .ok_or_else(|| anyhow::anyhow!("不支持的图片格式: {}", path.display()))?;
+        let data = std::fs::read(path)?;
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "image".to_string());
+
+        Ok(PendingImage {
+            name,
+            mime_type: mime_type.to_string(),
+            data,
+        })
+    }
+
     pub fn select_active_room(&mut self, room_id: RoomId) {
         let mut should_request = false;
+        let clear_search_on_room_select = self.clear_search_on_room_select;
         if let Some(state) = self.active_bridge_state_mut() {
             state.selected_room_id = Some(room_id);
+            if clear_search_on_room_select {
+                state.room_search_query.clear();
+            }
             should_request = state.requested_rooms.insert(room_id);
         }
 
         if should_request && let Some(bridge_idx) = self.active_bridge_idx {
-            self.request_room_messages(bridge_idx, room_id);
+            self.request_room_messages(bridge_idx, room_id, true);
         }
     }
 
@@ -612,6 +683,7 @@ impl IcaApp {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
         };
+        let scroll_to_bottom_after_send = self.scroll_to_bottom_after_send;
         let Some(state) = self.bridge_states.get_mut(bridge_idx) else {
             return;
         };
@@ -621,19 +693,171 @@ impl IcaApp {
 
         let draft = state.draft_by_room.entry(room_id).or_default();
         let content = draft.trim().to_string();
-        if content.is_empty() {
+        let reply_to = state.reply_to_by_room.remove(&room_id);
+        let pending_image = state.pending_image_by_room.remove(&room_id);
+        if content.is_empty() && pending_image.is_none() {
+            if let Some(reply_to) = reply_to {
+                state.reply_to_by_room.insert(room_id, reply_to);
+            }
             return;
         }
         draft.clear();
 
         // 发送动作也统一走命令通道，这样多 bridge 下不会把消息发到错误连接。
-        let message = SendMessage::new(content.clone(), room_id, None);
+        let mut message = SendMessage::new(content.clone(), room_id, reply_to.clone());
+        if let Some(image) = pending_image.as_ref() {
+            message.set_img(&image.data, &image.mime_type, false);
+        }
         if let Err(e) = self.ica_clients[bridge_idx]
             .command_tx
             .send(IcaCommand::SendMessage(message))
         {
             tracing::warn!("send sendMessage command failed: {}", e);
             state.draft_by_room.insert(room_id, content);
+            if let Some(reply_to) = reply_to {
+                state.reply_to_by_room.insert(room_id, reply_to);
+            }
+            if let Some(image) = pending_image {
+                state.pending_image_by_room.insert(room_id, image);
+            }
+        } else if scroll_to_bottom_after_send {
+            state.pending_send_scroll_to_bottom.insert(room_id);
+        }
+    }
+
+    pub fn queue_reply(&mut self, room_id: RoomId, reply: ReplyMessage) {
+        if let Some(state) = self.active_bridge_state_mut() {
+            state.reply_to_by_room.insert(room_id, reply);
+        }
+    }
+
+    pub fn send_delete_message(&mut self, room_id: RoomId, message_id: String) {
+        let Some(bridge_idx) = self.active_bridge_idx else {
+            return;
+        };
+
+        let message = DeleteMessage::new(room_id, message_id.clone());
+        if let Err(e) = self.ica_clients[bridge_idx]
+            .command_tx
+            .send(IcaCommand::DeleteMessage(message))
+        {
+            tracing::warn!("send deleteMessage command failed: {}", e);
+            if let Some(state) = self.active_bridge_state_mut() {
+                state.last_error = Some(format!("撤回消息命令发送失败: {}", message_id));
+            }
+        }
+    }
+
+    pub fn set_message_reveal(&mut self, room_id: RoomId, message_id: String, reveal: bool) {
+        let Some(bridge_idx) = self.active_bridge_idx else {
+            return;
+        };
+
+        let command = if reveal {
+            IcaCommand::RevealMessage {
+                room_id,
+                message_id: message_id.clone(),
+            }
+        } else {
+            IcaCommand::HideMessage {
+                room_id,
+                message_id: message_id.clone(),
+            }
+        };
+
+        if let Err(e) = self.ica_clients[bridge_idx].command_tx.send(command) {
+            tracing::warn!("send reveal/hide message command failed: {}", e);
+            if let Some(state) = self.active_bridge_state_mut() {
+                state.last_error = Some(format!("显示/隐藏消息命令发送失败: {}", message_id));
+            }
+            return;
+        }
+
+        if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+            if reveal {
+                state.mark_message_revealed(&message_id);
+            } else {
+                state.mark_message_hidden(&message_id);
+            }
+        }
+    }
+
+    pub fn restore_deleted_message_to_draft(&mut self, room_id: RoomId, content: String) {
+        let mode = self.reedit_draft_conflict_mode;
+        if let Some(state) = self.active_bridge_state_mut() {
+            let draft = state.draft_by_room.entry(room_id).or_default();
+            match mode {
+                ReEditDraftConflictMode::Overwrite => {
+                    *draft = content;
+                }
+                ReEditDraftConflictMode::Append => {
+                    if draft.trim().is_empty() {
+                        *draft = content;
+                    } else if !content.trim().is_empty() {
+                        if !draft.ends_with('\n') {
+                            draft.push('\n');
+                        }
+                        draft.push_str(&content);
+                    }
+                }
+                ReEditDraftConflictMode::SkipIfNonEmpty => {
+                    if draft.trim().is_empty() {
+                        *draft = content;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn handle_join_request(&mut self, request_type: String, flag: String, accept: bool) {
+        let Some(bridge_idx) = self.active_bridge_idx else {
+            return;
+        };
+
+        if let Err(e) = self.ica_clients[bridge_idx]
+            .command_tx
+            .send(IcaCommand::HandleRequest {
+                request_type: request_type.clone(),
+                flag: flag.clone(),
+                accept,
+            })
+        {
+            tracing::warn!("send handleRequest command failed: {}", e);
+            if let Some(state) = self.active_bridge_state_mut() {
+                state.last_error = Some(format!("验证消息操作发送失败: {}", flag));
+            }
+            return;
+        }
+
+        if let Some(state) = self.active_bridge_state_mut() {
+            state.join_requests.retain(|request| request.flag != flag);
+        }
+    }
+
+    pub fn pick_image_for_current_room(&mut self) {
+        let Some(active_bridge_idx) = self.active_bridge_idx else {
+            return;
+        };
+        let Some(room_id) = self.bridge_states[active_bridge_idx].selected_room_id else {
+            return;
+        };
+
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("image", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
+            .pick_file()
+        else {
+            return;
+        };
+
+        match Self::load_pending_image(&path) {
+            Ok(image) => {
+                self.bridge_states[active_bridge_idx]
+                    .pending_image_by_room
+                    .insert(room_id, image);
+            }
+            Err(e) => {
+                self.bridge_states[active_bridge_idx].last_error = Some(e.to_string());
+            }
         }
     }
 
@@ -647,13 +871,28 @@ impl IcaApp {
             };
 
             let payload = event.get("payload").cloned().unwrap_or(JsonValue::Null);
-            let Some(state) = self.bridge_state_mut(bridge_key) else {
+            let Some(bridge_idx) = self
+                .bridge_states
+                .iter()
+                .position(|state| state.bridge_key == bridge_key)
+            else {
                 continue;
             };
 
-            state.last_event = Some(event_name.to_string());
+            let should_refresh_system_messages = {
+                let state = &mut self.bridge_states[bridge_idx];
+                let prev_auth_state = state.auth_state;
 
-            Self::apply_socketio_event(state, event_name, &payload);
+                state.last_event = Some(event_name.to_string());
+
+                Self::apply_socketio_event(state, event_name, &payload);
+
+                prev_auth_state != AuthState::Succeeded && state.auth_state == AuthState::Succeeded
+            };
+
+            if should_refresh_system_messages {
+                self.request_system_messages(bridge_idx);
+            }
         }
     }
 }
@@ -672,7 +911,15 @@ impl eframe::App for IcaApp {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape))
             && let Some(state) = self.active_bridge_state_mut()
         {
-            state.selected_room_id = None;
+            if state.forward_target_picker_open {
+                state.forward_target_picker_open = false;
+            } else if let Some(room_id) = state.selected_room_id {
+                if state.is_forward_selection_active(room_id) {
+                    state.clear_forward_selection();
+                } else {
+                    state.selected_room_id = None;
+                }
+            }
         }
 
         // 渲染相关的方法已移到 `renders.rs` 模块

@@ -54,7 +54,7 @@ fn egui_main() -> anyhow::Result<()> {
             // 安装 egui extra
             egui_extras::install_image_loaders(&cc.egui_ctx);
             // 安装图片统计加载器
-            // image_loader::install_tracking_image_loader(&cc.egui_ctx);
+            image_loader::install_tracking_image_loader(&cc.egui_ctx);
             Ok(Box::new(app::IcaApp::new(cc)))
         }),
     )

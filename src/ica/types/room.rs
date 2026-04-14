@@ -54,17 +54,30 @@ impl Room {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct JoinRequestRoom {
+    #[serde(default)]
     pub comment: String,
-    pub group_id: RoomId,
+    #[serde(default)]
+    pub group_id: Option<RoomId>,
+    #[serde(default)]
     pub group_name: String,
+    #[serde(default)]
     pub user_id: UserId,
+    #[serde(default)]
     pub nickname: String,
+    #[serde(default)]
     pub request_type: String,
+    #[serde(default)]
     pub post_type: String,
+    #[serde(default)]
     pub sub_type: String,
+    #[serde(default)]
     pub time: i64,
+    #[serde(default)]
     pub tips: String,
+    #[serde(default)]
     pub flag: String,
+    #[serde(default)]
+    pub source: String,
 }

@@ -122,7 +122,12 @@ impl CustomChat {
     }
 
     /// 展示 ica-native 特有的选项
-    pub fn show_extra_ui(&mut self, ui: &mut Ui) {
+    pub fn show_extra_ui(
+        &mut self,
+        ui: &mut Ui,
+        clear_on_select: &mut bool,
+        scroll_on_send: &mut bool,
+    ) {
         Grid::new("custom_chat_extra_grid")
             .num_columns(2)
             .striped(true)
@@ -137,8 +142,19 @@ impl CustomChat {
                 let _ = ui.checkbox(&mut self.enable_topic_button, "");
                 ui.end_row();
 
-                ui.label("隐藏群友头像 (纯文字模式)");
+                ui.vertical(|ui| {
+                    ui.label("纯文字模式");
+                    ui.weak("去掉消息气泡与引用框");
+                });
                 let _ = ui.checkbox(&mut self.hide_group_member_avatar, "");
+                ui.end_row();
+
+                ui.label("选中会话后清空聊天列表搜索框");
+                let _ = ui.checkbox(clear_on_select, "");
+                ui.end_row();
+
+                ui.label("发送消息后自动滚动到底部");
+                let _ = ui.checkbox(scroll_on_send, "");
                 ui.end_row();
             });
     }

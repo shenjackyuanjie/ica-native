@@ -1,6 +1,45 @@
 use super::*;
 use egui::{Button, Hyperlink, Image, Label, RichText};
 
+mod message_card;
+mod windows;
+
+use message_card::MessageRenderOptions;
+
+fn format_message_content(content: &str) -> String {
+    let open_tag = "<IcalinguaAt qq=";
+    let close_tag = "</IcalinguaAt>";
+    let mut result = String::with_capacity(content.len());
+    let mut remaining = content;
+
+    while let Some(start_idx) = remaining.find(open_tag) {
+        let (before, after_start) = remaining.split_at(start_idx);
+        result.push_str(before);
+
+        let Some(tag_end_idx) = after_start.find('>') else {
+            result.push_str(after_start);
+            return result;
+        };
+        let tag_body = &after_start[tag_end_idx + 1..];
+        let Some(close_idx) = tag_body.find(close_tag) else {
+            result.push_str(after_start);
+            return result;
+        };
+
+        let encoded_name = &tag_body[..close_idx];
+        match urlencoding::decode(encoded_name) {
+            Ok(decoded) => result.push_str(decoded.as_ref()),
+            Err(_) => result.push_str(encoded_name),
+        }
+
+        remaining = &tag_body[close_idx + close_tag.len()..];
+    }
+
+    result.push_str(remaining);
+    result
+}
+
+
 impl IcaApp {
     // 顶栏：将多个 menu 合并为一个“功能块”
     pub fn render_top_panel(&mut self, ctx: &egui::Context) {
@@ -26,6 +65,9 @@ impl IcaApp {
                 .button(format!("验证消息 ({})", verify_message_count))
                 .clicked()
             {
+                if let Some(active_bridge_idx) = self.active_bridge_idx {
+                    self.request_system_messages(active_bridge_idx);
+                }
                 ui.close();
                 self.open_page.verify_message = true;
             }
@@ -163,7 +205,7 @@ impl IcaApp {
                             .active_bridge_state()
                             .and_then(|state| state.selected_room_id)
                     {
-                        self.request_room_messages(bridge_idx, room_id);
+                        self.request_room_messages(bridge_idx, room_id, false);
                     }
                     if ui.button("顶部").clicked() {
                         self.chat_list_scroll_target = ChatListScrollTarget::Top;
@@ -172,20 +214,46 @@ impl IcaApp {
                         self.chat_list_scroll_target = ChatListScrollTarget::Bottom;
                     }
                 });
-                ui.separator();
 
                 let Some(active_bridge_idx) = self.active_bridge_idx else {
                     ui.weak("当前没有启用的 bridge");
                     return;
                 };
 
-                let room_count = self.bridge_states[active_bridge_idx].rooms.len();
+                ui.horizontal(|ui| {
+                    if let Some(state) = self.bridge_states.get_mut(active_bridge_idx) {
+                        ui.add_sized(
+                            [ui.available_width(), 0.0],
+                            egui::TextEdit::singleline(&mut state.room_search_query)
+                                .hint_text("会话名或 QQ/群号"),
+                        );
+                    }
+                });
+                ui.separator();
+
+                let visible_rooms = self.visible_rooms(active_bridge_idx);
+                if visible_rooms.is_empty() {
+                    let has_query = self
+                        .bridge_states
+                        .get(active_bridge_idx)
+                        .map(|state| !state.room_search_query.trim().is_empty())
+                        .unwrap_or(false);
+                    if has_query {
+                        ui.weak("没有匹配的会话");
+                    } else {
+                        ui.weak("当前 bridge 还没有会话");
+                    }
+                    return;
+                }
+
+                let room_count = visible_rooms.len();
                 // 内容矩形顶部内边距（头像与文字一起下移）
                 let content_top_padding = 4.0;
                 let content_height = 50.0;
                 let row_spacing = ui.spacing().item_spacing.y;
                 let row_height = content_height + content_top_padding + row_spacing;
                 let total_height = row_height * room_count as f32;
+                let mut pending_pin_change = None;
 
                 let scroll_area = egui::ScrollArea::vertical().id_salt("chat_list_scroll");
 
@@ -225,9 +293,11 @@ impl IcaApp {
                     let start = start as usize;
                     let end = (end as usize).min(room_count);
 
-                    for idx in start..end {
+                    for (offset, room) in visible_rooms[start..end].iter().enumerate() {
+                        let idx = start + offset;
                         let selected_room_id = self.bridge_states[active_bridge_idx].selected_room_id;
-                        let room_id = self.bridge_states[active_bridge_idx].rooms[idx].room_id;
+                        let room_id = room.room_id;
+                        let is_pinned = room.index > 0;
                         let is_selected = selected_room_id == Some(room_id);
 
                         let y = list_rect.top() + idx as f32 * row_height;
@@ -243,10 +313,19 @@ impl IcaApp {
                         let id = ui.make_persistent_id(("chat_list_row", idx));
                         let response = ui.interact(row_rect, id, egui::Sense::click());
 
+                        let dark_mode = ui.visuals().dark_mode;
                         let bg_color = if is_selected {
-                            egui::Color32::from_gray(55)
+                            if dark_mode {
+                                egui::Color32::from_rgb(0x22, 0x24, 0x2a)
+                            } else {
+                                egui::Color32::from_rgb(0xe5, 0xef, 0xfa)
+                            }
                         } else if response.hovered() {
-                            egui::Color32::from_gray(45)
+                            if dark_mode {
+                                egui::Color32::from_rgb(0x1e, 0x1e, 0x25)
+                            } else {
+                                egui::Color32::from_rgb(0xf2, 0xf6, 0xfc)
+                            }
                         } else {
                             egui::Color32::TRANSPARENT
                         };
@@ -256,9 +335,16 @@ impl IcaApp {
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                                 // 左侧内边距：把整行内容从分割线向右挪一点
                                 ui.add_space(4.0);
-                                let room = &self.bridge_states[active_bridge_idx].rooms[idx];
                                 self.render_room(ui, room);
                             });
+                        });
+
+                        response.context_menu(|ui| {
+                            let label = if is_pinned { "取消置顶" } else { "置顶" };
+                            if ui.button(label).clicked() {
+                                pending_pin_change = Some((room_id, !is_pinned));
+                                ui.close();
+                            }
                         });
 
                         if response.clicked() {
@@ -279,6 +365,10 @@ impl IcaApp {
 
                 if !matches!(self.chat_list_scroll_target, ChatListScrollTarget::None) {
                     self.chat_list_scroll_target = ChatListScrollTarget::None;
+                }
+
+                if let Some((room_id, pin)) = pending_pin_change {
+                    self.set_room_pinned(active_bridge_idx, room_id, pin);
                 }
             });
     }
@@ -314,7 +404,7 @@ impl IcaApp {
                     ui.label(format!("Socket: {}", socket_state));
                     ui.label(format!("认证: {}", auth_state));
                     if ui.button("重新拉取历史").clicked() {
-                        self.request_room_messages(active_bridge_idx, room_id);
+                        self.request_room_messages(active_bridge_idx, room_id, false);
                     }
                 });
             } else {
@@ -330,7 +420,7 @@ impl IcaApp {
                 ui.colored_label(egui::Color32::LIGHT_RED, last_error);
             }
 
-            ui.separator();
+            ui.add_space(4.0);
 
             if selected_room_id.is_none() {
                 ui.label(format!("QQ: {}", online_data.qqid));
@@ -351,14 +441,69 @@ impl IcaApp {
             let has_requested = self.bridge_states[active_bridge_idx]
                 .requested_rooms
                 .contains(&room_id);
+            let should_scroll_to_bottom = self.bridge_states[active_bridge_idx]
+                .message_scroll_to_bottom
+                .contains(&room_id);
+            let forward_mode_active = self.bridge_states[active_bridge_idx]
+                .is_forward_selection_active(room_id);
+            let forward_selected_ids = self.bridge_states[active_bridge_idx]
+                .forward_selected_message_ids
+                .clone();
+            let forward_selected_count = if forward_mode_active {
+                forward_selected_ids.len()
+            } else {
+                0
+            };
+            let has_reply_banner = self.bridge_states[active_bridge_idx]
+                .reply_to_by_room
+                .contains_key(&room_id);
+            let has_pending_image = self.bridge_states[active_bridge_idx]
+                .pending_image_by_room
+                .contains_key(&room_id);
+            let composer_reserved_height = 36.0
+                + if forward_mode_active { 54.0 } else { 0.0 }
+                + if has_reply_banner { 54.0 } else { 0.0 }
+                + if has_pending_image { 54.0 } else { 0.0 };
+            let message_list_height = (ui.available_height() - composer_reserved_height).max(120.0);
+            let mut pending_action = None;
 
-            egui::ScrollArea::vertical()
+            let scroll_output = egui::ScrollArea::vertical()
                 .id_salt(("message_list", active_bridge_idx, room_id))
+                .max_height(message_list_height)
                 .show(ui, |ui| {
+                    ui.set_min_width(ui.max_rect().width());
+
                     match self.bridge_states[active_bridge_idx].messages_by_room.get(&room_id) {
                         Some(messages) if !messages.is_empty() => {
+                            let pure_text_mode = self.custom_chat.hide_group_member_avatar;
+                            let mut previous_sender_id = None;
                             for message in messages {
-                                self.render_message_card(ui, self_id, message);
+                                let forward_selected = forward_mode_active
+                                    && forward_selected_ids
+                                        .iter()
+                                        .any(|selected_id| selected_id == &message.msg_id);
+                                let show_sender_name = !pure_text_mode
+                                    || previous_sender_id != Some(message.sender_id);
+                                let show_separator_before = pure_text_mode
+                                    && previous_sender_id.is_some()
+                                    && previous_sender_id != Some(message.sender_id);
+                                if let Some(action) =
+                                    self.render_message_card(
+                                        ui,
+                                        room_id,
+                                        self_id,
+                                        message,
+                                        MessageRenderOptions {
+                                            show_sender_name,
+                                            show_separator_before,
+                                            forward_mode_active,
+                                            forward_selected,
+                                        },
+                                    )
+                                {
+                                    pending_action = Some(action);
+                                }
+                                previous_sender_id = Some(message.sender_id);
                             }
                         }
                         Some(_) => {
@@ -371,26 +516,229 @@ impl IcaApp {
                             ui.weak("正在向 bridge 请求历史消息...");
                         }
                     }
+
+                    if should_scroll_to_bottom {
+                        ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
+                    }
                 });
 
-            ui.separator();
+            // 检测是否滚动到底部：内容高度 - 滚动偏移 - 可视高度 < 阈值
+            let user_scrolled_to_bottom;
+            {
+                let content_size = scroll_output.content_size;
+                let inner_rect = scroll_output.inner_rect;
+                let offset_y = scroll_output.state.offset.y;
+                let visible_height = inner_rect.height();
+                let max_scroll = (content_size.y - visible_height).max(0.0);
+                user_scrolled_to_bottom = max_scroll < 1.0 || (max_scroll - offset_y) < 20.0;
+            }
+
+            // 未滚动到底部时，在滚动区域右下角悬浮显示 "↓" 按钮
+            if !user_scrolled_to_bottom {
+                let scroll_rect = scroll_output.inner_rect;
+                let btn_size = egui::vec2(32.0, 32.0);
+                let btn_pos = egui::pos2(
+                    scroll_rect.right() - btn_size.x - 12.0,
+                    scroll_rect.bottom() - btn_size.y - 12.0,
+                );
+                egui::Area::new(egui::Id::new(("scroll_to_bottom_btn", active_bridge_idx, room_id)))
+                    .fixed_pos(btn_pos)
+                    .order(egui::Order::Foreground)
+                    .show(ui.ctx(), |ui| {
+                        let btn_text = egui::RichText::new("↓").size(18.0);
+                        let btn = egui::Button::new(btn_text)
+                            .corner_radius(16.0)
+                            .min_size(btn_size);
+                        if ui.add(btn).clicked() {
+                            self.bridge_states[active_bridge_idx]
+                                .message_scroll_to_bottom
+                                .insert(room_id);
+                        }
+                    });
+            }
+
+            if should_scroll_to_bottom {
+                self.bridge_states[active_bridge_idx]
+                    .message_scroll_to_bottom
+                    .remove(&room_id);
+            }
+
+            if let Some(action) = pending_action {
+                match action {
+                    MessageAction::Reply { room_id, reply } => {
+                        self.queue_reply(room_id, reply);
+                    }
+                    MessageAction::Delete { room_id, message_id } => {
+                        self.send_delete_message(room_id, message_id);
+                    }
+                    MessageAction::ReEdit { room_id, content } => {
+                        self.restore_deleted_message_to_draft(room_id, content);
+                    }
+                    MessageAction::SetReveal {
+                        room_id,
+                        message_id,
+                        reveal,
+                    } => {
+                        self.set_message_reveal(room_id, message_id, reveal);
+                    }
+                    MessageAction::CopyToDraft { room_id, message_id } => {
+                        self.copy_message_to_draft(room_id, message_id);
+                    }
+                    MessageAction::PlusOne { room_id, message_id } => {
+                        self.plus_one_message(room_id, message_id);
+                    }
+                    MessageAction::ToggleForwardSelection { room_id, message_id } => {
+                        self.toggle_forward_message_selection(room_id, message_id);
+                    }
+                    MessageAction::StartForward { room_id, message_id } => {
+                        self.begin_forward_selection(room_id, message_id, true);
+                    }
+                }
+            }
+
+            let mut clear_reply = false;
+            let mut clear_image = false;
+            let mut clear_forward_selection = false;
+            let mut open_forward_picker = false;
+            let mut plus_one_forward = false;
 
             let mut should_send = false;
-            ui.horizontal(|ui| {
-                let input_width = (ui.available_width() - 72.0).max(120.0);
-                let draft = self.bridge_states[active_bridge_idx]
-                    .draft_by_room
-                    .entry(room_id)
-                    .or_default();
-                let response = ui.add_sized(
-                    [input_width, 0.0],
-                    egui::TextEdit::singleline(draft).hint_text("输入消息，Enter 发送"),
-                );
-                let enter_pressed = response.lost_focus()
-                    && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                should_send = enter_pressed
-                    || ui.add_sized([64.0, 0.0], Button::new("发送")).clicked();
-            });
+            let mut choose_image = false;
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), composer_reserved_height),
+                egui::Layout::bottom_up(egui::Align::Min),
+                |ui| {
+                    let control_height = 30.0;
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), control_height),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            let available_width = ui.available_width();
+                            let button_width = if available_width < 180.0 { 24.0 } else { 30.0 };
+                            let item_spacing = if available_width < 180.0 {
+                                4.0
+                            } else {
+                                ui.spacing().item_spacing.x
+                            };
+                            ui.spacing_mut().item_spacing.x = item_spacing;
+                            let input_width = (ui.available_width()
+                                - button_width * 2.0
+                                - item_spacing * 2.0)
+                                .max(0.0);
+                            let draft = self.bridge_states[active_bridge_idx]
+                                .draft_by_room
+                                .entry(room_id)
+                                .or_default();
+                            let response = ui.add_sized(
+                                [input_width, control_height],
+                                egui::TextEdit::singleline(draft).hint_text("输入消息，Enter 发送"),
+                            );
+                            let enter_pressed = response.lost_focus()
+                                && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                            choose_image = ui
+                                .add_sized(
+                                    [button_width, control_height],
+                                    Button::new(RichText::new("＋").size(16.0)),
+                                )
+                                .clicked();
+                            should_send = enter_pressed
+                                || ui
+                                    .add_sized(
+                                        [button_width, control_height],
+                                        Button::new(RichText::new("↗").size(15.0)),
+                                    )
+                                    .clicked();
+                        },
+                    );
+
+                    if forward_mode_active {
+                        ui.add_space(6.0);
+                        egui::Frame::group(ui.style()).show(ui, |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.weak(format!("已选 {} 条消息", forward_selected_count));
+                                if ui.button("逐条转发").clicked() {
+                                    open_forward_picker = true;
+                                }
+                                if ui.button("+1").clicked() {
+                                    plus_one_forward = true;
+                                }
+                                if ui.button("清空").clicked() {
+                                    clear_forward_selection = true;
+                                }
+                            });
+                        });
+                    }
+
+                    if let Some(image) = self.bridge_states[active_bridge_idx]
+                        .pending_image_by_room
+                        .get(&room_id)
+                        .cloned()
+                    {
+                        ui.add_space(6.0);
+                        egui::Frame::group(ui.style()).show(ui, |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.weak("待发送图片");
+                                if ui.button("取消").clicked() {
+                                    clear_image = true;
+                                }
+                            });
+                            ui.add(
+                                Label::new(format!(
+                                    "{} ({:.1} KB)",
+                                    image.name,
+                                    image.data.len() as f32 / 1024.0
+                                ))
+                                .wrap(),
+                            );
+                        });
+                    }
+
+                    if let Some(reply) = self.bridge_states[active_bridge_idx]
+                        .reply_to_by_room
+                        .get(&room_id)
+                        .cloned()
+                    {
+                        ui.add_space(6.0);
+                        egui::Frame::group(ui.style()).show(ui, |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.weak(format!("正在回复 {}", reply.sender_name));
+                                if ui.button("取消").clicked() {
+                                    clear_reply = true;
+                                }
+                            });
+                            ui.add(Label::new(format_message_content(&reply.content)).wrap());
+                        });
+                    }
+                },
+            );
+
+            if clear_reply {
+                self.bridge_states[active_bridge_idx]
+                    .reply_to_by_room
+                    .remove(&room_id);
+            }
+
+            if clear_image {
+                self.bridge_states[active_bridge_idx]
+                    .pending_image_by_room
+                    .remove(&room_id);
+            }
+
+            if clear_forward_selection {
+                self.clear_forward_selection();
+            }
+
+            if open_forward_picker {
+                self.open_forward_target_picker(room_id);
+            }
+
+            if plus_one_forward {
+                self.plus_one_forward_selection(room_id);
+            }
+
+            if choose_image {
+                self.pick_image_for_current_room();
+            }
 
             if should_send {
                 self.send_current_message();
@@ -400,12 +748,15 @@ impl IcaApp {
 
     // 合并房间内的头像 / 名称行 / 预览行 为一个方法，减少外部碎片函数
     fn render_room(&self, ui: &mut egui::Ui, room: &Room) {
+        ui.style_mut().interaction.selectable_labels = false;
+
         // 左侧：头像区域（方形，固定大小）
         // 群聊时右下角叠加发送者头像
         // 使用 LayerId 叠加两个头像（保留原注释以便后续改进）
         let is_group = room.room_id < 0;
-        let avatar_size = 48.0;
-        let sender_avatar_size = 18.0;
+        let dark_mode = ui.visuals().dark_mode;
+        let avatar_size = 40.0;
+        let sender_avatar_size = 20.0;
 
         // 使用 LayerId 叠加两个头像
         let (rect, _) =
@@ -455,11 +806,24 @@ impl IcaApp {
                     if let Some(ref timestamp) = room.last_message.timestamp
                         && !timestamp.is_empty()
                     {
+                        let ts_color = if dark_mode {
+                            egui::Color32::from_rgb(0xb3, 0xba, 0xc9)
+                        } else {
+                            egui::Color32::from_rgb(0x60, 0x62, 0x66)
+                        };
                         ui.label(
                             RichText::new(timestamp)
-                                .size(10.0)
-                                .color(egui::Color32::from_gray(140)),
+                                .size(11.0)
+                                .color(ts_color),
                         );
+                    }
+                    if room.index > 0 {
+                        let pin_color = if ui.visuals().dark_mode {
+                            egui::Color32::from_rgb(0xC0, 0xC4, 0xCC)
+                        } else {
+                            egui::Color32::from_rgb(0x90, 0x93, 0x99)
+                        };
+                        ui.label(RichText::new("↑").size(11.0).color(pin_color));
                     }
 
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -468,7 +832,7 @@ impl IcaApp {
                         } else {
                             &room.room_name
                         };
-                        let mut text = RichText::new(name_text);
+                        let mut text = RichText::new(name_text).size(16.0);
                         if room.unread_count > 0 {
                             text = text.strong();
                         }
@@ -518,255 +882,40 @@ impl IcaApp {
                             && let Some(ref username) = room.last_message.username
                             && !username.is_empty()
                         {
-                            ui.label(
-                                RichText::new(format!("{}:", username))
-                                    .size(12.0)
-                                    .color(egui::Color32::LIGHT_BLUE),
+                            ui.add(
+                                Label::new(
+                                    RichText::new(format!("{}:", username))
+                                        .size(12.0)
+                                        .color(if dark_mode {
+                                            egui::Color32::from_rgb(0x52, 0xa3, 0xe8)
+                                        } else {
+                                            egui::Color32::from_rgb(0x19, 0x76, 0xd2)
+                                        }),
+                                )
+                                .selectable(false),
                             );
                         }
                         if let Some(ref content) = room.last_message.content
                             && !content.is_empty()
                         {
-                            ui.label(RichText::new(content).size(12.0));
+                            let preview_color = if dark_mode {
+                                egui::Color32::from_rgb(0xb3, 0xba, 0xc9)
+                            } else {
+                                egui::Color32::from_rgb(0x60, 0x62, 0x66)
+                            };
+                            ui.add(
+                                Label::new(
+                                    RichText::new(format_message_content(content))
+                                        .size(12.0)
+                                        .color(preview_color),
+                                )
+                                .selectable(false),
+                            );
                         }
                     });
                 });
             },
         );
     }
-
-    fn render_message_card(&self, ui: &mut egui::Ui, self_id: i64, message: &crate::ica::types::message::Message) {
-        let is_self = self_id > 0 && message.sender_id == self_id;
-        let title_color = if message.deleted {
-            egui::Color32::GRAY
-        } else if message.system {
-            egui::Color32::LIGHT_YELLOW
-        } else if is_self {
-            egui::Color32::LIGHT_GREEN
-        } else {
-            egui::Color32::LIGHT_BLUE
-        };
-
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.colored_label(title_color, &message.sender_name);
-                ui.weak(message.time.format("%H:%M:%S").to_string());
-                if message.deleted {
-                    ui.weak("已撤回");
-                }
-                if message.system {
-                    ui.weak("系统消息");
-                }
-            });
-
-            if let Some(reply) = &message.reply {
-                ui.weak(format!("回复 {}: {}", reply.sender_name, reply.content));
-            }
-
-            if !message.content.is_empty() {
-                ui.label(&message.content);
-            } else if !message.files.is_empty() {
-                ui.label(format!("[{} 个文件]", message.files.len()));
-            } else {
-                ui.weak("[空消息]");
-            }
-        });
-        ui.add_space(4.0);
-    }
-
-    // 将所有窗口渲染相关的独立函数合并到一个功能块里（内部分支式处理每个窗口）
-    pub fn render_windows(&mut self, ctx: &egui::Context) {
-        // 定制聊天界面 (ica)
-        egui::Window::new("定制聊天界面 (ica)")
-            .open(&mut self.open_page.custom_chat_ica)
-            .resizable(false)
-            .show(ctx, |ui| {
-                self.custom_chat.show_ica_ui(ui);
-            });
-
-        // 定制聊天界面 (extra)
-        egui::Window::new("定制聊天界面 (extra)")
-            .open(&mut self.open_page.custom_chat_extra)
-            .resizable(false)
-            .show(ctx, |ui| {
-                self.custom_chat.show_extra_ui(ui);
-            });
-
-        // 在线状态
-        let active_bridge_info = self.active_bridge_state().map(|state| {
-            (
-                state.bridge_key.clone(),
-                state.online_data.qqid,
-                state.online_data.nick.clone(),
-                state.online_data.online,
-            )
-        });
-        egui::Window::new("在线状态")
-            .open(&mut self.open_page.online_status)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.heading("在线状态");
-                if let Some((bridge_key, qqid, nick, online)) = &active_bridge_info {
-                    ui.label(format!("当前 bridge: {}", bridge_key));
-                    ui.label(format!("QQ: {}", qqid));
-                    ui.label(format!("昵称: {}", nick));
-                    ui.label(format!("在线: {}", if *online { "是" } else { "否" }));
-                    ui.separator();
-                }
-                ui.label("选择在线状态");
-                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Online, "在线");
-                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Left, "离开");
-                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Hidden, "隐身");
-                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Busy, "忙碌");
-                let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::PingMe, "Q我吧");
-                let _ = ui.selectable_value(
-                    &mut self.online_mode,
-                    OnlineMode::DoNotDisturb,
-                    "请勿打扰",
-                );
-            });
-
-        let verify_message_data = self.active_bridge_state().map(|state| {
-            (state.bridge_key.clone(), state.join_requests.clone())
-        });
-
-        // 验证消息
-        egui::Window::new("验证消息")
-            .default_size(egui::vec2(400.0, 300.0))
-            .open(&mut self.open_page.verify_message)
-            .show(ctx, |ui| {
-                let Some((bridge_key, join_requests)) = &verify_message_data else {
-                    ui.heading("验证消息");
-                    ui.weak("当前没有启用的 bridge");
-                    return;
-                };
-
-                ui.heading(format!("{} 的验证消息", bridge_key));
-                ui.label(format!("当前共 {} 条", join_requests.len()));
-                ui.separator();
-
-                if join_requests.is_empty() {
-                    ui.weak("当前没有收到新的验证消息");
-                    ui.weak("后端推送 handleRequest 后会显示在这里。");
-                    return;
-                }
-
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for request in join_requests {
-                        egui::Frame::group(ui.style()).show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.strong(&request.group_name);
-                                ui.separator();
-                                ui.label(format!("群号 {}", request.group_id));
-                            });
-                            ui.label(format!("申请人: {} ({})", request.nickname, request.user_id));
-                            ui.label(format!("类型: {}/{}", request.request_type, request.sub_type));
-                            if !request.comment.trim().is_empty() {
-                                ui.label(format!("附言: {}", request.comment));
-                            }
-                            if !request.tips.trim().is_empty() {
-                                ui.weak(format!("提示: {}", request.tips));
-                            }
-                            ui.monospace(format!("flag: {}", request.flag));
-                        });
-                        ui.add_space(6.0);
-                    }
-                });
-            });
-
-        // 关于
-        egui::Window::new("关于 Icalingua++ native")
-            .open(&mut self.open_page.about)
-            .collapsible(true)
-            .show(ctx, |ui| {
-                ui.heading("Icalingua++ native");
-                ui.separator();
-                ui.horizontal_wrapped(|ui| {
-                    ui.label("版本：");
-                    ui.monospace(crate::VERSION);
-                });
-                // 标题与正文之间留出一点垂直间距
-                ui.add_space(6.0);
-                ui.label("一个使用 Rust + egui 开发的跨平台原生 ica 客户端。");
-                // 正文与“开源信息”分组之间的垂直间距
-                ui.add_space(8.0);
-                ui.collapsing("开源信息", |ui| {
-                    ui.label("本项目基于开源许可证发布，欢迎 Star、Issue 与 PR。");
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label("项目地址：");
-                        let link = Hyperlink::from_label_and_url("Github", crate::GITHUB_LINK);
-                        ui.add(link);
-                    });
-                });
-                // “开源信息”和“致谢”分组之间的垂直间距
-                ui.add_space(8.0);
-                ui.collapsing("致谢", |ui| {
-                    ui.label("感谢所有贡献者与所使用的开源项目：");
-                    ui.label("Icalingua 作者以及各位用户");
-                    ui.label("Rust 语言与生态");
-                    ui.label("egui/eframe 图形界面框架");
-                    ui.label("以及社区用户的反馈与支持");
-                });
-            });
-
-        // Socketio 状态
-        egui::Window::new("Socketio 状态")
-            .open(&mut self.open_page.socketio_status)
-            .collapsible(true)
-            .show(ctx, |ui| {
-                ui.heading("Socketio 状态");
-                if self.bridge_states.is_empty() {
-                    ui.weak("当前没有启用的 bridge");
-                    return;
-                }
-
-                for state in &self.bridge_states {
-                    egui::Frame::group(ui.style()).show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.strong(&state.bridge_key);
-                            ui.separator();
-                            ui.label(format!("Socket: {}", state.socket_state));
-                            ui.label(format!("认证: {}", state.auth_state));
-                        });
-                        ui.label(format!("房间数: {}", state.rooms.len()));
-                        ui.label(format!("已缓存会话: {}", state.messages_by_room.len()));
-                        ui.label(format!("验证消息: {}", state.join_requests.len()));
-                        ui.label(format!("QQ: {}", state.online_data.qqid));
-                        if let Some(last_event) = &state.last_event {
-                            ui.label(format!("最近事件: {}", last_event));
-                        }
-                        if let Some(last_error) = &state.last_error {
-                            ui.colored_label(egui::Color32::LIGHT_RED, last_error);
-                        }
-                    });
-                    ui.add_space(6.0);
-                }
-            });
-
-        // 配置文件编辑
-        egui::Window::new("配置文件编辑")
-            .open(&mut self.open_page.raw_config)
-            .collapsible(true)
-            .show(ctx, |ui| {
-                self.config_editer.ui(ui);
-            });
-
-        // 通知等级说明（以窗口方式展示图片）
-        if self.open_page.notify_level {
-            // 在新页面展示一张图
-            let size = ctx.content_rect();
-            egui::Window::new("通知等级说明")
-                .open(&mut self.open_page.notify_level)
-                .collapsible(false)
-                .default_size((size.width() / 2.0, size.height() / 2.0))
-                .resizable(true)
-                .show(ctx, |ui| {
-                    ui.image(crate::assets::webp::NOTIFICATION);
-                });
-            // todo
-            // 这里应该新开一个页面的
-            // egui::Context::show_viewport_deferred(&self, new_viewport_id, viewport_builder, viewport_ui_cb);
-            // ctx.show_viewport_deferred("info", viewport_builder, viewport_ui_cb);
-        }
-    }
 }
+
