@@ -213,6 +213,81 @@ impl IcaApp {
                     }
                 }
             }
+            "updateRoom" => {
+                if let Some(value) = Self::first_payload_value(payload) {
+                    match serde_json::from_value::<Room>(value.clone()) {
+                        Ok(updated_room) => {
+                            if let Some(existing) = state.rooms.iter_mut().find(|r| r.room_id == updated_room.room_id) {
+                                *existing = updated_room;
+                            } else {
+                                state.rooms.push(updated_room);
+                            }
+                        }
+                        Err(e) => {
+                            state.last_error = Some(format!("updateRoom 解析失败: {}", e));
+                        }
+                    }
+                }
+            }
+            "syncRead" => {
+                if let Some(room_id) = Self::first_payload_value(payload).and_then(|v| v.as_i64()) {
+                    if let Some(room) = state.rooms.iter_mut().find(|r| r.room_id == room_id) {
+                        room.unread_count = 0;
+                        room.at = crate::ica::types::message::At::Bool(false);
+                    }
+                }
+            }
+            "renewMessage" => {
+                if let Some(value) = Self::first_payload_value(payload) {
+                    let room_id = value["roomId"].as_i64().unwrap_or_default();
+                    if let Some(msg_id) = value["messageId"].as_str() {
+                        if let Some(messages) = state.messages_by_room.get_mut(&room_id) {
+                            if let Some(existing) = messages.iter_mut().find(|m| m.msg_id == msg_id) {
+                                if let Some(msg_update) = value.get("message") {
+                                    if let Some(content) = msg_update.get("content").and_then(|c| c.as_str()) {
+                                        existing.content = content.to_string();
+                                    }
+                                    if let Some(deleted) = msg_update.get("deleted").and_then(|d| d.as_bool()) {
+                                        existing.deleted = deleted;
+                                    }
+                                    if let Some(hide) = msg_update.get("hide").and_then(|h| h.as_bool()) {
+                                        existing.hide = hide;
+                                    }
+                                    if let Some(reveal) = msg_update.get("reveal").and_then(|r| r.as_bool()) {
+                                        existing.reveal = reveal;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "setOnline" => {
+                state.socket_state = SocketState::Connected;
+            }
+            "setOffline" => {
+                state.socket_state = SocketState::Disconnected;
+                if let Some(value) = Self::first_payload_value(payload) {
+                    if let Some(msg) = value.as_str() {
+                        state.last_error = Some(msg.to_string());
+                    }
+                }
+            }
+            "messageSuccess" => {}
+            "messageError" => {
+                if let Some(value) = Self::first_payload_value(payload) {
+                    let msg = value.as_str().unwrap_or("消息发送失败");
+                    state.last_error = Some(msg.to_string());
+                }
+            }
+            "closeLoading" => {}
+            "notifyError" => {
+                if let Some(value) = Self::first_payload_value(payload) {
+                    if let Some(msg) = value.as_str() {
+                        state.last_error = Some(msg.to_string());
+                    }
+                }
+            }
             "setSystemMessages" => {
                 if let Some(value) = Self::first_payload_value(payload) {
                     match Self::parse_join_requests_snapshot(value) {

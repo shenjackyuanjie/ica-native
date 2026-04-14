@@ -1,0 +1,103 @@
+use rust_socketio::Payload;
+use serde_json::Value as JsonValue;
+use serde_json::json;
+use std::time::Duration;
+use tokio::sync::mpsc::UnboundedSender;
+
+use crate::ica::types::{RoomId, message::{DeleteMessage, SendMessage}};
+
+/// icalingua 客户端的兼容版本号
+pub const ICA_PROTOCOL_VERSION: &str = "2.12.28";
+/// 自动重连最多尝试 5 次。
+pub(super) const MAX_RECONNECT_ATTEMPTS: usize = 5;
+/// 指数退避的等待时间上限，避免失败时越等越久。
+const MAX_RECONNECT_BACKOFF_SECS: u64 = 30;
+
+#[derive(Debug, Clone, Copy)]
+pub(super) enum ConnectionSignal {
+    Disconnected,
+}
+
+#[derive(Debug, Clone)]
+pub enum IcaCommand {
+    FetchMessages(RoomId),
+    GetSystemMsg,
+    PinRoom { room_id: RoomId, pin: bool },
+    RemoveChat(RoomId),
+    IgnoreChat { room_id: RoomId, room_name: String },
+    RemoveIgnoredChat(RoomId),
+    SetRoomPriority { room_id: RoomId, priority: u8 },
+    ReportRead { room_id: RoomId, message_id: String },
+    StopFetchingHistory,
+    HideMessage { room_id: RoomId, message_id: String },
+    RevealMessage { room_id: RoomId, message_id: String },
+    SendMessage(SendMessage),
+    SendRawMessage { room_id: RoomId, content: JsonValue },
+    DeleteMessage(DeleteMessage),
+    HandleRequest {
+        request_type: String,
+        flag: String,
+        accept: bool,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct IcaClient {
+    pub bridge_key: String,
+    pub command_tx: UnboundedSender<IcaCommand>,
+}
+
+pub(super) fn emit_ui_event(
+    tx: &Option<UnboundedSender<JsonValue>>,
+    bridge_id: &str,
+    event_name: &'static str,
+    payload: JsonValue,
+) {
+    let obj = json!({
+        "bridge": bridge_id,
+        "event": event_name,
+        "payload": payload,
+    });
+
+    if let Some(tx) = tx {
+        let _ = tx.send(obj);
+    } else {
+        tracing::info!("{}: {}", event_name, obj);
+    }
+}
+
+pub(super) fn payload_to_json(payload: &Payload) -> JsonValue {
+    match payload {
+        Payload::Text(values) => JsonValue::Array(values.clone()),
+        Payload::Binary(bytes) => json!(bytes.to_vec()),
+        _ => JsonValue::Null,
+    }
+}
+
+pub(super) fn json_preview(value: &JsonValue, max_chars: usize) -> String {
+    let raw = value.to_string();
+    if raw.len() > max_chars {
+        format!("{}...", &raw[..max_chars])
+    } else {
+        raw
+    }
+}
+
+pub(super) fn unwrap_singleton_array_layers(mut value: JsonValue) -> JsonValue {
+    loop {
+        match value {
+            JsonValue::Array(mut values)
+                if values.len() == 1 && matches!(values.first(), Some(JsonValue::Array(_))) =>
+            {
+                value = values.remove(0);
+            }
+            _ => return value,
+        }
+    }
+}
+
+pub(super) fn reconnect_delay(attempt: usize) -> Duration {
+    let exp = attempt.saturating_sub(1).min(5) as u32;
+    let seconds = (1_u64 << exp).min(MAX_RECONNECT_BACKOFF_SECS);
+    Duration::from_secs(seconds)
+}

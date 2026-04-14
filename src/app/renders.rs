@@ -254,6 +254,8 @@ impl IcaApp {
                 let row_height = content_height + content_top_padding + row_spacing;
                 let total_height = row_height * room_count as f32;
                 let mut pending_pin_change = None;
+                let mut pending_remove_chat = None;
+                let mut pending_ignore_chat: Option<(i64, String)> = None;
 
                 let scroll_area = egui::ScrollArea::vertical().id_salt("chat_list_scroll");
 
@@ -340,9 +342,36 @@ impl IcaApp {
                         });
 
                         response.context_menu(|ui| {
+                            // 房间名 + ID (disabled header)
+                            ui.add_enabled(false, egui::Button::new(
+                                format!("{} ({})", room.room_name, room_id.abs())
+                            ));
+                            ui.separator();
+
                             let label = if is_pinned { "取消置顶" } else { "置顶" };
                             if ui.button(label).clicked() {
                                 pending_pin_change = Some((room_id, !is_pinned));
+                                ui.close();
+                            }
+                            if ui.button("删除会话").clicked() {
+                                pending_remove_chat = Some(room_id);
+                                ui.close();
+                            }
+                            if ui.button("屏蔽消息").clicked() {
+                                pending_ignore_chat = Some((room_id, room.room_name.clone()));
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button("复制名称").clicked() {
+                                ui.ctx().copy_text(room.room_name.clone());
+                                ui.close();
+                            }
+                            if ui.button("复制 ID").clicked() {
+                                ui.ctx().copy_text(room_id.abs().to_string());
+                                ui.close();
+                            }
+                            if ui.button("复制头像 URL").clicked() {
+                                ui.ctx().copy_text(room.avatar_url());
                                 ui.close();
                             }
                         });
@@ -369,6 +398,12 @@ impl IcaApp {
 
                 if let Some((room_id, pin)) = pending_pin_change {
                     self.set_room_pinned(active_bridge_idx, room_id, pin);
+                }
+                if let Some(room_id) = pending_remove_chat {
+                    self.remove_chat(active_bridge_idx, room_id);
+                }
+                if let Some((room_id, room_name)) = pending_ignore_chat {
+                    self.ignore_chat(active_bridge_idx, room_id, room_name);
                 }
             });
     }

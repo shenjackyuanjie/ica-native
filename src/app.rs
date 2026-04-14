@@ -614,6 +614,31 @@ impl IcaApp {
         }
     }
 
+    pub fn remove_chat(&mut self, bridge_idx: usize, room_id: RoomId) {
+        let Some(state) = self.bridge_states.get_mut(bridge_idx) else {
+            return;
+        };
+        state.rooms.retain(|room| room.room_id != room_id);
+        if state.selected_room_id == Some(room_id) {
+            state.selected_room_id = None;
+        }
+        if let Err(e) = self.ica_clients[bridge_idx]
+            .command_tx
+            .send(IcaCommand::RemoveChat(room_id))
+        {
+            tracing::warn!("send removeChat command failed: {}", e);
+        }
+    }
+
+    pub fn ignore_chat(&mut self, bridge_idx: usize, room_id: RoomId, room_name: String) {
+        if let Err(e) = self.ica_clients[bridge_idx]
+            .command_tx
+            .send(IcaCommand::IgnoreChat { room_id, room_name })
+        {
+            tracing::warn!("send ignoreChat command failed: {}", e);
+        }
+    }
+
     pub fn set_clear_search_on_room_select(&mut self, enabled: bool) {
         self.clear_search_on_room_select = enabled;
         cfg::update_and_save_cfg(|cfg| {

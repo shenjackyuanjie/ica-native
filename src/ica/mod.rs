@@ -3,14 +3,8 @@ use rust_socketio::{Payload, TransportType};
 
 use crate::StopGetter;
 use crate::cfg::IcaBridge;
-use crate::ica::types::{RoomId, message::{DeleteMessage, SendMessage}};
 
 use futures_util::future::BoxFuture;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-use std::time::Duration;
 
 use serde_json::Value as JsonValue;
 use serde_json::json;
@@ -18,97 +12,13 @@ use serde_json::json;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 pub mod client;
+mod command;
+mod handler;
+pub use command::{ICA_PROTOCOL_VERSION, IcaClient, IcaCommand};
+use command::{
+    ConnectionSignal, MAX_RECONNECT_ATTEMPTS, emit_ui_event, payload_to_json, reconnect_delay,
+};
 pub mod types;
-
-/// icalingua 客户端的兼容版本号
-pub const ICA_PROTOCOL_VERSION: &str = "2.12.28";
-/// 自动重连最多尝试 5 次。
-const MAX_RECONNECT_ATTEMPTS: usize = 5;
-/// 指数退避的等待时间上限，避免失败时越等越久。
-const MAX_RECONNECT_BACKOFF_SECS: u64 = 30;
-
-#[derive(Debug, Clone, Copy)]
-enum ConnectionSignal {
-    Disconnected,
-}
-
-#[derive(Debug, Clone)]
-pub enum IcaCommand {
-    FetchMessages(RoomId),
-    GetSystemMsg,
-    PinRoom { room_id: RoomId, pin: bool },
-    HideMessage { room_id: RoomId, message_id: String },
-    RevealMessage { room_id: RoomId, message_id: String },
-    SendMessage(SendMessage),
-    SendRawMessage { room_id: RoomId, content: JsonValue },
-    DeleteMessage(DeleteMessage),
-    HandleRequest {
-        request_type: String,
-        flag: String,
-        accept: bool,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub struct IcaClient {
-    pub bridge_key: String,
-    pub command_tx: UnboundedSender<IcaCommand>,
-}
-
-fn emit_ui_event(
-    tx: &Option<UnboundedSender<JsonValue>>,
-    bridge_id: &str,
-    event_name: &'static str,
-    payload: JsonValue,
-) {
-    let obj = json!({
-        "bridge": bridge_id,
-        "event": event_name,
-        "payload": payload,
-    });
-
-    if let Some(tx) = tx {
-        let _ = tx.send(obj);
-    } else {
-        tracing::info!("{}: {}", event_name, obj);
-    }
-}
-
-fn payload_to_json(payload: &Payload) -> JsonValue {
-    match payload {
-        Payload::Text(values) => JsonValue::Array(values.clone()),
-        Payload::Binary(bytes) => json!(bytes.to_vec()),
-        _ => JsonValue::Null,
-    }
-}
-
-fn json_preview(value: &JsonValue, max_chars: usize) -> String {
-    let raw = value.to_string();
-    if raw.len() > max_chars {
-        format!("{}...", &raw[..max_chars])
-    } else {
-        raw
-    }
-}
-
-fn unwrap_singleton_array_layers(mut value: JsonValue) -> JsonValue {
-    loop {
-        match value {
-            JsonValue::Array(mut values)
-                if values.len() == 1 && matches!(values.first(), Some(JsonValue::Array(_))) =>
-            {
-                value = values.remove(0);
-            }
-            _ => return value,
-        }
-    }
-}
-
-fn reconnect_delay(attempt: usize) -> Duration {
-    let exp = attempt.saturating_sub(1).min(5) as u32;
-    let seconds = (1_u64 << exp).min(MAX_RECONNECT_BACKOFF_SECS);
-    Duration::from_secs(seconds)
-}
 
 /// 启动 socketio client，并把服务端事件用 unbounded channel 发回 GUI 主线程
 ///
@@ -222,6 +132,15 @@ pub async fn main(
         builder = builder.on("setAllRooms", make_event_cb("setAllRooms"));
         builder = builder.on("setMessages", make_event_cb("setMessages"));
         builder = builder.on("handleRequest", make_event_cb("handleRequest"));
+        builder = builder.on("updateRoom", make_event_cb("updateRoom"));
+        builder = builder.on("syncRead", make_event_cb("syncRead"));
+        builder = builder.on("renewMessage", make_event_cb("renewMessage"));
+        builder = builder.on("setOnline", make_event_cb("setOnline"));
+        builder = builder.on("setOffline", make_event_cb("setOffline"));
+        builder = builder.on("messageSuccess", make_event_cb("messageSuccess"));
+        builder = builder.on("messageError", make_event_cb("messageError"));
+        builder = builder.on("closeLoading", make_event_cb("closeLoading"));
+        builder = builder.on("notifyError", make_event_cb("notifyError"));
 
         let client = match builder.connect().await {
             Ok(client) => {
@@ -310,282 +229,7 @@ pub async fn main(
                     }
                 }
                 Some(command) = command_rx.recv() => {
-                    match command {
-                        IcaCommand::FetchMessages(room_id) => {
-                            let timeout = Duration::from_secs(10);
-                            let ack_received = Arc::new(AtomicBool::new(false));
-                            let ack_received_cb = ack_received.clone();
-                            let tx = event_tx.clone();
-                            let bridge_id = bridge_key.clone();
-
-                            let result = client
-                                .emit_with_ack(
-                                    "fetchMessages",
-                                    vec![json!(room_id), json!(0)],
-                                    timeout,
-                                    move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
-                                        let ack_received = ack_received_cb.clone();
-                                        let tx = tx.clone();
-                                        let bridge_id = bridge_id.clone();
-                                        Box::pin(async move {
-                                            ack_received.store(true, Ordering::SeqCst);
-                                            let raw_payload = payload_to_json(&payload);
-                                            let messages = raw_payload
-                                                .as_array()
-                                                .and_then(|values| values.first())
-                                                .cloned()
-                                                .map(unwrap_singleton_array_layers)
-                                                .unwrap_or_else(|| JsonValue::Array(Vec::new()));
-                                            if !messages.is_array() {
-                                                tracing::warn!(
-                                                    "fetchMessages ack format unexpected: bridge={} room_id={} raw={}",
-                                                    bridge_id,
-                                                    room_id,
-                                                    json_preview(&raw_payload, 512)
-                                                );
-                                            }
-
-                                            emit_ui_event(
-                                                &tx,
-                                                &bridge_id,
-                                                "setMessages",
-                                                json!([
-                                                    {
-                                                        "roomId": room_id,
-                                                        "messages": messages,
-                                                    }
-                                                ]),
-                                            );
-                                        })
-                                    },
-                                )
-                                .await;
-
-                            match result {
-                                Ok(()) => {
-                                    let tx = event_tx.clone();
-                                    let bridge_id = bridge_key.clone();
-                                    tokio::spawn(async move {
-                                        tokio::time::sleep(timeout).await;
-                                        if !ack_received.load(Ordering::SeqCst) {
-                                            tracing::warn!(
-                                                "fetchMessages timeout: bridge={} room_id={}",
-                                                bridge_id,
-                                                room_id
-                                            );
-                                            emit_ui_event(
-                                                &tx,
-                                                &bridge_id,
-                                                "commandFailed",
-                                                json!({
-                                                    "kind": "fetchMessages",
-                                                    "roomId": room_id,
-                                                    "message": "fetchMessages 请求超时",
-                                                }),
-                                            );
-                                        }
-                                    });
-                                }
-                                Err(e) => {
-                                    tracing::warn!("fetchMessages failed for {}: {}", bridge_key, e);
-                                    emit_ui_event(
-                                        &event_tx,
-                                        &bridge_key,
-                                        "commandFailed",
-                                        json!({
-                                            "kind": "fetchMessages",
-                                            "roomId": room_id,
-                                            "message": e.to_string(),
-                                        }),
-                                    );
-                                }
-                            }
-                        }
-                        IcaCommand::GetSystemMsg => {
-                            let timeout = Duration::from_secs(10);
-                            let ack_received = Arc::new(AtomicBool::new(false));
-                            let ack_received_cb = ack_received.clone();
-                            let tx = event_tx.clone();
-                            let bridge_id = bridge_key.clone();
-
-                            let result = client
-                                .emit_with_ack(
-                                    "getSystemMsg",
-                                    Vec::<JsonValue>::new(),
-                                    timeout,
-                                    move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
-                                        let ack_received = ack_received_cb.clone();
-                                        let tx = tx.clone();
-                                        let bridge_id = bridge_id.clone();
-                                        Box::pin(async move {
-                                            ack_received.store(true, Ordering::SeqCst);
-                                            emit_ui_event(
-                                                &tx,
-                                                &bridge_id,
-                                                "setSystemMessages",
-                                                payload_to_json(&payload),
-                                            );
-                                        })
-                                    },
-                                )
-                                .await;
-
-                            match result {
-                                Ok(()) => {
-                                    let tx = event_tx.clone();
-                                    let bridge_id = bridge_key.clone();
-                                    tokio::spawn(async move {
-                                        tokio::time::sleep(timeout).await;
-                                        if !ack_received.load(Ordering::SeqCst) {
-                                            emit_ui_event(
-                                                &tx,
-                                                &bridge_id,
-                                                "commandFailed",
-                                                json!({
-                                                    "kind": "getSystemMsg",
-                                                    "message": "getSystemMsg 请求超时",
-                                                }),
-                                            );
-                                        }
-                                    });
-                                }
-                                Err(e) => {
-                                    emit_ui_event(
-                                        &event_tx,
-                                        &bridge_key,
-                                        "commandFailed",
-                                        json!({
-                                            "kind": "getSystemMsg",
-                                            "message": e.to_string(),
-                                        }),
-                                    );
-                                }
-                            }
-                        }
-                        IcaCommand::SendMessage(message) => {
-                            let room_id = message.room_id;
-                            if !client::send_message(&client, &message).await {
-                                emit_ui_event(
-                                    &event_tx,
-                                    &bridge_key,
-                                    "commandFailed",
-                                    json!({
-                                        "kind": "sendMessage",
-                                        "roomId": room_id,
-                                        "message": "sendMessage failed",
-                                    }),
-                                );
-                            }
-                        }
-                        IcaCommand::SendRawMessage { room_id, content } => {
-                            let payload = json!({
-                                "messageType": "raw",
-                                "roomId": room_id,
-                                "content": content,
-                            });
-                            if !client::send_string_message(&client, &payload).await {
-                                emit_ui_event(
-                                    &event_tx,
-                                    &bridge_key,
-                                    "commandFailed",
-                                    json!({
-                                        "kind": "sendRawMessage",
-                                        "roomId": room_id,
-                                        "message": "sendRawMessage failed",
-                                    }),
-                                );
-                            }
-                        }
-                        IcaCommand::PinRoom { room_id, pin } => {
-                            if let Err(e) = client.emit("pinRoom", vec![json!(room_id), json!(pin)]).await {
-                                emit_ui_event(
-                                    &event_tx,
-                                    &bridge_key,
-                                    "commandFailed",
-                                    json!({
-                                        "kind": "pinRoom",
-                                        "roomId": room_id,
-                                        "message": e.to_string(),
-                                    }),
-                                );
-                            }
-                        }
-                        IcaCommand::HideMessage { room_id, message_id } => {
-                            if let Err(e) = client
-                                .emit("hideMessage", vec![json!(room_id), json!(message_id.clone())])
-                                .await
-                            {
-                                emit_ui_event(
-                                    &event_tx,
-                                    &bridge_key,
-                                    "commandFailed",
-                                    json!({
-                                        "kind": "hideMessage",
-                                        "roomId": room_id,
-                                        "messageId": message_id,
-                                        "message": e.to_string(),
-                                    }),
-                                );
-                            }
-                        }
-                        IcaCommand::RevealMessage { room_id, message_id } => {
-                            if let Err(e) = client
-                                .emit("revealMessage", vec![json!(room_id), json!(message_id.clone())])
-                                .await
-                            {
-                                emit_ui_event(
-                                    &event_tx,
-                                    &bridge_key,
-                                    "commandFailed",
-                                    json!({
-                                        "kind": "revealMessage",
-                                        "roomId": room_id,
-                                        "messageId": message_id,
-                                        "message": e.to_string(),
-                                    }),
-                                );
-                            }
-                        }
-                        IcaCommand::DeleteMessage(message) => {
-                            let message_id = message.message_id.clone();
-                            if !client::delete_message(&client, &message).await {
-                                emit_ui_event(
-                                    &event_tx,
-                                    &bridge_key,
-                                    "commandFailed",
-                                    json!({
-                                        "kind": "deleteMessage",
-                                        "messageId": message_id,
-                                        "message": "deleteMessage failed",
-                                    }),
-                                );
-                            }
-                        }
-                        IcaCommand::HandleRequest {
-                            request_type,
-                            flag,
-                            accept,
-                        } => {
-                            if let Err(e) = client
-                                .emit(
-                                    "handleRequest",
-                                    vec![json!(request_type), json!(flag), json!(accept)],
-                                )
-                                .await
-                            {
-                                emit_ui_event(
-                                    &event_tx,
-                                    &bridge_key,
-                                    "commandFailed",
-                                    json!({
-                                        "kind": "handleRequest",
-                                        "flag": flag,
-                                        "message": e.to_string(),
-                                    }),
-                                );
-                            }
-                        }
-                    }
+                    handler::handle_command(command, &client, &event_tx, &bridge_key).await;
                 }
             }
         };
