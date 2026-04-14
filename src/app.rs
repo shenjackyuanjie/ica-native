@@ -1,4 +1,8 @@
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Display,
+    sync::Arc,
+};
 
 use eframe::CreationContext;
 use eframe::glow;
@@ -10,7 +14,10 @@ use serde_json::Value as JsonValue;
 
 use crate::cfg;
 use crate::ica;
-use crate::{assets, ica::IcaClient};
+use crate::{
+    assets,
+    ica::{IcaClient, IcaCommand},
+};
 
 pub mod chat_groups;
 pub mod config_editer;
@@ -25,7 +32,12 @@ use custom_chat::CustomChat;
 use online_mode::OnlineMode;
 use open_page::AppOpenPage;
 
-use crate::ica::types::{RoomId, room::Room};
+use crate::ica::types::{
+    RoomId,
+    message::{Message, NewMessage, SendMessage},
+    online_data::OnlineData,
+    room::{JoinRequestRoom, Room},
+};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub enum ChatListScrollTarget {
@@ -35,9 +47,141 @@ pub enum ChatListScrollTarget {
     Bottom,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum SocketState {
+    #[default]
+    Connecting,
+    Connected,
+    Disconnected,
+    Failed,
+}
+
+impl Display for SocketState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SocketState::Connecting => write!(f, "连接中"),
+            SocketState::Connected => write!(f, "已连接"),
+            SocketState::Disconnected => write!(f, "已断开"),
+            SocketState::Failed => write!(f, "连接失败"),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum AuthState {
+    #[default]
+    Unknown,
+    Pending,
+    Succeeded,
+    Failed,
+}
+
+impl Display for AuthState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthState::Unknown => write!(f, "未开始"),
+            AuthState::Pending => write!(f, "认证中"),
+            AuthState::Succeeded => write!(f, "已认证"),
+            AuthState::Failed => write!(f, "认证失败"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+/// 单个 bridge 在 GUI 侧维护的完整状态。
+///
+/// 这里既存连接状态，也存房间列表、消息缓存、验证消息和草稿，
+/// 这样切换 bridge 时不需要把全局状态来回覆写。
+pub struct BridgeState {
+    pub bridge_key: String,
+    pub rooms: Vec<Room>,
+    pub messages_by_room: HashMap<RoomId, Vec<Message>>,
+    pub join_requests: Vec<JoinRequestRoom>,
+    pub selected_room_id: Option<RoomId>,
+    pub draft_by_room: HashMap<RoomId, String>,
+    pub requested_rooms: HashSet<RoomId>,
+    pub socket_state: SocketState,
+    pub auth_state: AuthState,
+    pub online_data: OnlineData,
+    pub last_error: Option<String>,
+    pub last_event: Option<String>,
+}
+
+impl BridgeState {
+    pub fn new(bridge_key: String) -> Self {
+        Self {
+            bridge_key,
+            rooms: Vec::new(),
+            messages_by_room: HashMap::new(),
+            join_requests: Vec::new(),
+            selected_room_id: None,
+            draft_by_room: HashMap::new(),
+            requested_rooms: HashSet::new(),
+            socket_state: SocketState::Connecting,
+            auth_state: AuthState::Unknown,
+            online_data: OnlineData::default(),
+            last_error: None,
+            last_event: None,
+        }
+    }
+
+    fn preview_content(message: &Message) -> String {
+        if message.deleted {
+            "[已撤回]".to_string()
+        } else if !message.content.is_empty() {
+            message.content.clone()
+        } else if !message.files.is_empty() {
+            format!("[{} 个文件]", message.files.len())
+        } else if message.system {
+            "[系统消息]".to_string()
+        } else {
+            "[空消息]".to_string()
+        }
+    }
+
+    pub fn sync_room_preview(&mut self, room_id: RoomId, message: &Message) {
+        let Some(room) = self.rooms.iter_mut().find(|room| room.room_id == room_id) else {
+            return;
+        };
+
+        room.last_message.content = Some(Self::preview_content(message));
+        room.last_message.username = Some(message.sender_name.clone());
+        room.last_message.user_id = Some(message.sender_id);
+        room.last_message.timestamp = Some(message.time.format("%H:%M:%S").to_string());
+    }
+
+    pub fn upsert_message(&mut self, room_id: RoomId, message: Message) {
+        let messages = self.messages_by_room.entry(room_id).or_default();
+        if let Some(existing) = messages.iter_mut().find(|item| item.msg_id == message.msg_id) {
+            *existing = message;
+        } else {
+            messages.push(message);
+        }
+    }
+
+    pub fn mark_message_deleted(&mut self, msg_id: &str) {
+        for messages in self.messages_by_room.values_mut() {
+            if let Some(message) = messages.iter_mut().find(|item| item.msg_id == msg_id) {
+                message.deleted = true;
+                break;
+            }
+        }
+    }
+
+    pub fn upsert_join_request(&mut self, request: JoinRequestRoom) {
+        if let Some(existing) = self
+            .join_requests
+            .iter_mut()
+            .find(|item| item.flag == request.flag)
+        {
+            *existing = request;
+        } else {
+            self.join_requests.insert(0, request);
+        }
+    }
+}
+
 pub struct IcaApp {
-    /// 是否连接上了
-    pub connected: bool,
     /// 聊天界面定制选项
     pub custom_chat: CustomChat,
     /// 在线模式
@@ -50,8 +194,6 @@ pub struct IcaApp {
     pub mute_any: bool,
     /// 通知等级
     pub notify_level: u8,
-    /// 所有聊天
-    pub chat_rooms: Vec<Room>,
     /// 是否选中某个聊天组
     pub chat_group_selected: bool,
     /// 选中了哪个聊天组
@@ -60,10 +202,12 @@ pub struct IcaApp {
     pub chat_groups: ChatGroups,
     /// 配置文件修改
     pub config_editer: ConfigEditer,
-    /// 选中的聊天室 ID
-    pub selected_room_id: Option<RoomId>,
     /// 聊天列表滚动目标
     pub chat_list_scroll_target: ChatListScrollTarget,
+    /// 当前选中的 bridge
+    pub active_bridge_idx: Option<usize>,
+    /// 每个 bridge 的界面状态
+    pub bridge_states: Vec<BridgeState>,
     /// tokio rt
     /// 用来开 socketio
     pub runtime: Runtime,
@@ -242,13 +386,13 @@ impl IcaApp {
         Self::setup_fonts(&cc.egui_ctx);
 
         let (ui_tx, ui_rx) = unbounded_channel::<JsonValue>();
-        let _ = ica::UI_SENDER.set(ui_tx.clone());
 
         let config = cfg::get_cfg_snapshot();
         let runtime = Self::setup_async_rt();
 
         let mut socketio_stop_senders = Vec::new();
         let mut ica_clients = Vec::new();
+        let mut bridge_states = Vec::new();
 
         for bridge in config.bridges.clone() {
             if !bridge.enable {
@@ -262,34 +406,35 @@ impl IcaApp {
             } else {
                 bridge.name.clone()
             };
+            let (command_tx, command_rx) = unbounded_channel();
             ica_clients.push(IcaClient {
                 bridge_key: bridge_key.clone(),
+                command_tx,
             });
+            bridge_states.push(BridgeState::new(bridge_key.clone()));
 
             let ui_tx_clone = ui_tx.clone();
             runtime.spawn(async move {
-                if let Err(e) = ica::main(stop_rx, &bridge, Some(ui_tx_clone)).await {
+                if let Err(e) = ica::main(stop_rx, &bridge, Some(ui_tx_clone), command_rx).await {
                     tracing::error!("socketio bridge {} stopped with error: {}", bridge_key, e);
                 }
             });
         }
 
         Self {
-            connected: false,
             custom_chat: CustomChat::default(),
             online_mode: OnlineMode::default(),
             open_page: AppOpenPage::default(),
             mute_any: false,
             mute_all: false,
             notify_level: 3,
-            // chat_rooms: Self::test_chat_rooms(),
-            chat_rooms: vec![],
             chat_group_selected: false,
             chat_group_idx: 0,
             chat_groups: ChatGroups::new(),
             config_editer: ConfigEditer::default(),
-            selected_room_id: None,
             chat_list_scroll_target: ChatListScrollTarget::Bottom,
+            active_bridge_idx: if bridge_states.is_empty() { None } else { Some(0) },
+            bridge_states,
             runtime,
             ica_clients,
             ui_rx,
@@ -298,35 +443,217 @@ impl IcaApp {
         }
     }
 
-    fn set_all_rooms(&mut self, rooms: Vec<Room>) {
-        self.chat_rooms = rooms;
+    pub fn active_bridge_state(&self) -> Option<&BridgeState> {
+        self.active_bridge_idx
+            .and_then(|idx| self.bridge_states.get(idx))
+    }
+
+    pub fn active_bridge_state_mut(&mut self) -> Option<&mut BridgeState> {
+        self.active_bridge_idx
+            .and_then(|idx| self.bridge_states.get_mut(idx))
+    }
+
+    fn bridge_state_mut(&mut self, bridge_key: &str) -> Option<&mut BridgeState> {
+        self.bridge_states
+            .iter_mut()
+            .find(|state| state.bridge_key == bridge_key)
+    }
+
+    /// socket.io 的事件 payload 基本都是数组包装，真正的数据通常在第一个元素里。
+    fn first_payload_value(payload: &JsonValue) -> Option<&JsonValue> {
+        payload.as_array().and_then(|values| values.first())
+    }
+
+    /// 统一提取事件里常见的 `message` 字段，避免每个分支都手动抄一遍。
+    fn payload_message(payload: &JsonValue) -> Option<String> {
+        payload
+            .get("message")
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string)
+    }
+
+    /// 把某个 bridge 发来的事件应用到对应的本地状态上。
+    ///
+    /// 这里故意不做 UI 逻辑，只做“事件 -> 状态”的映射，方便后续继续补事件类型。
+    fn apply_socketio_event(state: &mut BridgeState, event_name: &str, payload: &JsonValue) {
+        match event_name {
+            "socketConnecting" => {
+                state.socket_state = SocketState::Connecting;
+                state.auth_state = AuthState::Unknown;
+                state.last_error = None;
+            }
+            "socketReconnecting" => {
+                state.socket_state = SocketState::Connecting;
+                state.last_error = Self::payload_message(payload);
+            }
+            "socketConnected" => {
+                state.socket_state = SocketState::Connected;
+                state.last_error = None;
+            }
+            "socketDisconnected" => {
+                state.socket_state = SocketState::Disconnected;
+                state.last_error = Self::payload_message(payload);
+            }
+            "socketConnectFailed" => {
+                state.socket_state = SocketState::Failed;
+                state.last_error = Self::payload_message(payload);
+            }
+            "socketRetryScheduled" => {
+                state.socket_state = SocketState::Connecting;
+                state.last_error = Self::payload_message(payload);
+            }
+            "socketReconnectExhausted" => {
+                state.socket_state = SocketState::Failed;
+                state.last_error = Self::payload_message(payload);
+            }
+            "requireAuth" => {
+                state.auth_state = AuthState::Pending;
+            }
+            "authSucceed" => {
+                state.auth_state = AuthState::Succeeded;
+                state.last_error = None;
+            }
+            "authFailed" => {
+                state.auth_state = AuthState::Failed;
+                state.last_error = Some("bridge 认证失败".to_string());
+            }
+            "onlineData" => {
+                if let Some(value) = Self::first_payload_value(payload) {
+                    state.online_data = OnlineData::new_from_json(value);
+                }
+            }
+            "setAllRooms" => {
+                if let Some(value) = Self::first_payload_value(payload) {
+                    match serde_json::from_value::<Vec<Room>>(value.clone()) {
+                        Ok(rooms) => state.rooms = rooms,
+                        Err(e) => {
+                            state.last_error = Some(format!("setAllRooms 解析失败: {}", e));
+                        }
+                    }
+                }
+            }
+            "setMessages" => {
+                if let Some(value) = Self::first_payload_value(payload) {
+                    let room_id = value["roomId"].as_i64().unwrap_or_default();
+                    match serde_json::from_value::<Vec<Message>>(value["messages"].clone()) {
+                        Ok(messages) => {
+                            state.requested_rooms.insert(room_id);
+                            state.messages_by_room.insert(room_id, messages);
+                        }
+                        Err(e) => {
+                            state.last_error = Some(format!("setMessages 解析失败: {}", e));
+                        }
+                    }
+                }
+            }
+            "addMessage" => {
+                if let Some(value) = Self::first_payload_value(payload) {
+                    match serde_json::from_value::<NewMessage>(value.clone()) {
+                        Ok(new_message) => {
+                            let room_id = new_message.room_id;
+                            state.requested_rooms.insert(room_id);
+                            state.sync_room_preview(room_id, &new_message.msg);
+                            state.upsert_message(room_id, new_message.msg);
+                        }
+                        Err(e) => {
+                            state.last_error = Some(format!("addMessage 解析失败: {}", e));
+                        }
+                    }
+                }
+            }
+            "deleteMessage" => {
+                if let Some(msg_id) = Self::first_payload_value(payload).and_then(|value| value.as_str()) {
+                    state.mark_message_deleted(msg_id);
+                }
+            }
+            "handleRequest" => {
+                if let Some(value) = Self::first_payload_value(payload) {
+                    match serde_json::from_value::<JoinRequestRoom>(value.clone()) {
+                        Ok(request) => {
+                            state.upsert_join_request(request);
+                        }
+                        Err(e) => {
+                            state.last_error = Some(format!("handleRequest 解析失败: {}", e));
+                        }
+                    }
+                }
+            }
+            "commandFailed" => {
+                state.last_error = Self::payload_message(payload);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn request_room_messages(&self, bridge_idx: usize, room_id: RoomId) {
+        let Some(client) = self.ica_clients.get(bridge_idx) else {
+            return;
+        };
+
+        // 房间历史消息通过 socket 任务去拉，GUI 本身不直接碰底层 client。
+        if let Err(e) = client.command_tx.send(IcaCommand::FetchMessages(room_id)) {
+            tracing::warn!("send fetchMessages command failed: {}", e);
+        }
+    }
+
+    pub fn select_active_room(&mut self, room_id: RoomId) {
+        let mut should_request = false;
+        if let Some(state) = self.active_bridge_state_mut() {
+            state.selected_room_id = Some(room_id);
+            should_request = state.requested_rooms.insert(room_id);
+        }
+
+        if should_request && let Some(bridge_idx) = self.active_bridge_idx {
+            self.request_room_messages(bridge_idx, room_id);
+        }
+    }
+
+    pub fn send_current_message(&mut self) {
+        let Some(bridge_idx) = self.active_bridge_idx else {
+            return;
+        };
+        let Some(state) = self.bridge_states.get_mut(bridge_idx) else {
+            return;
+        };
+        let Some(room_id) = state.selected_room_id else {
+            return;
+        };
+
+        let draft = state.draft_by_room.entry(room_id).or_default();
+        let content = draft.trim().to_string();
+        if content.is_empty() {
+            return;
+        }
+        draft.clear();
+
+        // 发送动作也统一走命令通道，这样多 bridge 下不会把消息发到错误连接。
+        let message = SendMessage::new(content.clone(), room_id, None);
+        if let Err(e) = self.ica_clients[bridge_idx]
+            .command_tx
+            .send(IcaCommand::SendMessage(message))
+        {
+            tracing::warn!("send sendMessage command failed: {}", e);
+            state.draft_by_room.insert(room_id, content);
+        }
     }
 
     fn poll_socketio_events(&mut self) {
         while let Ok(event) = self.ui_rx.try_recv() {
-            let event_name = event
-                .get("event")
-                .and_then(|v| v.as_str())
-                .expect("socketio event missing 'event'");
+            let Some(event_name) = event.get("event").and_then(|value| value.as_str()) else {
+                continue;
+            };
+            let Some(bridge_key) = event.get("bridge").and_then(|value| value.as_str()) else {
+                continue;
+            };
 
-            match event_name {
-                "setAllRooms" => {
-                    let payload = event.get("payload").expect("setAllRooms missing payload");
+            let payload = event.get("payload").cloned().unwrap_or(JsonValue::Null);
+            let Some(state) = self.bridge_state_mut(bridge_key) else {
+                continue;
+            };
 
-                    let payload_items = payload
-                        .as_array()
-                        .expect("setAllRooms payload is not array");
+            state.last_event = Some(event_name.to_string());
 
-                    let rooms_value = payload_items.first().expect("setAllRooms payload empty");
-
-                    let rooms: Vec<Room> = serde_json::from_value(rooms_value.clone()).expect(
-                        &format!("setAllRooms parse rooms failed {:#?}", rooms_value),
-                    );
-
-                    self.set_all_rooms(rooms);
-                }
-                _ => {}
-            }
+            Self::apply_socketio_event(state, event_name, &payload);
         }
     }
 }
@@ -342,8 +669,10 @@ impl eframe::App for IcaApp {
         self.poll_socketio_events();
 
         // 检测 ESC 键取消选择
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.selected_room_id = None;
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape))
+            && let Some(state) = self.active_bridge_state_mut()
+        {
+            state.selected_room_id = None;
         }
 
         // 渲染相关的方法已移到 `renders.rs` 模块

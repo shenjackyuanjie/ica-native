@@ -1,5 +1,5 @@
 use crate::ica::types::{
-    RoomId,
+    RoomId, UserId,
     message::{At, LastMessage},
 };
 use serde::{Deserialize, Serialize};
@@ -52,4 +52,19 @@ impl Room {
             format!("https://q1.qlogo.cn/g?b=qq&nk={}&s=140", self.room_id)
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JoinRequestRoom {
+    pub comment: String,
+    pub group_id: RoomId,
+    pub group_name: String,
+    pub user_id: UserId,
+    pub nickname: String,
+    pub request_type: String,
+    pub post_type: String,
+    pub sub_type: String,
+    pub time: i64,
+    pub tips: String,
+    pub flag: String,
 }

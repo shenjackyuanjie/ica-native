@@ -1,4 +1,5 @@
 use ed25519_dalek::{Signature, Signer, SigningKey};
+use futures_util::future::BoxFuture;
 use hex;
 use serde_json::Value as JsonValue;
 use serde_json::json;
@@ -12,7 +13,7 @@ use crate::ica::types::message::{DeleteMessage, SendMessage};
 use crate::ica::types::{RoomId, UserId};
 
 /// 使用指定私钥对服务端的 requireAuth payload 进行签名并发送 auth 事件
-pub async fn sign_with_key(payload: Payload, client: Client, private_key_hex: String) {
+async fn sign_with_key(payload: Payload, client: Client, private_key_hex: String) {
     // 解析 payload，优先取 Text
     let require_data = match payload {
         Payload::Text(vals) => vals,
@@ -82,27 +83,19 @@ pub async fn sign_with_key(payload: Payload, client: Client, private_key_hex: St
     }
 }
 
-/// 当服务器发来 `requireAuth` 时调用。
-/// payload 通常是一个 Text 类型的数组：`[auth_key, version]`
-/// 这里我们会从本地配置读取第一个 bridge 的 `private_key`，用它对服务端给出的 salt 签名并发送 `auth` 事件。
+/// 为某个 bridge 构造专用的 requireAuth 回调。
 ///
-/// 注意：本实现假设在 native 中只使用单一 bridge（或优先使用配置中第一个 bridge）。
-pub async fn sign_callback(payload: Payload, client: Client) {
-    // 从配置中读取私钥（取第一个 bridge 的 private_key）
-    let cfg = crate::cfg::get_cfg_snapshot();
-    let private_key_hex = match cfg.bridges.first() {
-        Some(b) => b.private_key.clone(),
-        None => {
-            event!(
-                Level::WARN,
-                "requireAuth: no bridge configured to sign auth"
-            );
-            return;
-        }
-    };
-
-    // 代理到通用的 sign_with_key 实现
-    sign_with_key(payload, client, private_key_hex).await;
+/// 多 bridge 场景下，每个 socket 连接都必须固定使用自己的私钥，
+/// 因此这里不再从全局配置里“猜”第一个 bridge，而是在注册事件时直接把 key 封进回调。
+pub fn sign_callback(
+    private_key_hex: String,
+) -> impl Fn(Payload, Client) -> BoxFuture<'static, ()> + Send + Sync + 'static {
+    move |payload: Payload, client: Client| {
+        let private_key_hex = private_key_hex.clone();
+        Box::pin(async move {
+            sign_with_key(payload, client, private_key_hex).await;
+        })
+    }
 }
 
 /// 发送一条 SendMessage（安全封装）

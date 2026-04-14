@@ -18,7 +18,14 @@ impl IcaApp {
             ui.label(crate::VERSION);
             let link = Hyperlink::from_label_and_url("Github", crate::GITHUB_LINK);
             ui.add(link);
-            if ui.button("验证消息").clicked() {
+            let verify_message_count = self
+                .active_bridge_state()
+                .map(|state| state.join_requests.len())
+                .unwrap_or(0);
+            if ui
+                .button(format!("验证消息 ({})", verify_message_count))
+                .clicked()
+            {
                 ui.close();
                 self.open_page.verify_message = true;
             }
@@ -118,11 +125,45 @@ impl IcaApp {
                 // 因为 `available_width()` 会受当前 layout/indent/scroll 内容区影响而变窄，导致背景留白。
                 let full_row_width = ui.max_rect().width();
 
+                ui.horizontal(|ui| {
+                    ui.label("Bridge");
+                    if self.bridge_states.is_empty() {
+                        ui.weak("没有启用的 bridge");
+                    } else {
+                        let selected_text = self
+                            .active_bridge_state()
+                            .map(|state| state.bridge_key.clone())
+                            .unwrap_or_else(|| "未选择".to_string());
+
+                        egui::ComboBox::from_id_salt("bridge_selector")
+                            .selected_text(selected_text)
+                            .show_ui(ui, |ui| {
+                                for idx in 0..self.bridge_states.len() {
+                                    let bridge_key = self.bridge_states[idx].bridge_key.clone();
+                                    if ui
+                                        .selectable_label(
+                                            self.active_bridge_idx == Some(idx),
+                                            bridge_key,
+                                        )
+                                        .clicked()
+                                    {
+                                        self.active_bridge_idx = Some(idx);
+                                    }
+                                }
+                            });
+                    }
+                });
+
                 // 标题栏
                 ui.horizontal(|ui| {
                     ui.label("聊天列表");
-                    if ui.button("刷新").clicked() {
-                        // 刷新逻辑留空，交由上层处理
+                    if ui.button("刷新").clicked()
+                        && let Some(bridge_idx) = self.active_bridge_idx
+                        && let Some(room_id) = self
+                            .active_bridge_state()
+                            .and_then(|state| state.selected_room_id)
+                    {
+                        self.request_room_messages(bridge_idx, room_id);
                     }
                     if ui.button("顶部").clicked() {
                         self.chat_list_scroll_target = ChatListScrollTarget::Top;
@@ -133,7 +174,12 @@ impl IcaApp {
                 });
                 ui.separator();
 
-                let room_count = self.chat_rooms.len();
+                let Some(active_bridge_idx) = self.active_bridge_idx else {
+                    ui.weak("当前没有启用的 bridge");
+                    return;
+                };
+
+                let room_count = self.bridge_states[active_bridge_idx].rooms.len();
                 // 内容矩形顶部内边距（头像与文字一起下移）
                 let content_top_padding = 4.0;
                 let content_height = 50.0;
@@ -180,9 +226,9 @@ impl IcaApp {
                     let end = (end as usize).min(room_count);
 
                     for idx in start..end {
-                        let room = &self.chat_rooms[idx];
-                        let room_id = room.room_id;
-                        let is_selected = self.selected_room_id == Some(room_id);
+                        let selected_room_id = self.bridge_states[active_bridge_idx].selected_room_id;
+                        let room_id = self.bridge_states[active_bridge_idx].rooms[idx].room_id;
+                        let is_selected = selected_room_id == Some(room_id);
 
                         let y = list_rect.top() + idx as f32 * row_height;
                         let row_rect = egui::Rect::from_min_size(
@@ -210,12 +256,13 @@ impl IcaApp {
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                                 // 左侧内边距：把整行内容从分割线向右挪一点
                                 ui.add_space(4.0);
+                                let room = &self.bridge_states[active_bridge_idx].rooms[idx];
                                 self.render_room(ui, room);
                             });
                         });
 
                         if response.clicked() {
-                            self.selected_room_id = Some(room_id);
+                            self.select_active_room(room_id);
                         }
 
                         // // 分隔线稍微往上提，避免紧贴行底
@@ -238,7 +285,116 @@ impl IcaApp {
 
     pub fn render_central_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("egui app ica");
+            let Some(active_bridge_idx) = self.active_bridge_idx else {
+                ui.heading("未启用 bridge");
+                ui.weak("请先在配置里启用至少一个 bridge。");
+                return;
+            };
+
+            let bridge_key = self.bridge_states[active_bridge_idx].bridge_key.clone();
+            let socket_state = self.bridge_states[active_bridge_idx].socket_state;
+            let auth_state = self.bridge_states[active_bridge_idx].auth_state;
+            let online_data = self.bridge_states[active_bridge_idx].online_data.clone();
+            let last_error = self.bridge_states[active_bridge_idx].last_error.clone();
+            let selected_room_id = self.bridge_states[active_bridge_idx].selected_room_id;
+
+            if let Some(room_id) = selected_room_id {
+                let room_name = self.bridge_states[active_bridge_idx]
+                    .rooms
+                    .iter()
+                    .find(|room| room.room_id == room_id)
+                    .map(|room| room.room_name.clone())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| room_id.to_string());
+
+                ui.horizontal(|ui| {
+                    ui.heading(room_name);
+                    ui.separator();
+                    ui.label(format!("Bridge: {}", bridge_key));
+                    ui.label(format!("Socket: {}", socket_state));
+                    ui.label(format!("认证: {}", auth_state));
+                    if ui.button("重新拉取历史").clicked() {
+                        self.request_room_messages(active_bridge_idx, room_id);
+                    }
+                });
+            } else {
+                ui.horizontal(|ui| {
+                    ui.heading(&bridge_key);
+                    ui.separator();
+                    ui.label(format!("Socket: {}", socket_state));
+                    ui.label(format!("认证: {}", auth_state));
+                });
+            }
+
+            if let Some(last_error) = last_error {
+                ui.colored_label(egui::Color32::LIGHT_RED, last_error);
+            }
+
+            ui.separator();
+
+            if selected_room_id.is_none() {
+                ui.label(format!("QQ: {}", online_data.qqid));
+                ui.label(format!("昵称: {}", online_data.nick));
+                ui.label(format!("在线: {}", if online_data.online { "是" } else { "否" }));
+                ui.label(format!(
+                    "Bridge 版本: {}",
+                    online_data.icalingua_info.ica_version
+                ));
+                ui.label(format!("系统: {}", online_data.icalingua_info.os_info));
+                ui.add_space(8.0);
+                ui.weak("从左侧选择一个房间后，会自动请求该房间历史消息。");
+                return;
+            }
+
+            let room_id = selected_room_id.expect("selected_room_id checked above");
+            let self_id = self.bridge_states[active_bridge_idx].online_data.qqid;
+            let has_requested = self.bridge_states[active_bridge_idx]
+                .requested_rooms
+                .contains(&room_id);
+
+            egui::ScrollArea::vertical()
+                .id_salt(("message_list", active_bridge_idx, room_id))
+                .show(ui, |ui| {
+                    match self.bridge_states[active_bridge_idx].messages_by_room.get(&room_id) {
+                        Some(messages) if !messages.is_empty() => {
+                            for message in messages {
+                                self.render_message_card(ui, self_id, message);
+                            }
+                        }
+                        Some(_) => {
+                            ui.weak("当前会话暂无消息");
+                        }
+                        None if has_requested => {
+                            ui.weak("当前会话暂无消息");
+                        }
+                        None => {
+                            ui.weak("正在向 bridge 请求历史消息...");
+                        }
+                    }
+                });
+
+            ui.separator();
+
+            let mut should_send = false;
+            ui.horizontal(|ui| {
+                let input_width = (ui.available_width() - 72.0).max(120.0);
+                let draft = self.bridge_states[active_bridge_idx]
+                    .draft_by_room
+                    .entry(room_id)
+                    .or_default();
+                let response = ui.add_sized(
+                    [input_width, 0.0],
+                    egui::TextEdit::singleline(draft).hint_text("输入消息，Enter 发送"),
+                );
+                let enter_pressed = response.lost_focus()
+                    && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                should_send = enter_pressed
+                    || ui.add_sized([64.0, 0.0], Button::new("发送")).clicked();
+            });
+
+            if should_send {
+                self.send_current_message();
+            }
         });
     }
 
@@ -379,6 +535,45 @@ impl IcaApp {
         );
     }
 
+    fn render_message_card(&self, ui: &mut egui::Ui, self_id: i64, message: &crate::ica::types::message::Message) {
+        let is_self = self_id > 0 && message.sender_id == self_id;
+        let title_color = if message.deleted {
+            egui::Color32::GRAY
+        } else if message.system {
+            egui::Color32::LIGHT_YELLOW
+        } else if is_self {
+            egui::Color32::LIGHT_GREEN
+        } else {
+            egui::Color32::LIGHT_BLUE
+        };
+
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.colored_label(title_color, &message.sender_name);
+                ui.weak(message.time.format("%H:%M:%S").to_string());
+                if message.deleted {
+                    ui.weak("已撤回");
+                }
+                if message.system {
+                    ui.weak("系统消息");
+                }
+            });
+
+            if let Some(reply) = &message.reply {
+                ui.weak(format!("回复 {}: {}", reply.sender_name, reply.content));
+            }
+
+            if !message.content.is_empty() {
+                ui.label(&message.content);
+            } else if !message.files.is_empty() {
+                ui.label(format!("[{} 个文件]", message.files.len()));
+            } else {
+                ui.weak("[空消息]");
+            }
+        });
+        ui.add_space(4.0);
+    }
+
     // 将所有窗口渲染相关的独立函数合并到一个功能块里（内部分支式处理每个窗口）
     pub fn render_windows(&mut self, ctx: &egui::Context) {
         // 定制聊天界面 (ica)
@@ -398,11 +593,26 @@ impl IcaApp {
             });
 
         // 在线状态
+        let active_bridge_info = self.active_bridge_state().map(|state| {
+            (
+                state.bridge_key.clone(),
+                state.online_data.qqid,
+                state.online_data.nick.clone(),
+                state.online_data.online,
+            )
+        });
         egui::Window::new("在线状态")
             .open(&mut self.open_page.online_status)
             .resizable(false)
             .show(ctx, |ui| {
                 ui.heading("在线状态");
+                if let Some((bridge_key, qqid, nick, online)) = &active_bridge_info {
+                    ui.label(format!("当前 bridge: {}", bridge_key));
+                    ui.label(format!("QQ: {}", qqid));
+                    ui.label(format!("昵称: {}", nick));
+                    ui.label(format!("在线: {}", if *online { "是" } else { "否" }));
+                    ui.separator();
+                }
                 ui.label("选择在线状态");
                 let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Online, "在线");
                 let _ = ui.selectable_value(&mut self.online_mode, OnlineMode::Left, "离开");
@@ -416,13 +626,52 @@ impl IcaApp {
                 );
             });
 
+        let verify_message_data = self.active_bridge_state().map(|state| {
+            (state.bridge_key.clone(), state.join_requests.clone())
+        });
+
         // 验证消息
         egui::Window::new("验证消息")
             .default_size(egui::vec2(400.0, 300.0))
             .open(&mut self.open_page.verify_message)
             .show(ctx, |ui| {
-                ui.heading("这是一个新页面");
-                ui.label("在这里添加你的内容。");
+                let Some((bridge_key, join_requests)) = &verify_message_data else {
+                    ui.heading("验证消息");
+                    ui.weak("当前没有启用的 bridge");
+                    return;
+                };
+
+                ui.heading(format!("{} 的验证消息", bridge_key));
+                ui.label(format!("当前共 {} 条", join_requests.len()));
+                ui.separator();
+
+                if join_requests.is_empty() {
+                    ui.weak("当前没有收到新的验证消息");
+                    ui.weak("后端推送 handleRequest 后会显示在这里。");
+                    return;
+                }
+
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for request in join_requests {
+                        egui::Frame::group(ui.style()).show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.strong(&request.group_name);
+                                ui.separator();
+                                ui.label(format!("群号 {}", request.group_id));
+                            });
+                            ui.label(format!("申请人: {} ({})", request.nickname, request.user_id));
+                            ui.label(format!("类型: {}/{}", request.request_type, request.sub_type));
+                            if !request.comment.trim().is_empty() {
+                                ui.label(format!("附言: {}", request.comment));
+                            }
+                            if !request.tips.trim().is_empty() {
+                                ui.weak(format!("提示: {}", request.tips));
+                            }
+                            ui.monospace(format!("flag: {}", request.flag));
+                        });
+                        ui.add_space(6.0);
+                    }
+                });
             });
 
         // 关于
@@ -466,6 +715,32 @@ impl IcaApp {
             .collapsible(true)
             .show(ctx, |ui| {
                 ui.heading("Socketio 状态");
+                if self.bridge_states.is_empty() {
+                    ui.weak("当前没有启用的 bridge");
+                    return;
+                }
+
+                for state in &self.bridge_states {
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.strong(&state.bridge_key);
+                            ui.separator();
+                            ui.label(format!("Socket: {}", state.socket_state));
+                            ui.label(format!("认证: {}", state.auth_state));
+                        });
+                        ui.label(format!("房间数: {}", state.rooms.len()));
+                        ui.label(format!("已缓存会话: {}", state.messages_by_room.len()));
+                        ui.label(format!("验证消息: {}", state.join_requests.len()));
+                        ui.label(format!("QQ: {}", state.online_data.qqid));
+                        if let Some(last_event) = &state.last_event {
+                            ui.label(format!("最近事件: {}", last_event));
+                        }
+                        if let Some(last_error) = &state.last_error {
+                            ui.colored_label(egui::Color32::LIGHT_RED, last_error);
+                        }
+                    });
+                    ui.add_space(6.0);
+                }
             });
 
         // 配置文件编辑
