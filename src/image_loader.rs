@@ -7,9 +7,11 @@
 //! (起因是我让他写了个图片加载内存使用量追踪)
 use std::{
     collections::hash_map::DefaultHasher,
+    collections::HashSet,
     hash::{Hash, Hasher},
     mem::size_of,
     path::PathBuf,
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -40,6 +42,8 @@ pub struct TrackingImageLoader {
     disk_cache_dir: Option<PathBuf>,
     /// 磁盘缓存最大字节数。
     disk_max_bytes: u64,
+    /// 正在网络加载中的 URI，避免每帧重复打印 cache miss 日志。
+    network_pending: Arc<Mutex<HashSet<String>>>,
 }
 
 /// 缓存条目状态。
@@ -81,6 +85,7 @@ impl TrackingImageLoader {
             max_cache_bytes: cfg.image_cache_max_bytes,
             disk_cache_dir,
             disk_max_bytes: cfg.disk_image_cache_max_bytes,
+            network_pending: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -290,7 +295,7 @@ impl TrackingImageLoader {
 
     /// 当磁盘缓存总大小超过上限时，按修改时间从旧到新逐出。
     /// 优先清除普通图片，头像放后面。
-    fn evict_disk_if_needed(dir: &PathBuf, max_bytes: u64) {
+    fn evict_disk_if_needed(dir: &Path, max_bytes: u64) {
         if max_bytes == 0 {
             // 0 表示不限制
             return;
@@ -411,7 +416,12 @@ impl ImageLoader for TrackingImageLoader {
                 Entry::Pending => Ok(ImagePoll::Pending { size: None }),
             };
         }
-        info!("image cache miss: uri={}", uri);
+
+        // 只在首次 miss 时打印日志，网络加载中的 URI 不重复打印
+        let is_new_miss = !self.network_pending.lock().contains(uri);
+        if is_new_miss {
+            info!("image cache miss: uri={}", uri);
+        }
 
         // 1. 尝试磁盘缓存
         if let Some(disk_bytes) = self.try_load_from_disk(uri) {
@@ -446,6 +456,9 @@ impl ImageLoader for TrackingImageLoader {
                 cache_lock.put(uri.to_string(), Entry::Pending);
                 drop(cache_lock);
 
+                // 网络字节已就绪，从 pending 集合移除
+                self.network_pending.lock().remove(uri);
+
                 // 解码成功后写入磁盘缓存
                 let disk_save_path = self.uri_to_cache_path(uri);
                 self.spawn_decode_and_cache(
@@ -457,8 +470,13 @@ impl ImageLoader for TrackingImageLoader {
 
                 Ok(ImagePoll::Pending { size: None })
             }
-            Ok(BytesPoll::Pending { size }) => Ok(ImagePoll::Pending { size }),
+            Ok(BytesPoll::Pending { size }) => {
+                // 标记为网络加载中，后续帧不再打印 cache miss
+                self.network_pending.lock().insert(uri.to_string());
+                Ok(ImagePoll::Pending { size })
+            }
             Err(err) => {
+                self.network_pending.lock().remove(uri);
                 warn!("image byte load failed: uri={} err={}", uri, err);
                 let normalized = normalize_image_load_error(uri, err);
                 if let LoadError::Loading(message) = &normalized {

@@ -6,7 +6,7 @@ use std::{
 };
 
 use eframe::CreationContext;
-use eframe::glow;
+use rand::RngExt;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::sync::oneshot;
@@ -289,7 +289,7 @@ impl IcaApp {
         }
 
         Self {
-            custom_chat: CustomChat::default(),
+            custom_chat: config.custom_chat.clone(),
             online_mode: OnlineMode::default(),
             open_page: AppOpenPage::default(),
             mute_any: false,
@@ -688,6 +688,45 @@ impl IcaApp {
         })
     }
 
+    fn guess_mime_type(path: &Path) -> String {
+        let ext = path
+            .extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        match ext.as_str() {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "bmp" => "image/bmp",
+            "mp3" => "audio/mpeg",
+            "wav" => "audio/wav",
+            "ogg" => "audio/ogg",
+            "flac" => "audio/flac",
+            "mp4" => "video/mp4",
+            "pdf" => "application/pdf",
+            "zip" => "application/zip",
+            "txt" => "text/plain",
+            _ => "application/octet-stream",
+        }
+        .to_string()
+    }
+
+    fn load_pending_file(path: &Path) -> anyhow::Result<PendingFile> {
+        let data = std::fs::read(path)?;
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "file".to_string());
+        let file_type = Self::guess_mime_type(path);
+
+        Ok(PendingFile {
+            name,
+            file_type,
+            data,
+        })
+    }
+
     pub fn select_active_room(&mut self, room_id: RoomId) {
         let mut should_request = false;
         let clear_search_on_room_select = self.clear_search_on_room_select;
@@ -720,7 +759,8 @@ impl IcaApp {
         let content = draft.trim().to_string();
         let reply_to = state.reply_to_by_room.remove(&room_id);
         let pending_image = state.pending_image_by_room.remove(&room_id);
-        if content.is_empty() && pending_image.is_none() {
+        let pending_file = state.pending_file_by_room.remove(&room_id);
+        if content.is_empty() && pending_image.is_none() && pending_file.is_none() {
             if let Some(reply_to) = reply_to {
                 state.reply_to_by_room.insert(room_id, reply_to);
             }
@@ -728,7 +768,29 @@ impl IcaApp {
         }
         draft.clear();
 
-        // 发送动作也统一走命令通道，这样多 bridge 下不会把消息发到错误连接。
+        // 文件走分块上传协议
+        if let Some(file) = pending_file {
+            let command = IcaCommand::SendFileMessage {
+                room_id,
+                content: content.clone(),
+                reply_to: reply_to.clone(),
+                file_name: file.name,
+                file_type: file.file_type,
+                file_data: file.data,
+            };
+            if let Err(e) = self.ica_clients[bridge_idx].command_tx.send(command) {
+                tracing::warn!("send sendFileMessage command failed: {}", e);
+                state.draft_by_room.insert(room_id, content);
+                if let Some(reply_to) = reply_to {
+                    state.reply_to_by_room.insert(room_id, reply_to);
+                }
+            } else if scroll_to_bottom_after_send {
+                state.pending_send_scroll_to_bottom.insert(room_id);
+            }
+            return;
+        }
+
+        // 图片走 base64 内联
         let mut message = SendMessage::new(content.clone(), room_id, reply_to.clone());
         if let Some(image) = pending_image.as_ref() {
             message.set_img(&image.data, &image.mime_type, false);
@@ -886,6 +948,30 @@ impl IcaApp {
         }
     }
 
+    pub fn pick_file_for_current_room(&mut self) {
+        let Some(active_bridge_idx) = self.active_bridge_idx else {
+            return;
+        };
+        let Some(room_id) = self.bridge_states[active_bridge_idx].selected_room_id else {
+            return;
+        };
+
+        let Some(path) = rfd::FileDialog::new().pick_file() else {
+            return;
+        };
+
+        match Self::load_pending_file(&path) {
+            Ok(file) => {
+                self.bridge_states[active_bridge_idx]
+                    .pending_file_by_room
+                    .insert(room_id, file);
+            }
+            Err(e) => {
+                self.bridge_states[active_bridge_idx].last_error = Some(e.to_string());
+            }
+        }
+    }
+
     fn poll_socketio_events(&mut self) {
         while let Ok(event) = self.ui_rx.try_recv() {
             let Some(event_name) = event.get("event").and_then(|value| value.as_str()) else {
@@ -923,17 +1009,17 @@ impl IcaApp {
 }
 
 impl eframe::App for IcaApp {
-    fn on_exit(&mut self, _gl: Option<&glow::Context>) {
+    fn on_exit(&mut self) {
         for sender in self.socketio_stop_senders.drain(..) {
             let _ = sender.send(());
         }
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_socketio_events();
 
         // 检测 ESC 键取消选择
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape))
+        if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape))
             && let Some(state) = self.active_bridge_state_mut()
         {
             if state.forward_target_picker_open {
@@ -948,10 +1034,10 @@ impl eframe::App for IcaApp {
         }
 
         // 渲染相关的方法已移到 `renders.rs` 模块
-        self.render_top_panel(ctx);
-        self.render_left_groups_panel(ctx);
-        self.render_chat_list_panel(ctx);
-        self.render_central_panel(ctx);
-        self.render_windows(ctx);
+        self.render_top_panel(ui);
+        self.render_left_groups_panel(ui);
+        self.render_chat_list_panel(ui);
+        self.render_central_panel(ui);
+        self.render_windows(ui);
     }
 }

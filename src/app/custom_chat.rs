@@ -1,46 +1,69 @@
 use egui::{Grid, Ui};
+use serde::{Deserialize, Serialize};
 
 /// 定制聊天界面选项
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct CustomChat {
     /// 隐藏聊天图片
+    #[serde(default)]
     pub hide_chat_img: bool,
     /// 隐藏聊天视频
+    #[serde(default)]
     pub hide_chat_video: bool,
     /// 禁用超级表情
+    #[serde(default)]
     pub disable_super_face: bool,
     /// 禁用同会话多图切换
+    #[serde(default)]
     pub disable_img_swap_in_chat: bool,
     /// 禁用聊天分组
+    #[serde(default)]
     pub disable_chat_group: bool,
     /// 禁用聊天分组的红点
+    #[serde(default)]
     pub disable_chat_group_dot: bool,
     /// 禁用高亮 url
+    #[serde(default)]
     pub disable_highlight_url: bool,
     /// 使用本地看图器 (todo?)
+    #[serde(default)]
     pub use_local_image_viewer: bool,
     /// 禁用自适应单面板模式
     /// 宽度较低的时候启用
+    #[serde(default = "default_true")]
     pub disable_adaptive_single_panel_mode: bool,
     /// 移除群名内表情
+    #[serde(default)]
     pub remove_emoji_in_group_name: bool,
     /// 时间倒序排列 stickers
+    #[serde(default = "default_true")]
     pub sort_stickers_by_time: bool,
     /// 禁用图片查看器触摸板新手势 (todo)
+    #[serde(default)]
     pub disable_image_viewer_touch_gestures: bool,
     /// 查看消息时使用 Pangu.rs
     /// 在中英文间添加空格
+    #[serde(default)]
     pub use_pangu_to_view_msg: bool,
     /// 发送消息时使用 Pangu.rs
     /// 不包括 +1 消息
+    #[serde(default)]
     pub use_pangu_to_send_msg: bool,
     /// 禁用文件类型选择框
     /// 拖拽复制默认识别媒体
+    #[serde(default)]
     pub disable_file_type_selection: bool,
     // ====== 以下是 ica-native 新加的
     /// 显示 "话题" 按钮
+    #[serde(default = "default_true")]
     pub enable_topic_button: bool,
     /// 隐藏群友头像 (纯文字模式)
+    #[serde(default)]
     pub hide_group_member_avatar: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl CustomChat {

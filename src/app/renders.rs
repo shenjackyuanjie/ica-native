@@ -42,8 +42,8 @@ fn format_message_content(content: &str) -> String {
 
 impl IcaApp {
     // 顶栏：将多个 menu 合并为一个“功能块”
-    pub fn render_top_panel(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("顶栏").show(ctx, |ui| {
+    pub fn render_top_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::top("顶栏").show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 self.render_top_menus(ui);
             })
@@ -109,11 +109,11 @@ impl IcaApp {
     }
 
     // 左侧群组面板：合并“所有聊天按钮”和“群列表”渲染为一个函数
-    pub fn render_left_groups_panel(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("群聊组")
+    pub fn render_left_groups_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::left("群聊组")
             .resizable(false)
-            .exact_width(70.0)
-            .show(ctx, |ui| {
+            .exact_size(70.0)
+            .show_inside(ui, |ui| {
                 ui.label("消息栏");
                 ui.label("头像占位");
                 // 渲染头像
@@ -157,11 +157,11 @@ impl IcaApp {
     }
 
     // 聊天列表面板：把 header + rooms + 房间渲染整合为更少的函数（内部仍有一个私有房间渲染辅助）
-    pub fn render_chat_list_panel(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("聊天列表")
+    pub fn render_chat_list_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::left("聊天列表")
             .resizable(true)
-            .width_range(300.0..=700.0)
-            .show(ctx, |ui| {
+            .size_range(300.0..=700.0)
+            .show_inside(ui, |ui| {
                 // 让聊天列表条目的背景能"铺满"左右分割线之间的整块区域：
                 // 关键点：用 `ui.max_rect()` 的宽度来分配条目 rect，而不是 `ui.available_width()`
                 // 因为 `available_width()` 会受当前 layout/indent/scroll 内容区影响而变窄，导致背景留白。
@@ -408,8 +408,8 @@ impl IcaApp {
             });
     }
 
-    pub fn render_central_panel(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    pub fn render_central_panel(&mut self, ui: &mut egui::Ui) {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             let Some(active_bridge_idx) = self.active_bridge_idx else {
                 ui.heading("未启用 bridge");
                 ui.weak("请先在配置里启用至少一个 bridge。");
@@ -495,10 +495,14 @@ impl IcaApp {
             let has_pending_image = self.bridge_states[active_bridge_idx]
                 .pending_image_by_room
                 .contains_key(&room_id);
+            let has_pending_file = self.bridge_states[active_bridge_idx]
+                .pending_file_by_room
+                .contains_key(&room_id);
             let composer_reserved_height = 36.0
                 + if forward_mode_active { 54.0 } else { 0.0 }
                 + if has_reply_banner { 54.0 } else { 0.0 }
-                + if has_pending_image { 54.0 } else { 0.0 };
+                + if has_pending_image { 54.0 } else { 0.0 }
+                + if has_pending_file { 54.0 } else { 0.0 };
             let message_list_height = (ui.available_height() - composer_reserved_height).max(120.0);
             let mut pending_action = None;
 
@@ -633,12 +637,15 @@ impl IcaApp {
 
             let mut clear_reply = false;
             let mut clear_image = false;
+            let mut clear_file = false;
             let mut clear_forward_selection = false;
             let mut open_forward_picker = false;
             let mut plus_one_forward = false;
 
             let mut should_send = false;
             let mut choose_image = false;
+            let mut choose_file = false;
+            let mut paste_image: Option<PendingImage> = None;
             ui.allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), composer_reserved_height),
                 egui::Layout::bottom_up(egui::Align::Min),
@@ -664,18 +671,96 @@ impl IcaApp {
                                 .draft_by_room
                                 .entry(room_id)
                                 .or_default();
+                            // 在 TextEdit 渲染之前检测 Ctrl+V（TextEdit 会消费事件）
+                            let ctrl_v_pre = ui.input(|input| {
+                                input.modifiers.command && input.key_pressed(egui::Key::V)
+                            });
                             let response = ui.add_sized(
                                 [input_width, control_height],
-                                egui::TextEdit::singleline(draft).hint_text("输入消息，Enter 发送"),
+                                egui::TextEdit::multiline(draft)
+                                    .desired_rows(1)
+                                    .hint_text("Enter 发送, Shift+Enter 换行"),
                             );
-                            let enter_pressed = response.lost_focus()
-                                && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                            choose_image = ui
+                            // 检测 Enter 键（不带 Shift/Ctrl）→ 发送
+                            let enter_no_mod = response.has_focus()
+                                && ui.input(|input| {
+                                    input.key_pressed(egui::Key::Enter)
+                                        && !input.modifiers.shift
+                                        && !input.modifiers.ctrl
+                                });
+                            if enter_no_mod {
+                                // multiline TextEdit 已经插入了 '\n'，需要撤销
+                                while draft.ends_with('\n') || draft.ends_with('\r') {
+                                    draft.pop();
+                                }
+                            }
+                            // Ctrl+V 粘贴图片（使用渲染前保存的 ctrl_v 状态）
+                            if response.has_focus() && ctrl_v_pre && !has_pending_image {
+                                match arboard::Clipboard::new() {
+                                    Ok(mut clipboard) => match clipboard.get_image() {
+                                        Ok(img) => {
+                                            tracing::debug!(
+                                                "剪贴板图片: {}x{}, {} bytes",
+                                                img.width,
+                                                img.height,
+                                                img.bytes.len()
+                                            );
+                                            let rgba: Vec<u8> = img.bytes.into_owned();
+                                            if let Some(buf) = image::RgbaImage::from_raw(
+                                                img.width as u32,
+                                                img.height as u32,
+                                                rgba,
+                                            ) {
+                                                let mut png_data = Vec::new();
+                                                let encoder =
+                                                    image::codecs::png::PngEncoder::new(
+                                                        std::io::Cursor::new(&mut png_data),
+                                                    );
+                                                if image::ImageEncoder::write_image(
+                                                    encoder,
+                                                    buf.as_raw(),
+                                                    buf.width(),
+                                                    buf.height(),
+                                                    image::ExtendedColorType::Rgba8,
+                                                )
+                                                .is_ok()
+                                                {
+                                                    paste_image = Some(PendingImage {
+                                                        name: "clipboard.png".to_string(),
+                                                        mime_type: "image/png".to_string(),
+                                                        data: png_data,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::debug!("剪贴板无图片: {}", e);
+                                        }
+                                    },
+                                    Err(e) => {
+                                        tracing::warn!("无法打开剪贴板: {}", e);
+                                    }
+                                }
+                            }
+                            let enter_pressed = enter_no_mod;
+                            let plus_btn = ui
                                 .add_sized(
                                     [button_width, control_height],
                                     Button::new(RichText::new("＋").size(16.0)),
-                                )
-                                .clicked();
+                                );
+                            plus_btn.context_menu(|ui| {
+                                if ui.button("📷 发送图片").clicked() {
+                                    choose_image = true;
+                                    ui.close();
+                                }
+                                if ui.button("📎 发送文件").clicked() {
+                                    choose_file = true;
+                                    ui.close();
+                                }
+                            });
+                            if plus_btn.clicked() {
+                                choose_image = true;
+                            }
                             should_send = enter_pressed
                                 || ui
                                     .add_sized(
@@ -728,6 +813,31 @@ impl IcaApp {
                         });
                     }
 
+                    if let Some(file) = self.bridge_states[active_bridge_idx]
+                        .pending_file_by_room
+                        .get(&room_id)
+                        .cloned()
+                    {
+                        ui.add_space(6.0);
+                        egui::Frame::group(ui.style()).show(ui, |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.weak("待发送文件");
+                                if ui.button("取消").clicked() {
+                                    clear_file = true;
+                                }
+                            });
+                            let size = file.data.len() as f64;
+                            let size_str = if size >= 1024.0 * 1024.0 {
+                                format!("{:.1} MB", size / (1024.0 * 1024.0))
+                            } else {
+                                format!("{:.1} KB", size / 1024.0)
+                            };
+                            ui.add(
+                                Label::new(format!("📎 {} ({})", file.name, size_str)).wrap(),
+                            );
+                        });
+                    }
+
                     if let Some(reply) = self.bridge_states[active_bridge_idx]
                         .reply_to_by_room
                         .get(&room_id)
@@ -759,6 +869,18 @@ impl IcaApp {
                     .remove(&room_id);
             }
 
+            if clear_file {
+                self.bridge_states[active_bridge_idx]
+                    .pending_file_by_room
+                    .remove(&room_id);
+            }
+
+            if let Some(image) = paste_image {
+                self.bridge_states[active_bridge_idx]
+                    .pending_image_by_room
+                    .insert(room_id, image);
+            }
+
             if clear_forward_selection {
                 self.clear_forward_selection();
             }
@@ -775,8 +897,89 @@ impl IcaApp {
                 self.pick_image_for_current_room();
             }
 
+            if choose_file {
+                self.pick_file_for_current_room();
+            }
+
             if should_send {
                 self.send_current_message();
+            }
+
+            // 拖放文件上传
+            let hovered = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
+            let dropped = ui.ctx().input(|i| i.raw.dropped_files.clone());
+
+            if hovered {
+                let screen_rect = ui.ctx().input(|i| i.viewport_rect());
+                egui::Area::new(egui::Id::new("drop_overlay"))
+                    .fixed_pos(screen_rect.min)
+                    .order(egui::Order::Foreground)
+                    .show(ui.ctx(), |ui| {
+                        let painter = ui.painter();
+                        painter.rect_filled(
+                            screen_rect,
+                            0.0,
+                            egui::Color32::from_black_alpha(100),
+                        );
+                        painter.text(
+                            screen_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "拖放文件到此处",
+                            egui::FontId::proportional(24.0),
+                            egui::Color32::WHITE,
+                        );
+                    });
+            }
+
+            if let Some(file) = dropped.into_iter().next() {
+                let file_name = if !file.name.is_empty() {
+                    file.name.clone()
+                } else if let Some(p) = &file.path {
+                    p.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    "unknown".to_string()
+                };
+
+                let data = if let Some(bytes) = file.bytes {
+                    bytes.to_vec()
+                } else if let Some(path) = &file.path {
+                    std::fs::read(path).unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+
+                if !data.is_empty() {
+                    let ext = file_name.rsplit('.').next().unwrap_or("").to_lowercase();
+                    let image_exts = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+                    if image_exts.contains(&ext.as_str()) {
+                        let mime = IcaApp::guess_mime_type(std::path::Path::new(&file_name));
+                        self.bridge_states[active_bridge_idx]
+                            .pending_image_by_room
+                            .insert(
+                                room_id,
+                                PendingImage {
+                                    name: file_name,
+                                    mime_type: mime,
+                                    data,
+                                },
+                            );
+                    } else {
+                        let ft = IcaApp::guess_mime_type(std::path::Path::new(&file_name));
+                        self.bridge_states[active_bridge_idx]
+                            .pending_file_by_room
+                            .insert(
+                                room_id,
+                                PendingFile {
+                                    name: file_name,
+                                    file_type: ft,
+                                    data,
+                                },
+                            );
+                    }
+                }
             }
         });
     }

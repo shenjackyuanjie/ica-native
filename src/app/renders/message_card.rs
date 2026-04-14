@@ -295,15 +295,14 @@ impl IcaApp {
                                     return;
                                 }
 
-                                if !message.deleted && !message.hide {
-                                    if ui.button("回复").clicked() {
+                                if !message.deleted && !message.hide
+                                    && ui.button("回复").clicked() {
                                         action = Some(MessageAction::Reply {
                                             room_id,
                                             reply: message.as_reply(),
                                         });
                                         ui.close();
                                     }
-                                }
                                 if ui.button("复制到编辑区").clicked() {
                                     action = Some(MessageAction::CopyToDraft {
                                         room_id,

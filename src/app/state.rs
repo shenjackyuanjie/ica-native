@@ -35,6 +35,13 @@ pub struct PendingImage {
     pub data: Vec<u8>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PendingFile {
+    pub name: String,
+    pub file_type: String,
+    pub data: Vec<u8>,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum SocketState {
     #[default]
@@ -90,6 +97,7 @@ pub struct BridgeState {
     pub join_requests: Vec<JoinRequestRoom>,
     pub reply_to_by_room: HashMap<RoomId, ReplyMessage>,
     pub pending_image_by_room: HashMap<RoomId, PendingImage>,
+    pub pending_file_by_room: HashMap<RoomId, PendingFile>,
     pub selected_room_id: Option<RoomId>,
     pub draft_by_room: HashMap<RoomId, String>,
     pub forward_room_id: Option<RoomId>,
@@ -117,6 +125,7 @@ impl BridgeState {
             join_requests: Vec::new(),
             reply_to_by_room: HashMap::new(),
             pending_image_by_room: HashMap::new(),
+            pending_file_by_room: HashMap::new(),
             selected_room_id: None,
             draft_by_room: HashMap::new(),
             forward_room_id: None,

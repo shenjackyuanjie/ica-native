@@ -405,6 +405,14 @@ impl NewMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileAttachment {
+    #[serde(rename = "type")]
+    pub file_type: String,
+    pub path: String,
+    pub size: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendMessage {
     /// 就是消息内容
     pub content: String,
@@ -420,6 +428,9 @@ pub struct SendMessage {
     /// base64 的图片
     #[serde(rename = "b64img")]
     file_data: Option<String>,
+    /// 文件附件（分块上传后使用）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<FileAttachment>,
     /// 是否当作表情发送
     ///
     /// 默认 false
@@ -434,6 +445,7 @@ impl SendMessage {
             reply_to,
             at: json!([]),
             file_data: None,
+            file: None,
             sticker: false,
         }
     }

@@ -4,7 +4,7 @@ use serde_json::json;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ica::types::{RoomId, message::{DeleteMessage, SendMessage}};
+use crate::ica::types::{RoomId, message::{DeleteMessage, ReplyMessage, SendMessage}};
 
 /// icalingua 客户端的兼容版本号
 pub const ICA_PROTOCOL_VERSION: &str = "2.12.28";
@@ -33,6 +33,15 @@ pub enum IcaCommand {
     RevealMessage { room_id: RoomId, message_id: String },
     SendMessage(SendMessage),
     SendRawMessage { room_id: RoomId, content: JsonValue },
+    /// 分块上传文件后发送消息
+    SendFileMessage {
+        room_id: RoomId,
+        content: String,
+        reply_to: Option<ReplyMessage>,
+        file_name: String,
+        file_type: String,
+        file_data: Vec<u8>,
+    },
     DeleteMessage(DeleteMessage),
     HandleRequest {
         request_type: String,

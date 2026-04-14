@@ -1,16 +1,18 @@
 use crate::app::IcaApp;
-use crate::cfg::ReEditDraftConflictMode;
+use crate::cfg::{self, ReEditDraftConflictMode};
 use crate::app::online_mode::OnlineMode;
 use egui::Hyperlink;
 
 impl IcaApp {
     // 将所有窗口渲染相关的独立函数合并到一个功能块里（内部分支式处理每个窗口）
-    pub fn render_windows(&mut self, ctx: &egui::Context) {
+    pub fn render_windows(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let custom_chat_before = self.custom_chat.clone();
         // 定制聊天界面 (ica)
         egui::Window::new("定制聊天界面 (ica)")
             .open(&mut self.open_page.custom_chat_ica)
             .resizable(false)
-            .show(ctx, |ui| {
+            .show(&ctx, |ui| {
                 self.custom_chat.show_ica_ui(ui);
             });
 
@@ -25,7 +27,7 @@ impl IcaApp {
         egui::Window::new("定制聊天界面 (extra)")
             .open(&mut custom_chat_extra_open)
             .resizable(false)
-            .show(ctx, |ui| {
+            .show(&ctx, |ui| {
                 let clear_on_select_before = clear_on_select;
                 let scroll_on_send_before = scroll_on_send;
                 self.custom_chat
@@ -60,6 +62,12 @@ impl IcaApp {
         if reedit_mode_changed {
             self.set_reedit_draft_conflict_mode(reedit_mode);
         }
+        if self.custom_chat != custom_chat_before {
+            let custom_chat = self.custom_chat.clone();
+            cfg::update_and_save_cfg(|cfg| {
+                cfg.custom_chat = custom_chat;
+            });
+        }
 
         if let Some(active_bridge_idx) = self.active_bridge_idx {
             let picker_state = self.bridge_states.get(active_bridge_idx).and_then(|state| {
@@ -87,7 +95,7 @@ impl IcaApp {
                 egui::Window::new("选择转发目标")
                     .open(&mut picker_open)
                     .default_size(egui::vec2(360.0, 420.0))
-                    .show(ctx, |ui| {
+                    .show(&ctx, |ui| {
                         ui.label(format!("来源会话: {}", source_room_name));
                         ui.label(format!("已选 {} 条消息", selected_count));
                         ui.add_space(6.0);
@@ -153,7 +161,7 @@ impl IcaApp {
         egui::Window::new("在线状态")
             .open(&mut self.open_page.online_status)
             .resizable(false)
-            .show(ctx, |ui| {
+            .show(&ctx, |ui| {
                 ui.heading("在线状态");
                 if let Some((bridge_key, qqid, nick, online)) = &active_bridge_info {
                     ui.label(format!("当前 bridge: {}", bridge_key));
@@ -185,7 +193,7 @@ impl IcaApp {
         egui::Window::new("验证消息")
             .default_size(egui::vec2(400.0, 300.0))
             .open(&mut self.open_page.verify_message)
-            .show(ctx, |ui| {
+            .show(&ctx, |ui| {
                 let Some((bridge_key, join_requests)) = &verify_message_data else {
                     ui.heading("验证消息");
                     ui.weak("当前没有启用的 bridge");
@@ -276,7 +284,7 @@ impl IcaApp {
         egui::Window::new("关于 Icalingua++ native")
             .open(&mut self.open_page.about)
             .collapsible(true)
-            .show(ctx, |ui| {
+            .show(&ctx, |ui| {
                 ui.heading("Icalingua++ native");
                 ui.separator();
                 ui.horizontal_wrapped(|ui| {
@@ -311,7 +319,7 @@ impl IcaApp {
         egui::Window::new("Socketio 状态")
             .open(&mut self.open_page.socketio_status)
             .collapsible(true)
-            .show(ctx, |ui| {
+            .show(&ctx, |ui| {
                 ui.heading("Socketio 状态");
                 if self.bridge_states.is_empty() {
                     ui.weak("当前没有启用的 bridge");
@@ -345,7 +353,7 @@ impl IcaApp {
         egui::Window::new("配置文件编辑")
             .open(&mut self.open_page.raw_config)
             .collapsible(true)
-            .show(ctx, |ui| {
+            .show(&ctx, |ui| {
                 self.config_editer.ui(ui);
             });
 
@@ -358,7 +366,7 @@ impl IcaApp {
                 .collapsible(false)
                 .default_size((size.width() / 2.0, size.height() / 2.0))
                 .resizable(true)
-                .show(ctx, |ui| {
+                .show(&ctx, |ui| {
                     ui.image(crate::assets::webp::NOTIFICATION);
                 });
             // todo

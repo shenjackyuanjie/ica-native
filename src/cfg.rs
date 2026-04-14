@@ -7,6 +7,8 @@ use std::{
 use hex;
 use serde::{Deserialize, Serialize};
 
+use crate::app::custom_chat::CustomChat;
+
 /// 全局配置
 pub static CONFIG: OnceLock<RwLock<IcaCfg>> = OnceLock::new();
 
@@ -39,6 +41,9 @@ pub struct IcaCfg {
     /// 界面设置相关
     #[serde(default)]
     pub ui_setting: UiSetting,
+    /// 定制聊天界面选项
+    #[serde(default)]
+    pub custom_chat: CustomChat,
     /// 缓存路径（可选）。如果未设置，程序会使用默认缓存位置（例如临时目录或内置路径）。
     #[serde(default)]
     pub cache_path: Option<String>,
@@ -67,6 +72,7 @@ impl Default for IcaCfg {
             bridges: Vec::new(),
             screen: Screen::default(),
             ui_setting: UiSetting::default(),
+            custom_chat: CustomChat::default(),
             cache_path: None,
             image_cache_max_bytes: image_cache_max_bytes_default(),
             disk_image_cache_max_bytes: disk_image_cache_max_bytes_default(),
