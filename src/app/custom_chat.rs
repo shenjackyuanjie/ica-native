@@ -60,6 +60,9 @@ pub struct CustomChat {
     /// 隐藏群友头像 (纯文字模式)
     #[serde(default)]
     pub hide_group_member_avatar: bool,
+    /// 选中会话时自动发送已读
+    #[serde(default = "default_true")]
+    pub auto_read_on_select: bool,
 }
 
 fn default_true() -> bool {
@@ -179,6 +182,10 @@ impl CustomChat {
                 ui.label("发送消息后自动滚动到底部");
                 let _ = ui.checkbox(scroll_on_send, "");
                 ui.end_row();
+
+                ui.label("选中会话时自动发送已读");
+                let _ = ui.checkbox(&mut self.auto_read_on_select, "");
+                ui.end_row();
             });
     }
 }
@@ -203,6 +210,7 @@ impl Default for CustomChat {
             disable_file_type_selection: false,
             enable_topic_button: true,
             hide_group_member_avatar: false,
+            auto_read_on_select: true,
         }
     }
 }

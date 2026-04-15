@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
+use std::sync::atomic::AtomicBool;
 
 use crate::ica::types::{
     RoomId,
@@ -7,6 +8,57 @@ use crate::ica::types::{
     online_data::OnlineData,
     room::{JoinRequestRoom, Room},
 };
+
+/// 图片查看器状态（通过 Arc<Mutex<>> 在主窗口和 viewport 间共享）
+#[derive(Debug)]
+pub struct ImageViewerState {
+    /// 图片 URL
+    pub url: String,
+    /// 缩放比例 (1.0 = 适应窗口)
+    pub zoom: f32,
+    /// 平移偏移量（像素）
+    pub pan_offset: egui::Vec2,
+    /// 窗口已关闭
+    pub closed: AtomicBool,
+    /// 适应窗口的基础缩放比例（渲染时更新）
+    pub base_scale: f32,
+    /// 是否请求 1:1 原始尺寸
+    pub request_original_size: bool,
+}
+
+impl ImageViewerState {
+    pub fn new(url: String) -> Self {
+        Self {
+            url,
+            zoom: 1.0,
+            pan_offset: egui::Vec2::ZERO,
+            closed: AtomicBool::new(false),
+            base_scale: 1.0,
+            request_original_size: false,
+        }
+    }
+
+    /// 适应窗口大小（重置缩放和偏移）
+    pub fn fit_to_window(&mut self) {
+        self.zoom = 1.0;
+        self.pan_offset = egui::Vec2::ZERO;
+    }
+
+    /// 放大 20%
+    pub fn zoom_in(&mut self) {
+        self.zoom = (self.zoom * 1.2).min(20.0);
+    }
+
+    /// 缩小 20%
+    pub fn zoom_out(&mut self) {
+        self.zoom = (self.zoom / 1.2).max(0.05);
+    }
+
+    /// 缩放百分比文本（相对于原始像素大小）
+    pub fn zoom_percent_text(&self) -> String {
+        format!("{:.0}%", self.base_scale * self.zoom * 100.0)
+    }
+}
 
 #[derive(Debug, Default, Clone, Copy)]
 pub enum ChatListScrollTarget {
@@ -26,6 +78,8 @@ pub enum MessageAction {
     PlusOne { room_id: RoomId, message_id: String },
     ToggleForwardSelection { room_id: RoomId, message_id: String },
     StartForward { room_id: RoomId, message_id: String },
+    PreviewImage { url: String },
+    ScrollToMessage { msg_id: String },
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +165,16 @@ pub struct BridgeState {
     pub online_data: OnlineData,
     pub last_error: Option<String>,
     pub last_event: Option<String>,
+    /// 正在加载更旧历史消息的房间
+    pub loading_older_messages: HashSet<RoomId>,
+    /// 已经没有更多历史消息的房间
+    pub no_more_history: HashSet<RoomId>,
+    /// 标记哪些房间刚发生了 prepend（需要调整 scroll offset）
+    pub prepend_scroll_fix: HashSet<RoomId>,
+    /// 每帧记录每个房间消息列表的 content_size.y
+    pub last_content_height: HashMap<RoomId, f32>,
+    /// 需要滚动到的目标消息 ID
+    pub scroll_to_message_id: Option<String>,
 }
 
 impl BridgeState {
@@ -139,6 +203,11 @@ impl BridgeState {
             online_data: OnlineData::default(),
             last_error: None,
             last_event: None,
+            loading_older_messages: HashSet::new(),
+            no_more_history: HashSet::new(),
+            prepend_scroll_fix: HashSet::new(),
+            last_content_height: HashMap::new(),
+            scroll_to_message_id: None,
         }
     }
 
@@ -165,6 +234,7 @@ impl BridgeState {
         room.last_message.username = Some(message.sender_name.clone());
         room.last_message.user_id = Some(message.sender_id);
         room.last_message.timestamp = Some(message.time.format("%H:%M:%S").to_string());
+        room.utime = message.time.timestamp_millis();
     }
 
     pub fn upsert_message(&mut self, room_id: RoomId, message: Message) {

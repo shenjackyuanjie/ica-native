@@ -4,6 +4,7 @@ use egui::IconData;
 pub mod app;
 pub mod assets;
 pub mod cfg;
+pub mod face_data;
 pub mod ica;
 pub mod image_loader;
 

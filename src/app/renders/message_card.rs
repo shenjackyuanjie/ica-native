@@ -5,24 +5,102 @@ use egui::{Hyperlink, Image, Label};
 
 use super::format_message_content;
 
+/// 解析消息内容中的 [Face: id] 标记，返回文本/表情片段
+enum ContentSegment<'a> {
+    Text(&'a str),
+    Face(u16),
+}
+
+fn parse_face_segments(content: &str) -> Vec<ContentSegment<'_>> {
+    let mut segments = Vec::new();
+    let mut remaining = content;
+    while let Some(start) = remaining.find("[Face: ") {
+        if start > 0 {
+            segments.push(ContentSegment::Text(&remaining[..start]));
+        }
+        let after = &remaining[start + 7..]; // 跳过 "[Face: "
+        if let Some(end) = after.find(']') {
+            let id_str = &after[..end];
+            if let Ok(id) = id_str.parse::<u16>() {
+                if crate::face_data::get_face(id).is_some() {
+                    segments.push(ContentSegment::Face(id));
+                } else {
+                    // 没有对应的表情文件，保留原文
+                    segments.push(ContentSegment::Text(&remaining[..start + 7 + end + 1]));
+                }
+            } else {
+                segments.push(ContentSegment::Text(&remaining[..start + 7 + end + 1]));
+            }
+            remaining = &after[end + 1..];
+        } else {
+            segments.push(ContentSegment::Text(remaining));
+            return segments;
+        }
+    }
+    if !remaining.is_empty() {
+        segments.push(ContentSegment::Text(remaining));
+    }
+    segments
+}
+
+/// 渲染包含 [Face: id] 的消息内容，将表情替换为内联图片
+fn render_rich_content(ui: &mut egui::Ui, content: &str) {
+    let segments = parse_face_segments(content);
+    let has_face = segments.iter().any(|s| matches!(s, ContentSegment::Face(_)));
+    if !has_face {
+        // 纯文本，直接用 Label
+        ui.add(Label::new(content).wrap());
+        return;
+    }
+    let face_size = 24.0;
+    ui.horizontal_wrapped(|ui| {
+        for seg in &segments {
+            match seg {
+                ContentSegment::Text(text) => {
+                    if !text.is_empty() {
+                        ui.add(Label::new(*text).wrap());
+                    }
+                }
+                ContentSegment::Face(id) => {
+                    let bytes = crate::face_data::get_face(*id).unwrap();
+                    let uri = format!("bytes://face_{id}");
+                    let img = Image::from_bytes(uri, bytes)
+                        .fit_to_exact_size(egui::vec2(face_size, face_size));
+                    let response = ui.add(img);
+                    if let Some(name) = crate::face_data::get_face_name(*id) {
+                        response.on_hover_text(name);
+                    }
+                }
+            }
+        }
+    });
+}
+
 fn is_image_file(file: &MessageFile) -> bool {
     let file_type = file.file_type.to_ascii_lowercase();
     file_type == "image" || file_type.starts_with("image/")
 }
 
-fn render_message_image(ui: &mut egui::Ui, url: &str, max_width: f32) {
+/// 渲染消息中的图片缩略图，返回点击的图片 URL（用于预览）
+fn render_message_image(ui: &mut egui::Ui, url: &str, max_width: f32) -> Option<String> {
     match ui.ctx().try_load_texture(
         url,
         egui::TextureOptions::default(),
         egui::load::SizeHint::default(),
     ) {
         Ok(egui::load::TexturePoll::Ready { texture }) => {
-            ui.add(
+            let response = ui.add(
                 Image::from_texture(texture)
                     .max_width(max_width)
                     .max_height(240.0)
-                    .maintain_aspect_ratio(true),
+                    .maintain_aspect_ratio(true)
+                    .sense(egui::Sense::click()),
             );
+            let clicked = response.clicked();
+            response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            if clicked {
+                return Some(url.to_string());
+            }
         }
         Ok(egui::load::TexturePoll::Pending { .. }) => {
             ui.add(egui::Spinner::new());
@@ -39,6 +117,7 @@ fn render_message_image(ui: &mut egui::Ui, url: &str, max_width: f32) {
             }
         }
     }
+    None
 }
 
 pub(super) struct MessageRenderOptions {
@@ -160,7 +239,7 @@ impl IcaApp {
                         |ui| {
                             let mut render_message_contents = |ui: &mut egui::Ui| {
                                 ui.style_mut().interaction.selectable_labels = false;
-                                ui.with_layout(egui::Layout::top_down(content_align), |ui| {
+                                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                                     ui.horizontal_wrapped(|ui| {
                                         if options.show_sender_name {
                                             ui.colored_label(title_color, &message.sender_name);
@@ -208,19 +287,25 @@ impl IcaApp {
                                     if let Some(reply) = &message.reply {
                                         let formatted_reply_content =
                                             format_message_content(&reply.content);
+                                        let reply_msg_id = reply.msg_id.clone();
                                         if pure_text_mode {
-                                            ui.add(
-                                                Label::new(format!(
-                                                    "回复 {}: {}",
-                                                    reply.sender_name, formatted_reply_content
-                                                ))
-                                                .wrap(),
-                                            );
+                                            let label = Label::new(format!(
+                                                "回复 {}: {}",
+                                                reply.sender_name, formatted_reply_content
+                                            ))
+                                            .wrap()
+                                            .sense(egui::Sense::click());
+                                            if ui.add(label).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                action = Some(MessageAction::ScrollToMessage { msg_id: reply_msg_id });
+                                            }
                                         } else {
-                                            egui::Frame::group(ui.style()).show(ui, |ui| {
+                                            let reply_resp = egui::Frame::group(ui.style()).show(ui, |ui| {
                                                 ui.weak(format!("回复 {}", reply.sender_name));
                                                 ui.add(Label::new(formatted_reply_content).wrap());
                                             });
+                                            if reply_resp.response.interact(egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                                action = Some(MessageAction::ScrollToMessage { msg_id: reply_msg_id });
+                                            }
                                         }
                                     }
 
@@ -228,7 +313,7 @@ impl IcaApp {
 
                                     if !formatted_content.is_empty() {
                                         has_body = true;
-                                        ui.add(Label::new(formatted_content.as_str()).wrap());
+                                        render_rich_content(ui, formatted_content.as_str());
                                     }
 
                                     if !message.files.is_empty() {
@@ -239,7 +324,9 @@ impl IcaApp {
 
                                                 if is_image && !file.url.is_empty() {
                                                     let image_max_width = ui.available_width().min(240.0);
-                                                    render_message_image(ui, &file.url, image_max_width);
+                                                    if let Some(url) = render_message_image(ui, &file.url, image_max_width) {
+                                                        action = Some(MessageAction::PreviewImage { url });
+                                                    }
                                                 } else {
                                                     let label = file
                                                         .get_name()

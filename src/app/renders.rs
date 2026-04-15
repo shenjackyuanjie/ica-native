@@ -432,7 +432,7 @@ impl IcaApp {
                     .filter(|name| !name.is_empty())
                     .unwrap_or_else(|| room_id.to_string());
 
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.heading(room_name);
                     ui.separator();
                     ui.label(format!("Bridge: {}", bridge_key));
@@ -443,7 +443,7 @@ impl IcaApp {
                     }
                 });
             } else {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.heading(&bridge_key);
                     ui.separator();
                     ui.label(format!("Socket: {}", socket_state));
@@ -502,10 +502,12 @@ impl IcaApp {
                 + if forward_mode_active { 54.0 } else { 0.0 }
                 + if has_reply_banner { 54.0 } else { 0.0 }
                 + if has_pending_image { 54.0 } else { 0.0 }
-                + if has_pending_file { 54.0 } else { 0.0 };
+                + if has_pending_file { 54.0 } else { 0.0 }
+                + if self.show_face_picker { 220.0 } else { 0.0 };
             let message_list_height = (ui.available_height() - composer_reserved_height).max(120.0);
             let mut pending_action = None;
 
+            let scroll_to_target = self.bridge_states[active_bridge_idx].scroll_to_message_id.take();
             let scroll_output = egui::ScrollArea::vertical()
                 .id_salt(("message_list", active_bridge_idx, room_id))
                 .max_height(message_list_height)
@@ -526,21 +528,27 @@ impl IcaApp {
                                 let show_separator_before = pure_text_mode
                                     && previous_sender_id.is_some()
                                     && previous_sender_id != Some(message.sender_id);
-                                if let Some(action) =
-                                    self.render_message_card(
-                                        ui,
-                                        room_id,
-                                        self_id,
-                                        message,
-                                        MessageRenderOptions {
-                                            show_sender_name,
-                                            show_separator_before,
-                                            forward_mode_active,
-                                            forward_selected,
-                                        },
-                                    )
-                                {
-                                    pending_action = Some(action);
+                                let is_scroll_target = scroll_to_target.as_deref() == Some(&message.msg_id);
+                                let msg_resp = ui.scope(|ui| {
+                                    if let Some(action) =
+                                        self.render_message_card(
+                                            ui,
+                                            room_id,
+                                            self_id,
+                                            message,
+                                            MessageRenderOptions {
+                                                show_sender_name,
+                                                show_separator_before,
+                                                forward_mode_active,
+                                                forward_selected,
+                                            },
+                                        )
+                                    {
+                                        pending_action = Some(action);
+                                    }
+                                });
+                                if is_scroll_target {
+                                    ui.scroll_to_rect(msg_resp.response.rect, Some(egui::Align::Center));
                                 }
                                 previous_sender_id = Some(message.sender_id);
                             }
@@ -561,8 +569,26 @@ impl IcaApp {
                     }
                 });
 
+            // prepend 旧消息后调整 scroll offset，避免无限触发加载
+            let mut scroll_output = scroll_output;
+            {
+                let bridge_state = &mut self.bridge_states[active_bridge_idx];
+                let new_content_height = scroll_output.content_size.y;
+                if bridge_state.prepend_scroll_fix.remove(&room_id) {
+                    // 计算新增内容高度，将 scroll offset 下移相应距离
+                    let old_height = bridge_state.last_content_height.get(&room_id).copied().unwrap_or(0.0);
+                    let delta = new_content_height - old_height;
+                    if delta > 0.0 {
+                        scroll_output.state.offset.y += delta;
+                        scroll_output.state.store(ui.ctx(), scroll_output.id);
+                    }
+                }
+                bridge_state.last_content_height.insert(room_id, new_content_height);
+            }
+
             // 检测是否滚动到底部：内容高度 - 滚动偏移 - 可视高度 < 阈值
             let user_scrolled_to_bottom;
+            let user_scrolled_to_top;
             {
                 let content_size = scroll_output.content_size;
                 let inner_rect = scroll_output.inner_rect;
@@ -570,6 +596,31 @@ impl IcaApp {
                 let visible_height = inner_rect.height();
                 let max_scroll = (content_size.y - visible_height).max(0.0);
                 user_scrolled_to_bottom = max_scroll < 1.0 || (max_scroll - offset_y) < 20.0;
+                // 滚动到顶部检测：offset_y 接近 0
+                user_scrolled_to_top = offset_y < 20.0 && content_size.y > visible_height;
+            }
+
+            // 滚动到顶部时自动加载更旧的历史消息
+            if user_scrolled_to_top {
+                self.request_older_messages(active_bridge_idx, room_id);
+            }
+
+            // 正在加载更旧消息时显示提示
+            if self.bridge_states[active_bridge_idx].loading_older_messages.contains(&room_id) {
+                let scroll_rect = scroll_output.inner_rect;
+                let indicator_pos = egui::pos2(
+                    scroll_rect.center().x - 50.0,
+                    scroll_rect.top() + 8.0,
+                );
+                egui::Area::new(egui::Id::new(("loading_older_indicator", active_bridge_idx, room_id)))
+                    .fixed_pos(indicator_pos)
+                    .order(egui::Order::Foreground)
+                    .show(ui.ctx(), |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Spinner::new().size(14.0));
+                            ui.weak("加载历史消息...");
+                        });
+                    });
             }
 
             // 未滚动到底部时，在滚动区域右下角悬浮显示 "↓" 按钮
@@ -584,11 +635,13 @@ impl IcaApp {
                     .fixed_pos(btn_pos)
                     .order(egui::Order::Foreground)
                     .show(ui.ctx(), |ui| {
+                        ui.set_min_size(btn_size);
+                        ui.set_max_size(btn_size);
                         let btn_text = egui::RichText::new("↓").size(18.0);
                         let btn = egui::Button::new(btn_text)
                             .corner_radius(16.0)
                             .min_size(btn_size);
-                        if ui.add(btn).clicked() {
+                        if ui.add_sized(btn_size, btn).clicked() {
                             self.bridge_states[active_bridge_idx]
                                 .message_scroll_to_bottom
                                 .insert(room_id);
@@ -632,6 +685,14 @@ impl IcaApp {
                     MessageAction::StartForward { room_id, message_id } => {
                         self.begin_forward_selection(room_id, message_id, true);
                     }
+                    MessageAction::PreviewImage { url } => {
+                        self.image_viewer = Some(std::sync::Arc::new(
+                            std::sync::Mutex::new(crate::app::state::ImageViewerState::new(url)),
+                        ));
+                    }
+                    MessageAction::ScrollToMessage { msg_id } => {
+                        self.bridge_states[active_bridge_idx].scroll_to_message_id = Some(msg_id);
+                    }
                 }
             }
 
@@ -663,18 +724,17 @@ impl IcaApp {
                                 ui.spacing().item_spacing.x
                             };
                             ui.spacing_mut().item_spacing.x = item_spacing;
+                            // 窄宽度不显示表情按钮
+                            let show_face_btn = available_width >= 180.0;
+                            let btn_count = if show_face_btn { 3.0 } else { 2.0 };
                             let input_width = (ui.available_width()
-                                - button_width * 2.0
-                                - item_spacing * 2.0)
+                                - button_width * btn_count
+                                - item_spacing * btn_count)
                                 .max(0.0);
                             let draft = self.bridge_states[active_bridge_idx]
                                 .draft_by_room
                                 .entry(room_id)
                                 .or_default();
-                            // 在 TextEdit 渲染之前检测 Ctrl+V（TextEdit 会消费事件）
-                            let ctrl_v_pre = ui.input(|input| {
-                                input.modifiers.command && input.key_pressed(egui::Key::V)
-                            });
                             let response = ui.add_sized(
                                 [input_width, control_height],
                                 egui::TextEdit::multiline(draft)
@@ -694,8 +754,13 @@ impl IcaApp {
                                     draft.pop();
                                 }
                             }
-                            // Ctrl+V 粘贴图片（使用渲染前保存的 ctrl_v 状态）
-                            if response.has_focus() && ctrl_v_pre && !has_pending_image {
+                            // Ctrl+V 粘贴图片
+                            // egui_winit 消费了 Ctrl+V 键事件，当剪贴板是图片时
+                            // raw_input_hook 会设置 clipboard_paste_failed 标志
+                            if response.has_focus()
+                                && self.clipboard_paste_failed
+                                && !has_pending_image
+                            {
                                 match arboard::Clipboard::new() {
                                     Ok(mut clipboard) => match clipboard.get_image() {
                                         Ok(img) => {
@@ -743,6 +808,17 @@ impl IcaApp {
                                 }
                             }
                             let enter_pressed = enter_no_mod;
+                            // 表情按钮（窄宽度时隐藏）
+                            if show_face_btn
+                                && ui
+                                    .add_sized(
+                                        [button_width, control_height],
+                                        Button::new(RichText::new("😀").size(15.0)),
+                                    )
+                                    .clicked()
+                            {
+                                self.show_face_picker = !self.show_face_picker;
+                            }
                             let plus_btn = ui
                                 .add_sized(
                                     [button_width, control_height],
@@ -853,6 +929,73 @@ impl IcaApp {
                             });
                             ui.add(Label::new(format_message_content(&reply.content)).wrap());
                         });
+                    }
+
+                    // 表情选择器面板
+                    if self.show_face_picker {
+                        ui.add_space(4.0);
+                        let face_panel_height = 200.0;
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), face_panel_height),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                egui::Frame::group(ui.style()).show(ui, |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .max_height(face_panel_height - 10.0)
+                                        .show(ui, |ui| {
+                                            let face_size = 32.0;
+                                            let spacing = 4.0;
+                                            let avail = ui.available_width();
+                                            // Button 有内边距，实际每个按钮宽度约为 face_size + 2 * button_padding
+                                            let button_padding = ui.spacing().button_padding.x * 2.0;
+                                            let cell_width = face_size + button_padding + spacing;
+                                            let cols = ((avail + spacing) / cell_width)
+                                                .max(1.0)
+                                                as usize;
+                                            egui::Grid::new("face_picker_grid")
+                                                .spacing([spacing, spacing])
+                                                .show(ui, |ui| {
+                                                    for (i, face_id) in
+                                                        crate::face_data::all_face_ids().enumerate()
+                                                    {
+                                                        let bytes = crate::face_data::get_face(face_id)
+                                                            .unwrap();
+                                                        let uri =
+                                                            format!("bytes://face_{face_id}");
+                                                        let img = Image::from_bytes(uri, bytes)
+                                                            .fit_to_exact_size(egui::vec2(
+                                                                face_size, face_size,
+                                                            ));
+                                                        let btn = ui.add(
+                                                            Button::image(img),
+                                                        );
+                                                        let clicked = btn.clicked();
+                                                        let name =
+                                                            crate::face_data::get_face_name(face_id);
+                                                        if let Some(name) = name {
+                                                            btn.on_hover_text(name);
+                                                        }
+                                                        if clicked {
+                                                            let draft =
+                                                                self.bridge_states[active_bridge_idx]
+                                                                    .draft_by_room
+                                                                    .entry(room_id)
+                                                                    .or_default();
+                                                            draft.push_str(&format!(
+                                                                "[Face: {}]",
+                                                                face_id
+                                                            ));
+                                                            self.show_face_picker = false;
+                                                        }
+                                                        if (i + 1) % cols == 0 {
+                                                            ui.end_row();
+                                                        }
+                                                    }
+                                                });
+                                        });
+                                });
+                            },
+                        );
                     }
                 },
             );

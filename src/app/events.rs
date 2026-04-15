@@ -151,6 +151,9 @@ impl IcaApp {
                             if state.pending_message_scroll_to_bottom.remove(&room_id) {
                                 state.message_scroll_to_bottom.insert(room_id);
                             }
+                            // 重置历史加载状态（新的 setMessages 意味着全量刷新）
+                            state.no_more_history.remove(&room_id);
+                            state.loading_older_messages.remove(&room_id);
                             state.messages_by_room.insert(room_id, messages);
                         }
                         Err(e) => {
@@ -162,6 +165,43 @@ impl IcaApp {
                                 Self::json_preview(&value["messages"], 512)
                             );
                             state.last_error = Some(format!("setMessages 解析失败: {}", e));
+                        }
+                    }
+                }
+            }
+            "appendOlderMessages" => {
+                if let Some(value) = Self::first_payload_value(payload) {
+                    let room_id = value["roomId"].as_i64().unwrap_or_default();
+                    // 不管解析成功与否都要重置加载状态
+                    state.loading_older_messages.remove(&room_id);
+                    match serde_json::from_value::<Vec<Message>>(value["messages"].clone()) {
+                        Ok(older_messages) => {
+                            if older_messages.is_empty() {
+                                // 没有更多历史消息
+                                state.no_more_history.insert(room_id);
+                            } else {
+                                // 合并到已有消息列表前面（去重）
+                                let existing = state.messages_by_room.entry(room_id).or_default();
+                                let existing_ids: std::collections::HashSet<&str> =
+                                    existing.iter().map(|m| m.msg_id.as_str()).collect();
+                                let mut new_msgs: Vec<Message> = older_messages
+                                    .into_iter()
+                                    .filter(|m| !existing_ids.contains(m.msg_id.as_str()))
+                                    .collect();
+                                // 将旧消息放在前面
+                                new_msgs.append(existing);
+                                *existing = new_msgs;
+                                // 标记需要调整 scroll offset
+                                state.prepend_scroll_fix.insert(room_id);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "appendOlderMessages parse failed: bridge={} room_id={} err={}",
+                                state.bridge_key,
+                                room_id,
+                                e,
+                            );
                         }
                     }
                 }

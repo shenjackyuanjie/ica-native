@@ -1,5 +1,4 @@
 use std::{
-    cmp::Reverse,
     collections::HashSet,
     path::Path,
     sync::Arc,
@@ -87,6 +86,12 @@ pub struct IcaApp {
     pub ui_tx: UnboundedSender<JsonValue>,
     /// Socketio 停止信号
     pub socketio_stop_senders: Vec<oneshot::Sender<()>>,
+    /// Ctrl+V 但文字粘贴失败（可能剪贴板是图片）
+    pub clipboard_paste_failed: bool,
+    /// 是否显示表情选择器
+    pub show_face_picker: bool,
+    /// 图片查看器状态（与独立窗口共享）
+    pub image_viewer: Option<std::sync::Arc<std::sync::Mutex<state::ImageViewerState>>>,
 }
 
 impl IcaApp {
@@ -132,6 +137,27 @@ impl IcaApp {
             .push(unifont_name.clone());
 
         ctx.set_fonts(fonts);
+    }
+
+    /// 预注册所有表情图片字节数据并触发纹理解码
+    fn preload_faces(ctx: &egui::Context) {
+        let start = std::time::Instant::now();
+        for face_id in crate::face_data::all_face_ids() {
+            let bytes = crate::face_data::get_face(face_id).unwrap();
+            let uri = format!("bytes://face_{face_id}");
+            ctx.include_bytes(uri.clone(), bytes);
+            // 触发纹理解码
+            let _ = ctx.try_load_texture(
+                &uri,
+                egui::TextureOptions::default(),
+                egui::load::SizeHint::default(),
+            );
+        }
+        tracing::info!(
+            "预加载 {} 个表情纹理完成，耗时 {:?}",
+            crate::face_data::FACE_COUNT,
+            start.elapsed()
+        );
     }
 
     fn setup_async_rt() -> Runtime {
@@ -251,6 +277,7 @@ impl IcaApp {
 
     pub fn new(cc: &CreationContext<'_>) -> Self {
         Self::setup_fonts(&cc.egui_ctx);
+        Self::preload_faces(&cc.egui_ctx);
 
         let (ui_tx, ui_rx) = unbounded_channel::<JsonValue>();
 
@@ -310,6 +337,9 @@ impl IcaApp {
             ui_rx,
             ui_tx,
             socketio_stop_senders,
+            clipboard_paste_failed: false,
+            show_face_picker: false,
+            image_viewer: None,
         }
     }
 
@@ -343,6 +373,29 @@ impl IcaApp {
         }
     }
 
+    /// 请求加载更旧的历史消息
+    pub fn request_older_messages(&mut self, bridge_idx: usize, room_id: RoomId) {
+        let Some(state) = self.bridge_states.get_mut(bridge_idx) else {
+            return;
+        };
+        // 防止重复请求，且已知无更多历史时跳过
+        if state.loading_older_messages.contains(&room_id) || state.no_more_history.contains(&room_id) {
+            return;
+        }
+        let offset = state.messages_by_room.get(&room_id).map_or(0, |m| m.len());
+        state.loading_older_messages.insert(room_id);
+
+        let Some(client) = self.ica_clients.get(bridge_idx) else {
+            return;
+        };
+        if let Err(e) = client.command_tx.send(IcaCommand::FetchOlderMessages { room_id, offset }) {
+            tracing::warn!("send fetchOlderMessages command failed: {}", e);
+            if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+                state.loading_older_messages.remove(&room_id);
+            }
+        }
+    }
+
     pub fn request_system_messages(&self, bridge_idx: usize) {
         let Some(client) = self.ica_clients.get(bridge_idx) else {
             return;
@@ -370,7 +423,12 @@ impl IcaApp {
             .cloned()
             .collect();
 
-        rooms.sort_by_key(|room| Reverse(room.index > 0));
+        rooms.sort_by(|a, b| {
+            // 置顶的排在前面，然后按 utime 降序
+            let pinned_a = a.index > 0;
+            let pinned_b = b.index > 0;
+            pinned_b.cmp(&pinned_a).then(b.utime.cmp(&a.utime))
+        });
         rooms
     }
 
@@ -730,16 +788,40 @@ impl IcaApp {
     pub fn select_active_room(&mut self, room_id: RoomId) {
         let mut should_request = false;
         let clear_search_on_room_select = self.clear_search_on_room_select;
+        let auto_read = self.custom_chat.auto_read_on_select;
+        let mut last_msg_id: Option<String> = None;
         if let Some(state) = self.active_bridge_state_mut() {
             state.selected_room_id = Some(room_id);
             if clear_search_on_room_select {
                 state.room_search_query.clear();
             }
             should_request = state.requested_rooms.insert(room_id);
+            // 获取该房间最后一条消息的 id 用于已读上报
+            if auto_read {
+                last_msg_id = state
+                    .messages_by_room
+                    .get(&room_id)
+                    .and_then(|msgs| msgs.last())
+                    .map(|m| m.msg_id.clone());
+            }
         }
 
         if should_request && let Some(bridge_idx) = self.active_bridge_idx {
             self.request_room_messages(bridge_idx, room_id, true);
+        }
+
+        // 发送已读上报
+        if auto_read {
+            if let Some(msg_id) = last_msg_id {
+                if let Some(bridge_idx) = self.active_bridge_idx {
+                    if let Some(client) = self.ica_clients.get(bridge_idx) {
+                        let _ = client.command_tx.send(IcaCommand::ReportRead {
+                            room_id,
+                            message_id: msg_id,
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -1009,6 +1091,44 @@ impl IcaApp {
 }
 
 impl eframe::App for IcaApp {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        // 检测 Ctrl+V 被 egui_winit 消费但文字粘贴失败的情况（剪贴板可能是图片）
+        // 当 command modifier 按下时，egui_winit 拦截 Key::V 并尝试文字粘贴。
+        // 若剪贴板无文字，则既无 Event::Paste 也无 Event::Key(V) 出现在 events 中。
+        let has_paste = raw_input
+            .events
+            .iter()
+            .any(|e| matches!(e, egui::Event::Paste(_)));
+        let has_key_v = raw_input.events.iter().any(|e| {
+            matches!(
+                e,
+                egui::Event::Key {
+                    key: egui::Key::V,
+                    pressed: true,
+                    ..
+                }
+            )
+        });
+        // 如果 Ctrl 按下，且无 V 键事件也无 Paste 事件，则可能是图片粘贴
+        // （正常按 Ctrl 不松手不会触发任何事件，只有 Ctrl+V 被消费才会出现这种情况）
+        // 额外条件：events 中有某些新的键盘/输入事件（排除纯修饰键状态更新）
+        let has_new_events = raw_input.events.iter().any(|e| {
+            matches!(
+                e,
+                egui::Event::Key { pressed: true, .. }
+                    | egui::Event::Cut
+                    | egui::Event::Copy
+                    | egui::Event::Paste(_)
+            )
+        });
+        // 没有任何新按键事件，但可能有被消费的按键
+        // egui_winit 消费 Ctrl+V 后 return，events 里完全没有这个键相关的痕迹
+        // 检测方式：如果当前帧有 modifiers.command=true 且既无 key_v 也无 paste，
+        // 也不是因为有其他键按下（has_new_events=false），这是 Ctrl+V 被吃掉的信号
+        self.clipboard_paste_failed =
+            raw_input.modifiers.command && !has_paste && !has_key_v && !has_new_events;
+    }
+
     fn on_exit(&mut self) {
         for sender in self.socketio_stop_senders.drain(..) {
             let _ = sender.send(());

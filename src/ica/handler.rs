@@ -118,6 +118,60 @@ pub(super) async fn handle_command(
                 }
             }
         }
+        IcaCommand::FetchOlderMessages { room_id, offset } => {
+            let timeout = Duration::from_secs(10);
+            let tx = event_tx.clone();
+            let bridge_id = bridge_key.to_string();
+
+            let result = client
+                .emit_with_ack(
+                    "fetchMessages",
+                    vec![json!(room_id), json!(offset)],
+                    timeout,
+                    move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
+                        let tx = tx.clone();
+                        let bridge_id = bridge_id.clone();
+                        Box::pin(async move {
+                            let raw_payload = payload_to_json(&payload);
+                            let messages = raw_payload
+                                .as_array()
+                                .and_then(|values| values.first())
+                                .cloned()
+                                .map(unwrap_singleton_array_layers)
+                                .unwrap_or_else(|| JsonValue::Array(Vec::new()));
+
+                            emit_ui_event(
+                                &tx,
+                                &bridge_id,
+                                "appendOlderMessages",
+                                json!([
+                                    {
+                                        "roomId": room_id,
+                                        "messages": messages,
+                                    }
+                                ]),
+                            );
+                        })
+                    },
+                )
+                .await;
+
+            if let Err(e) = result {
+                tracing::warn!("fetchOlderMessages failed for {}: {}", bridge_key, e);
+                // 通知 UI 加载完成（即使失败也要重置加载状态）
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "appendOlderMessages",
+                    json!([
+                        {
+                            "roomId": room_id,
+                            "messages": [],
+                        }
+                    ]),
+                );
+            }
+        }
         IcaCommand::GetSystemMsg => {
             let timeout = Duration::from_secs(10);
             let ack_received = Arc::new(AtomicBool::new(false));

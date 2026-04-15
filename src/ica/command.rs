@@ -21,6 +21,8 @@ pub(super) enum ConnectionSignal {
 #[derive(Debug, Clone)]
 pub enum IcaCommand {
     FetchMessages(RoomId),
+    /// 加载更旧的历史消息（带 offset）
+    FetchOlderMessages { room_id: RoomId, offset: usize },
     GetSystemMsg,
     PinRoom { room_id: RoomId, pin: bool },
     RemoveChat(RoomId),
