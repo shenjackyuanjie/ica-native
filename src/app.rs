@@ -708,6 +708,83 @@ impl IcaApp {
         });
     }
 
+    fn send_add_chat_group(
+        &self,
+        bridge_idx: usize,
+        name: &str,
+        rooms: &[RoomId],
+        include_all_personal: bool,
+    ) {
+        if let Some(client) = self.ica_clients.get(bridge_idx) {
+            let _ = client.command_tx.send(IcaCommand::AddChatGroup {
+                name: name.to_string(),
+                rooms: rooms.to_vec(),
+                include_all_personal,
+            });
+        }
+    }
+
+    fn send_remove_chat_group(&self, bridge_idx: usize, name: &str) {
+        if let Some(client) = self.ica_clients.get(bridge_idx) {
+            let _ = client.command_tx.send(IcaCommand::RemoveChatGroup {
+                name: name.to_string(),
+            });
+        }
+    }
+
+    fn send_update_chat_group(
+        &self,
+        bridge_idx: usize,
+        name: &str,
+        rooms: &[RoomId],
+        include_all_personal: bool,
+    ) {
+        if let Some(client) = self.ica_clients.get(bridge_idx) {
+            let _ = client.command_tx.send(IcaCommand::UpdateChatGroup {
+                name: name.to_string(),
+                rooms: rooms.to_vec(),
+                include_all_personal,
+            });
+        }
+    }
+
+    /// 对比新旧分组，发送相应的 bridge 同步命令
+    fn sync_chat_groups_to_bridge(&self, bridge_idx: usize, old: &ChatGroups) {
+        let new = &self.chat_groups;
+
+        // 检测删除和修改的分组
+        for old_group in &old.groups {
+            if let Some(new_group) = new.groups.iter().find(|g| g.name == old_group.name) {
+                // 分组存在，检查是否修改
+                if new_group.rooms != old_group.rooms
+                    || new_group.include_all_personal != old_group.include_all_personal
+                {
+                    self.send_update_chat_group(
+                        bridge_idx,
+                        &new_group.name,
+                        &new_group.rooms,
+                        new_group.include_all_personal,
+                    );
+                }
+            } else {
+                // 分组被删除
+                self.send_remove_chat_group(bridge_idx, &old_group.name);
+            }
+        }
+
+        // 检测新增的分组
+        for new_group in &new.groups {
+            if !old.groups.iter().any(|g| g.name == new_group.name) {
+                self.send_add_chat_group(
+                    bridge_idx,
+                    &new_group.name,
+                    &new_group.rooms,
+                    new_group.include_all_personal,
+                );
+            }
+        }
+    }
+
     pub fn set_room_pinned(&mut self, bridge_idx: usize, room_id: RoomId, pin: bool) {
         let Some(state) = self.bridge_states.get_mut(bridge_idx) else {
             return;

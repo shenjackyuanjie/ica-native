@@ -455,6 +455,66 @@ pub(super) async fn handle_command(
                 );
             }
         }
+        IcaCommand::AddChatGroup {
+            name,
+            rooms,
+            include_all_personal,
+        } => {
+            let payload = json!({
+                "name": name,
+                "rooms": rooms,
+                "includeAllPersonal": include_all_personal,
+            });
+            if let Err(e) = client.emit("addChatGroup", payload).await {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "commandFailed",
+                    json!({
+                        "kind": "addChatGroup",
+                        "message": e.to_string(),
+                    }),
+                );
+            }
+        }
+        IcaCommand::RemoveChatGroup { name } => {
+            if let Err(e) = client.emit("removeChatGroup", json!(name)).await {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "commandFailed",
+                    json!({
+                        "kind": "removeChatGroup",
+                        "message": e.to_string(),
+                    }),
+                );
+            }
+        }
+        IcaCommand::UpdateChatGroup {
+            name,
+            rooms,
+            include_all_personal,
+        } => {
+            let payload = json!({
+                "name": name,
+                "rooms": rooms,
+                "includeAllPersonal": include_all_personal,
+            });
+            if let Err(e) = client
+                .emit("updateChatGroup", vec![json!(name), payload])
+                .await
+            {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "commandFailed",
+                    json!({
+                        "kind": "updateChatGroup",
+                        "message": e.to_string(),
+                    }),
+                );
+            }
+        }
         IcaCommand::HandleRequest {
             request_type,
             flag,

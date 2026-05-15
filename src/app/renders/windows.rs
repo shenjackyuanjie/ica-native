@@ -1,6 +1,6 @@
 use crate::app::IcaApp;
-use crate::app::online_mode::OnlineMode;
 use crate::app::SelectedChatGroup;
+use crate::app::online_mode::OnlineMode;
 use crate::cfg::{self, ReEditDraftConflictMode};
 use egui::Hyperlink;
 use std::sync::atomic::Ordering;
@@ -361,6 +361,7 @@ impl IcaApp {
 
         // 聊天分组编辑器
         let chat_group_editor_open = self.open_page.chat_group_editor;
+        let groups_before = self.chat_groups.clone();
         let mut groups_clone = self.chat_groups.clone();
         let rooms_for_editor = self
             .active_bridge_state()
@@ -372,11 +373,16 @@ impl IcaApp {
             .default_size(egui::vec2(420.0, 500.0))
             .collapsible(false)
             .show(&ctx, |ui| {
-                dirty = self.chat_group_editor.ui(ui, &mut groups_clone, &rooms_for_editor);
+                dirty = self
+                    .chat_group_editor
+                    .ui(ui, &mut groups_clone, &rooms_for_editor);
             });
         if dirty {
             self.chat_groups = groups_clone;
             self.save_chat_groups();
+            if let Some(bridge_idx) = self.active_bridge_idx {
+                self.sync_chat_groups_to_bridge(bridge_idx, &groups_before);
+            }
         }
         // 如果删除分组导致当前选中失效
         if chat_group_editor_open && !self.open_page.chat_group_editor {

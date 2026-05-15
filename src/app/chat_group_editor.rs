@@ -48,8 +48,7 @@ impl ChatGroupEditor {
                 } else if chat_groups.groups.iter().any(|g| g.name == name) {
                     self.error_msg = Some("分组名称已存在".to_string());
                 } else {
-                    chat_groups
-                        .add_group(super::chat_groups::ChatGroup::new_empty(name));
+                    chat_groups.add_group(super::chat_groups::ChatGroup::new_empty(name));
                     self.new_group_name.clear();
                     self.error_msg = None;
                     dirty = true;
@@ -86,19 +85,13 @@ impl ChatGroupEditor {
                                 if ui.button("ok").clicked() {
                                     let new_name = self.editing_name.trim().to_string();
                                     if new_name.is_empty() {
-                                        self.error_msg =
-                                            Some("分组名称不能为空".to_string());
+                                        self.error_msg = Some("分组名称不能为空".to_string());
                                     } else if new_name.len() > 10 {
-                                        self.error_msg =
-                                            Some("分组名称最多10个字符".to_string());
+                                        self.error_msg = Some("分组名称最多10个字符".to_string());
                                     } else if new_name != group_name
-                                        && chat_groups
-                                            .groups
-                                            .iter()
-                                            .any(|g| g.name == new_name)
+                                        && chat_groups.groups.iter().any(|g| g.name == new_name)
                                     {
-                                        self.error_msg =
-                                            Some("分组名称已存在".to_string());
+                                        self.error_msg = Some("分组名称已存在".to_string());
                                     } else {
                                         chat_groups.rename_group(idx, new_name);
                                         self.editing_index = None;
@@ -121,9 +114,7 @@ impl ChatGroupEditor {
 
                             ui.separator();
 
-                            if idx > 0
-                                && ui.button("up").on_hover_text("上移").clicked()
-                            {
+                            if idx > 0 && ui.button("up").on_hover_text("上移").clicked() {
                                 move_up = Some(idx);
                             }
                             if idx + 1 < group_count
@@ -133,12 +124,8 @@ impl ChatGroupEditor {
                             }
 
                             let mut include_all = group_include_all;
-                            if ui
-                                .checkbox(&mut include_all, "包含所有私聊")
-                                .changed()
-                            {
-                                chat_groups.groups[idx].include_all_personal =
-                                    include_all;
+                            if ui.checkbox(&mut include_all, "包含所有私聊").changed() {
+                                chat_groups.groups[idx].include_all_personal = include_all;
                                 dirty = true;
                             }
 
@@ -147,22 +134,11 @@ impl ChatGroupEditor {
                             }
                         });
 
-                        ui.collapsing(
-                            format!(
-                                "会话 ({} 个)",
-                                group_room_count
-                            ),
-                            |ui| {
-                                if self.render_room_list(
-                                    ui,
-                                    rooms,
-                                    idx,
-                                    chat_groups,
-                                ) {
-                                    dirty = true;
-                                }
-                            },
-                        );
+                        ui.collapsing(format!("会话 ({} 个)", group_room_count), |ui| {
+                            if self.render_room_list(ui, rooms, idx, chat_groups) {
+                                dirty = true;
+                            }
+                        });
                     });
                 }
 
@@ -264,29 +240,31 @@ impl ChatGroupEditor {
                     .id(ui.make_persistent_id(&salt)),
             );
             let query = search.trim().to_uppercase();
-            egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                for room in &available {
-                    if !query.is_empty()
-                        && !room.room_name.to_uppercase().contains(&query)
-                        && !room.room_id.to_string().contains(&query)
-                    {
-                        continue;
+            egui::ScrollArea::vertical()
+                .max_height(200.0)
+                .show(ui, |ui| {
+                    for room in &available {
+                        if !query.is_empty()
+                            && !room.room_name.to_uppercase().contains(&query)
+                            && !room.room_id.to_string().contains(&query)
+                        {
+                            continue;
+                        }
+                        let room_name = if room.room_name.is_empty() {
+                            room.room_id.to_string()
+                        } else {
+                            room.room_name.clone()
+                        };
+                        let group_type = if room.room_id < 0 { "群聊" } else { "私聊" };
+                        if ui
+                            .button(format!("[{}] {}", group_type, room_name))
+                            .clicked()
+                        {
+                            chat_groups.toggle_room_in_group(group_idx, room.room_id);
+                            dirty = true;
+                        }
                     }
-                    let room_name = if room.room_name.is_empty() {
-                        room.room_id.to_string()
-                    } else {
-                        room.room_name.clone()
-                    };
-                    let group_type = if room.room_id < 0 { "群聊" } else { "私聊" };
-                    if ui
-                        .button(format!("[{}] {}", group_type, room_name))
-                        .clicked()
-                    {
-                        chat_groups.toggle_room_in_group(group_idx, room.room_id);
-                        dirty = true;
-                    }
-                }
-            });
+                });
         });
 
         dirty

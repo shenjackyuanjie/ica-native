@@ -162,13 +162,10 @@ impl IcaApp {
                                 .any(|r| r.room_id > 0 && r.unread_count > 0);
                             if has_unread {
                                 let dot_radius = 3.0;
-                                let dot_pos = resp.rect.right_top()
-                                    + egui::vec2(-dot_radius, dot_radius);
-                                ui.painter().circle_filled(
-                                    dot_pos,
-                                    dot_radius,
-                                    egui::Color32::RED,
-                                );
+                                let dot_pos =
+                                    resp.rect.right_top() + egui::vec2(-dot_radius, dot_radius);
+                                ui.painter()
+                                    .circle_filled(dot_pos, dot_radius, egui::Color32::RED);
                             }
                         }
                         ui.add(Label::new(text).selectable(false));
@@ -188,39 +185,39 @@ impl IcaApp {
 
                         // 未读红点
                         if !disable_groups && !disable_dot && !is_selected {
-                            if self
-                                .chat_groups
-                                .has_unread_in_group(idx, &rooms_snapshot)
-                            {
+                            if self.chat_groups.has_unread_in_group(idx, &rooms_snapshot) {
                                 let dot_radius = 3.0;
-                                let dot_pos = resp.rect.right_top()
-                                    + egui::vec2(-dot_radius, dot_radius);
-                                ui.painter().circle_filled(
-                                    dot_pos,
-                                    dot_radius,
-                                    egui::Color32::RED,
-                                );
+                                let dot_pos =
+                                    resp.rect.right_top() + egui::vec2(-dot_radius, dot_radius);
+                                ui.painter()
+                                    .circle_filled(dot_pos, dot_radius, egui::Color32::RED);
                             }
                         }
 
                         // 右键菜单
                         resp.context_menu(|ui| {
-                            if let Some(room_id) = self
-                                .active_bridge_state()
-                                .and_then(|s| s.selected_room_id)
+                            if let Some(room_id) =
+                                self.active_bridge_state().and_then(|s| s.selected_room_id)
                             {
-                                let in_group = self
-                                    .chat_groups
-                                    .is_room_in_group(idx, room_id);
+                                let in_group = self.chat_groups.is_room_in_group(idx, room_id);
                                 let label = if in_group {
                                     "移出当前会话"
                                 } else {
                                     "加入当前会话"
                                 };
                                 if ui.button(label).clicked() {
-                                    self.chat_groups
-                                        .toggle_room_in_group(idx, room_id);
+                                    self.chat_groups.toggle_room_in_group(idx, room_id);
                                     self.save_chat_groups();
+                                    if let Some(bridge_idx) = self.active_bridge_idx {
+                                        if let Some(group) = self.chat_groups.groups.get(idx) {
+                                            self.send_update_chat_group(
+                                                bridge_idx,
+                                                &group.name,
+                                                &group.rooms,
+                                                group.include_all_personal,
+                                            );
+                                        }
+                                    }
                                     ui.close();
                                 }
                             }
@@ -240,19 +237,13 @@ impl IcaApp {
                     // 管理按钮
                     ui.add_space(8.0);
                     if ui
-                        .add_sized(
-                            [24.0, 24.0],
-                            Button::new(RichText::new("+").size(16.0)),
-                        )
+                        .add_sized([24.0, 24.0], Button::new(RichText::new("+").size(16.0)))
                         .clicked()
                     {
                         self.open_page.chat_group_editor = true;
                     }
                     if ui
-                        .add_sized(
-                            [24.0, 24.0],
-                            Button::new(RichText::new("⚙").size(14.0)),
-                        )
+                        .add_sized([24.0, 24.0], Button::new(RichText::new("⚙").size(14.0)))
                         .clicked()
                     {
                         self.open_page.chat_group_editor = true;

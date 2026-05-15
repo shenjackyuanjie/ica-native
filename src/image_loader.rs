@@ -18,9 +18,8 @@ mod worker;
 use std::sync::Arc;
 
 use decode::{
-    decode_image, decoded_image_byte_size, is_permanent_download_error,
-    normalize_image_load_error, normalize_uri, should_handle_file_uri,
-    should_handle_loaded_bytes,
+    decode_image, decoded_image_byte_size, is_permanent_download_error, normalize_image_load_error,
+    normalize_uri, should_handle_file_uri, should_handle_loaded_bytes,
 };
 use disk::DiskCache;
 use egui::{

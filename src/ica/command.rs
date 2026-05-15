@@ -81,6 +81,19 @@ pub enum IcaCommand {
         flag: String,
         accept: bool,
     },
+    AddChatGroup {
+        name: String,
+        rooms: Vec<RoomId>,
+        include_all_personal: bool,
+    },
+    RemoveChatGroup {
+        name: String,
+    },
+    UpdateChatGroup {
+        name: String,
+        rooms: Vec<RoomId>,
+        include_all_personal: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
