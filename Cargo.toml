@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-eframe = "0.34.1"
-egui = "0.34.1"
-egui_extras = { version = "0.34.1", features = ["all_loaders"] }
+eframe = "0.34.2"
+egui = "0.34.2"
+egui_extras = { version = "0.34.2", features = ["all_loaders"] }
 
 anyhow = "1.0"
 
@@ -28,7 +28,7 @@ rust_socketio = { git = "ssh://git@github.com/nextdata-tech/rust-socketio.git", 
 ] }
 reqwest = { version = "0.13", default-features = false }
 
-tokio = { version = "1.49.0", features = ["full"] }
+tokio = { version = "1.52.3", features = ["full"] }
 futures-util = "0.3.31"
 
 tracing = "0.1"
