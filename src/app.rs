@@ -900,6 +900,18 @@ impl IcaApp {
         }
     }
 
+    pub fn send_renew_message(&mut self, room_id: RoomId, message_id: String) {
+        let Some(bridge_idx) = self.active_bridge_idx else {
+            return;
+        };
+        if let Err(e) = self.ica_clients[bridge_idx]
+            .command_tx
+            .send(IcaCommand::RenewMessage { room_id, message_id })
+        {
+            tracing::warn!("send renewMessage command failed: {}", e);
+        }
+    }
+
     pub fn send_delete_message(&mut self, room_id: RoomId, message_id: String) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;

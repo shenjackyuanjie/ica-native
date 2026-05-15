@@ -80,6 +80,7 @@ pub enum MessageAction {
     StartForward { room_id: RoomId, message_id: String },
     PreviewImage { url: String },
     ScrollToMessage { msg_id: String },
+    RenewMessage { room_id: RoomId, message_id: String },
 }
 
 #[derive(Debug, Clone)]

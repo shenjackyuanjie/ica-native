@@ -45,6 +45,7 @@ pub enum IcaCommand {
         file_data: Vec<u8>,
     },
     DeleteMessage(DeleteMessage),
+    RenewMessage { room_id: RoomId, message_id: String },
     HandleRequest {
         request_type: String,
         flag: String,

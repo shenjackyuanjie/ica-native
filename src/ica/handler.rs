@@ -392,6 +392,24 @@ pub(super) async fn handle_command(
                 );
             }
         }
+        IcaCommand::RenewMessage { room_id, message_id } => {
+            if let Err(e) = client
+                .emit("renewMessage", vec![json!(room_id), json!(message_id.clone()), json!(null)])
+                .await
+            {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "commandFailed",
+                    json!({
+                        "kind": "renewMessage",
+                        "roomId": room_id,
+                        "messageId": message_id,
+                        "message": e.to_string(),
+                    }),
+                );
+            }
+        }
         IcaCommand::DeleteMessage(message) => {
             let message_id = message.message_id.clone();
             if !client::delete_message(client, &message).await {

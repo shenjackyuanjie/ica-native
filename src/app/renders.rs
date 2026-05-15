@@ -693,6 +693,9 @@ impl IcaApp {
                     MessageAction::ScrollToMessage { msg_id } => {
                         self.bridge_states[active_bridge_idx].scroll_to_message_id = Some(msg_id);
                     }
+                    MessageAction::RenewMessage { room_id, message_id } => {
+                        self.send_renew_message(room_id, message_id);
+                    }
                 }
             }
 

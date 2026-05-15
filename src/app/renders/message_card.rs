@@ -401,6 +401,13 @@ impl IcaApp {
                                     ui.ctx().copy_text(message.content.clone());
                                     ui.close();
                                 }
+                                if ui.button("重新获取该消息内容").clicked() {
+                                    action = Some(MessageAction::RenewMessage {
+                                        room_id,
+                                        message_id: message.msg_id.clone(),
+                                    });
+                                    ui.close();
+                                }
                                 if ui.button("复制消息 ID").clicked() {
                                     ui.ctx().copy_text(message.msg_id.clone());
                                     ui.close();
