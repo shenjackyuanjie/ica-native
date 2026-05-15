@@ -6,8 +6,8 @@ use crate::ica::types::{
     room::{JoinRequestRoom, Room},
 };
 
-use super::state::{AuthState, BridgeState, SocketState};
 use super::IcaApp;
+use super::state::{AuthState, BridgeState, SocketState};
 
 impl IcaApp {
     /// socket.io 的事件 payload 基本都是数组包装，真正的数据通常在第一个元素里。
@@ -32,10 +32,15 @@ impl IcaApp {
         }
     }
 
-    fn parse_join_request(value: JsonValue, fallback_flag: Option<&str>) -> Result<JoinRequestRoom, String> {
-        let mut request = serde_json::from_value::<JoinRequestRoom>(value)
-            .map_err(|e| e.to_string())?;
-        if request.flag.is_empty() && let Some(flag) = fallback_flag {
+    fn parse_join_request(
+        value: JsonValue,
+        fallback_flag: Option<&str>,
+    ) -> Result<JoinRequestRoom, String> {
+        let mut request =
+            serde_json::from_value::<JoinRequestRoom>(value).map_err(|e| e.to_string())?;
+        if request.flag.is_empty()
+            && let Some(flag) = fallback_flag
+        {
             request.flag = flag.to_string();
         }
         request.request_type = request.request_type.trim().to_string();
@@ -67,7 +72,11 @@ impl IcaApp {
     /// 把某个 bridge 发来的事件应用到对应的本地状态上。
     ///
     /// 这里故意不做 UI 逻辑，只做"事件 -> 状态"的映射，方便后续继续补事件类型。
-    pub(super) fn apply_socketio_event(state: &mut BridgeState, event_name: &str, payload: &JsonValue) {
+    pub(super) fn apply_socketio_event(
+        state: &mut BridgeState,
+        event_name: &str,
+        payload: &JsonValue,
+    ) {
         match event_name {
             "socketConnecting" => {
                 state.socket_state = SocketState::Connecting;
@@ -110,7 +119,9 @@ impl IcaApp {
                 state.last_error = Some("bridge 认证失败".to_string());
             }
             "message" => {
-                if let Some(message) = Self::first_payload_value(payload).and_then(|value| value.as_str()) {
+                if let Some(message) =
+                    Self::first_payload_value(payload).and_then(|value| value.as_str())
+                {
                     match message {
                         "authRequired" => {
                             state.auth_state = AuthState::Pending;
@@ -211,7 +222,8 @@ impl IcaApp {
                     match serde_json::from_value::<NewMessage>(value.clone()) {
                         Ok(new_message) => {
                             let room_id = new_message.room_id;
-                            let should_scroll_to_bottom = new_message.msg.sender_id == state.online_data.qqid
+                            let should_scroll_to_bottom = new_message.msg.sender_id
+                                == state.online_data.qqid
                                 && state.pending_send_scroll_to_bottom.remove(&room_id);
                             state.requested_rooms.insert(room_id);
                             state.sync_room_preview(room_id, &new_message.msg);
@@ -227,17 +239,23 @@ impl IcaApp {
                 }
             }
             "deleteMessage" => {
-                if let Some(msg_id) = Self::first_payload_value(payload).and_then(|value| value.as_str()) {
+                if let Some(msg_id) =
+                    Self::first_payload_value(payload).and_then(|value| value.as_str())
+                {
                     state.mark_message_deleted(msg_id);
                 }
             }
             "hideMessage" => {
-                if let Some(msg_id) = Self::first_payload_value(payload).and_then(|value| value.as_str()) {
+                if let Some(msg_id) =
+                    Self::first_payload_value(payload).and_then(|value| value.as_str())
+                {
                     state.mark_message_hidden(msg_id);
                 }
             }
             "revealMessage" => {
-                if let Some(msg_id) = Self::first_payload_value(payload).and_then(|value| value.as_str()) {
+                if let Some(msg_id) =
+                    Self::first_payload_value(payload).and_then(|value| value.as_str())
+                {
                     state.mark_message_revealed(msg_id);
                 }
             }
@@ -257,7 +275,11 @@ impl IcaApp {
                 if let Some(value) = Self::first_payload_value(payload) {
                     match serde_json::from_value::<Room>(value.clone()) {
                         Ok(updated_room) => {
-                            if let Some(existing) = state.rooms.iter_mut().find(|r| r.room_id == updated_room.room_id) {
+                            if let Some(existing) = state
+                                .rooms
+                                .iter_mut()
+                                .find(|r| r.room_id == updated_room.room_id)
+                            {
                                 *existing = updated_room;
                             } else {
                                 state.rooms.push(updated_room);
@@ -271,31 +293,33 @@ impl IcaApp {
             }
             "syncRead" => {
                 if let Some(room_id) = Self::first_payload_value(payload).and_then(|v| v.as_i64())
-                    && let Some(room) = state.rooms.iter_mut().find(|r| r.room_id == room_id) {
-                        room.unread_count = 0;
-                        room.at = crate::ica::types::message::At::Bool(false);
-                    }
+                    && let Some(room) = state.rooms.iter_mut().find(|r| r.room_id == room_id)
+                {
+                    room.unread_count = 0;
+                    room.at = crate::ica::types::message::At::Bool(false);
+                }
             }
             "renewMessage" => {
                 if let Some(value) = Self::first_payload_value(payload) {
                     let room_id = value["roomId"].as_i64().unwrap_or_default();
                     if let Some(msg_id) = value["messageId"].as_str()
                         && let Some(messages) = state.messages_by_room.get_mut(&room_id)
-                            && let Some(existing) = messages.iter_mut().find(|m| m.msg_id == msg_id)
-                                && let Some(msg_update) = value.get("message") {
-                                    if let Some(content) = msg_update.get("content").and_then(|c| c.as_str()) {
-                                        existing.content = content.to_string();
-                                    }
-                                    if let Some(deleted) = msg_update.get("deleted").and_then(|d| d.as_bool()) {
-                                        existing.deleted = deleted;
-                                    }
-                                    if let Some(hide) = msg_update.get("hide").and_then(|h| h.as_bool()) {
-                                        existing.hide = hide;
-                                    }
-                                    if let Some(reveal) = msg_update.get("reveal").and_then(|r| r.as_bool()) {
-                                        existing.reveal = reveal;
-                                    }
-                                }
+                        && let Some(existing) = messages.iter_mut().find(|m| m.msg_id == msg_id)
+                        && let Some(msg_update) = value.get("message")
+                    {
+                        if let Some(content) = msg_update.get("content").and_then(|c| c.as_str()) {
+                            existing.content = content.to_string();
+                        }
+                        if let Some(deleted) = msg_update.get("deleted").and_then(|d| d.as_bool()) {
+                            existing.deleted = deleted;
+                        }
+                        if let Some(hide) = msg_update.get("hide").and_then(|h| h.as_bool()) {
+                            existing.hide = hide;
+                        }
+                        if let Some(reveal) = msg_update.get("reveal").and_then(|r| r.as_bool()) {
+                            existing.reveal = reveal;
+                        }
+                    }
                 }
             }
             "setOnline" => {
@@ -304,9 +328,10 @@ impl IcaApp {
             "setOffline" => {
                 state.socket_state = SocketState::Disconnected;
                 if let Some(value) = Self::first_payload_value(payload)
-                    && let Some(msg) = value.as_str() {
-                        state.last_error = Some(msg.to_string());
-                    }
+                    && let Some(msg) = value.as_str()
+                {
+                    state.last_error = Some(msg.to_string());
+                }
             }
             "messageSuccess" => {}
             "messageError" => {
@@ -318,9 +343,10 @@ impl IcaApp {
             "closeLoading" => {}
             "notifyError" => {
                 if let Some(value) = Self::first_payload_value(payload)
-                    && let Some(msg) = value.as_str() {
-                        state.last_error = Some(msg.to_string());
-                    }
+                    && let Some(msg) = value.as_str()
+                {
+                    state.last_error = Some(msg.to_string());
+                }
             }
             "setSystemMessages" => {
                 if let Some(value) = Self::first_payload_value(payload) {

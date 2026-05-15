@@ -253,12 +253,15 @@ impl<'de> Deserialize<'de> for Message {
         }
         for file in &files {
             let file_type = file.file_type.to_ascii_lowercase();
-            if (file_type == "image" || file_type.starts_with("image/")) && file.url.trim().is_empty() {
+            if (file_type == "image" || file_type.starts_with("image/"))
+                && file.url.trim().is_empty()
+            {
                 tracing::warn!(
                     "image file missing url: msg_id={} sender={} raw_file={}",
                     msg_id,
                     sender_name,
-                    serde_json::to_string(file).unwrap_or_else(|_| "<serialize failed>".to_string())
+                    serde_json::to_string(file)
+                        .unwrap_or_else(|_| "<serialize failed>".to_string())
                 );
             }
         }

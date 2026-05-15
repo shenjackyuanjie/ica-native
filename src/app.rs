@@ -1,8 +1,4 @@
-use std::{
-    collections::HashSet,
-    path::Path,
-    sync::Arc,
-};
+use std::{collections::HashSet, path::Path, sync::Arc};
 
 use eframe::CreationContext;
 use rand::RngExt;
@@ -330,7 +326,11 @@ impl IcaApp {
             clear_search_on_room_select: config.ui_setting.clear_search_on_room_select,
             scroll_to_bottom_after_send: config.ui_setting.scroll_to_bottom_after_send,
             reedit_draft_conflict_mode: config.ui_setting.reedit_draft_conflict_mode,
-            active_bridge_idx: if bridge_states.is_empty() { None } else { Some(0) },
+            active_bridge_idx: if bridge_states.is_empty() {
+                None
+            } else {
+                Some(0)
+            },
             bridge_states,
             runtime,
             ica_clients,
@@ -353,7 +353,12 @@ impl IcaApp {
             .and_then(|idx| self.bridge_states.get_mut(idx))
     }
 
-    pub fn request_room_messages(&mut self, bridge_idx: usize, room_id: RoomId, scroll_to_bottom: bool) {
+    pub fn request_room_messages(
+        &mut self,
+        bridge_idx: usize,
+        room_id: RoomId,
+        scroll_to_bottom: bool,
+    ) {
         let Some(client) = self.ica_clients.get(bridge_idx) else {
             return;
         };
@@ -379,7 +384,9 @@ impl IcaApp {
             return;
         };
         // 防止重复请求，且已知无更多历史时跳过
-        if state.loading_older_messages.contains(&room_id) || state.no_more_history.contains(&room_id) {
+        if state.loading_older_messages.contains(&room_id)
+            || state.no_more_history.contains(&room_id)
+        {
             return;
         }
         let offset = state.messages_by_room.get(&room_id).map_or(0, |m| m.len());
@@ -388,7 +395,10 @@ impl IcaApp {
         let Some(client) = self.ica_clients.get(bridge_idx) else {
             return;
         };
-        if let Err(e) = client.command_tx.send(IcaCommand::FetchOlderMessages { room_id, offset }) {
+        if let Err(e) = client
+            .command_tx
+            .send(IcaCommand::FetchOlderMessages { room_id, offset })
+        {
             tracing::warn!("send fetchOlderMessages command failed: {}", e);
             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                 state.loading_older_messages.remove(&room_id);
@@ -434,7 +444,9 @@ impl IcaApp {
 
     fn extract_raw_chain(message: &Message) -> Option<JsonValue> {
         match &message.raw_msg {
-            JsonValue::Array(values) if !values.is_empty() => Some(JsonValue::Array(values.clone())),
+            JsonValue::Array(values) if !values.is_empty() => {
+                Some(JsonValue::Array(values.clone()))
+            }
             JsonValue::Object(map) if map.contains_key("type") => {
                 Some(JsonValue::Array(vec![message.raw_msg.clone()]))
             }
@@ -449,7 +461,10 @@ impl IcaApp {
 
         if let Err(e) = self.ica_clients[bridge_idx]
             .command_tx
-            .send(IcaCommand::SendRawMessage { room_id, content: chain })
+            .send(IcaCommand::SendRawMessage {
+                room_id,
+                content: chain,
+            })
         {
             tracing::warn!("send raw sendMessage command failed: {}", e);
             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
@@ -458,13 +473,19 @@ impl IcaApp {
             return false;
         }
 
-        if self.scroll_to_bottom_after_send && let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+        if self.scroll_to_bottom_after_send
+            && let Some(state) = self.bridge_states.get_mut(bridge_idx)
+        {
             state.pending_send_scroll_to_bottom.insert(room_id);
         }
         true
     }
 
-    fn clone_message_from_active_bridge(&self, room_id: RoomId, message_id: &str) -> Option<Message> {
+    fn clone_message_from_active_bridge(
+        &self,
+        room_id: RoomId,
+        message_id: &str,
+    ) -> Option<Message> {
         let bridge_idx = self.active_bridge_idx?;
         self.bridge_states
             .get(bridge_idx)?
@@ -529,11 +550,15 @@ impl IcaApp {
             return false;
         }
 
-        if !message.files.is_empty() && let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+        if !message.files.is_empty()
+            && let Some(state) = self.bridge_states.get_mut(bridge_idx)
+        {
             state.last_error = Some("部分附件消息缺少原始节点，已退化为纯文本发送".to_string());
         }
 
-        if self.scroll_to_bottom_after_send && let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+        if self.scroll_to_bottom_after_send
+            && let Some(state) = self.bridge_states.get_mut(bridge_idx)
+        {
             state.pending_send_scroll_to_bottom.insert(target_room_id);
         }
         true
@@ -552,7 +577,8 @@ impl IcaApp {
                 state.reply_to_by_room.remove(&room_id);
             }
             if !message.files.is_empty() {
-                state.last_error = Some("复制到编辑区暂不恢复附件，如需原样发送请使用 +1 或 转发".to_string());
+                state.last_error =
+                    Some("复制到编辑区暂不恢复附件，如需原样发送请使用 +1 或 转发".to_string());
             }
         }
     }
@@ -564,7 +590,12 @@ impl IcaApp {
         let _ = self.send_message_clone_to_room(room_id, &message);
     }
 
-    pub fn begin_forward_selection(&mut self, room_id: RoomId, message_id: String, open_picker: bool) {
+    pub fn begin_forward_selection(
+        &mut self,
+        room_id: RoomId,
+        message_id: String,
+        open_picker: bool,
+    ) {
         if let Some(state) = self.active_bridge_state_mut() {
             state.replace_forward_selection(room_id, message_id);
             state.forward_target_picker_open = open_picker;
@@ -596,13 +627,17 @@ impl IcaApp {
             }
         }
 
-        if failed > 0 && let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+        if failed > 0
+            && let Some(state) = self.bridge_states.get_mut(bridge_idx)
+        {
             state.last_error = Some(format!("有 {} 条消息无法完整 +1", failed));
         }
     }
 
     pub fn open_forward_target_picker(&mut self, room_id: RoomId) {
-        if let Some(state) = self.active_bridge_state_mut() && state.is_forward_selection_active(room_id) {
+        if let Some(state) = self.active_bridge_state_mut()
+            && state.is_forward_selection_active(room_id)
+        {
             state.forward_target_picker_open = true;
             state.forward_target_search_query.clear();
         }
@@ -635,7 +670,8 @@ impl IcaApp {
         }
 
         if failed > 0 {
-            self.bridge_states[bridge_idx].last_error = Some(format!("有 {} 条消息无法完整转发", failed));
+            self.bridge_states[bridge_idx].last_error =
+                Some(format!("有 {} 条消息无法完整转发", failed));
         }
         self.bridge_states[bridge_idx].clear_forward_selection();
     }
@@ -668,7 +704,8 @@ impl IcaApp {
             {
                 room.index = previous_index;
             }
-            self.bridge_states[bridge_idx].last_error = Some(format!("置顶命令发送失败: {}", room_id));
+            self.bridge_states[bridge_idx].last_error =
+                Some(format!("置顶命令发送失败: {}", room_id));
         }
     }
 
@@ -906,7 +943,10 @@ impl IcaApp {
         };
         if let Err(e) = self.ica_clients[bridge_idx]
             .command_tx
-            .send(IcaCommand::RenewMessage { room_id, message_id })
+            .send(IcaCommand::RenewMessage {
+                room_id,
+                message_id,
+            })
         {
             tracing::warn!("send renewMessage command failed: {}", e);
         }

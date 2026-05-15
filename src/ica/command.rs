@@ -4,7 +4,10 @@ use serde_json::json;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ica::types::{RoomId, message::{DeleteMessage, ReplyMessage, SendMessage}};
+use crate::ica::types::{
+    RoomId,
+    message::{DeleteMessage, ReplyMessage, SendMessage},
+};
 
 /// icalingua 客户端的兼容版本号
 pub const ICA_PROTOCOL_VERSION: &str = "2.12.28";
@@ -22,19 +25,43 @@ pub(super) enum ConnectionSignal {
 pub enum IcaCommand {
     FetchMessages(RoomId),
     /// 加载更旧的历史消息（带 offset）
-    FetchOlderMessages { room_id: RoomId, offset: usize },
+    FetchOlderMessages {
+        room_id: RoomId,
+        offset: usize,
+    },
     GetSystemMsg,
-    PinRoom { room_id: RoomId, pin: bool },
+    PinRoom {
+        room_id: RoomId,
+        pin: bool,
+    },
     RemoveChat(RoomId),
-    IgnoreChat { room_id: RoomId, room_name: String },
+    IgnoreChat {
+        room_id: RoomId,
+        room_name: String,
+    },
     RemoveIgnoredChat(RoomId),
-    SetRoomPriority { room_id: RoomId, priority: u8 },
-    ReportRead { room_id: RoomId, message_id: String },
+    SetRoomPriority {
+        room_id: RoomId,
+        priority: u8,
+    },
+    ReportRead {
+        room_id: RoomId,
+        message_id: String,
+    },
     StopFetchingHistory,
-    HideMessage { room_id: RoomId, message_id: String },
-    RevealMessage { room_id: RoomId, message_id: String },
+    HideMessage {
+        room_id: RoomId,
+        message_id: String,
+    },
+    RevealMessage {
+        room_id: RoomId,
+        message_id: String,
+    },
     SendMessage(SendMessage),
-    SendRawMessage { room_id: RoomId, content: JsonValue },
+    SendRawMessage {
+        room_id: RoomId,
+        content: JsonValue,
+    },
     /// 分块上传文件后发送消息
     SendFileMessage {
         room_id: RoomId,
@@ -45,7 +72,10 @@ pub enum IcaCommand {
         file_data: Vec<u8>,
     },
     DeleteMessage(DeleteMessage),
-    RenewMessage { room_id: RoomId, message_id: String },
+    RenewMessage {
+        room_id: RoomId,
+        message_id: String,
+    },
     HandleRequest {
         request_type: String,
         flag: String,

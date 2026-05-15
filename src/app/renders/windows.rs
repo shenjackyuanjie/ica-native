@@ -1,6 +1,6 @@
 use crate::app::IcaApp;
-use crate::cfg::{self, ReEditDraftConflictMode};
 use crate::app::online_mode::OnlineMode;
+use crate::cfg::{self, ReEditDraftConflictMode};
 use egui::Hyperlink;
 use std::sync::atomic::Ordering;
 
@@ -39,7 +39,11 @@ impl IcaApp {
                 ui.label("重新编辑草稿冲突处理");
                 ui.horizontal_wrapped(|ui| {
                     reedit_mode_changed |= ui
-                        .selectable_value(&mut reedit_mode, ReEditDraftConflictMode::Overwrite, "覆盖")
+                        .selectable_value(
+                            &mut reedit_mode,
+                            ReEditDraftConflictMode::Overwrite,
+                            "覆盖",
+                        )
                         .changed();
                     reedit_mode_changed |= ui
                         .selectable_value(&mut reedit_mode, ReEditDraftConflictMode::Append, "追加")
@@ -73,7 +77,9 @@ impl IcaApp {
         if let Some(active_bridge_idx) = self.active_bridge_idx {
             let picker_state = self.bridge_states.get(active_bridge_idx).and_then(|state| {
                 let source_room_id = state.forward_room_id?;
-                if !state.forward_target_picker_open || state.forward_selected_message_ids.is_empty() {
+                if !state.forward_target_picker_open
+                    || state.forward_selected_message_ids.is_empty()
+                {
                     return None;
                 }
                 Some((
@@ -90,7 +96,8 @@ impl IcaApp {
                     .map(|room| room.room_name.clone())
                     .filter(|name| !name.is_empty())
                     .unwrap_or_else(|| source_room_id.to_string());
-                let mut picker_open = self.bridge_states[active_bridge_idx].forward_target_picker_open;
+                let mut picker_open =
+                    self.bridge_states[active_bridge_idx].forward_target_picker_open;
                 let mut target_room_id = None;
 
                 egui::Window::new("选择转发目标")
@@ -103,7 +110,8 @@ impl IcaApp {
                         ui.add_sized(
                             [ui.available_width(), 0.0],
                             egui::TextEdit::singleline(
-                                &mut self.bridge_states[active_bridge_idx].forward_target_search_query,
+                                &mut self.bridge_states[active_bridge_idx]
+                                    .forward_target_search_query,
                             )
                             .hint_text("搜索会话名或 QQ/群号"),
                         );
@@ -184,9 +192,9 @@ impl IcaApp {
                 );
             });
 
-        let verify_message_data = self.active_bridge_state().map(|state| {
-            (state.bridge_key.clone(), state.join_requests.clone())
-        });
+        let verify_message_data = self
+            .active_bridge_state()
+            .map(|state| (state.bridge_key.clone(), state.join_requests.clone()));
         let mut pending_request_action = None;
         let mut refresh_system_messages = false;
 
@@ -392,7 +400,11 @@ impl IcaApp {
             ctx.show_viewport_deferred(viewport_id, viewport_builder, move |ui, _class| {
                 // 检测窗口关闭请求
                 if ui.ctx().input(|i| i.viewport().close_requested()) {
-                    viewer_state.lock().unwrap().closed.store(true, Ordering::Relaxed);
+                    viewer_state
+                        .lock()
+                        .unwrap()
+                        .closed
+                        .store(true, Ordering::Relaxed);
                     return;
                 }
 
@@ -435,7 +447,10 @@ impl IcaApp {
                                         "jpg"
                                     } else if data.starts_with(b"GIF") {
                                         "gif"
-                                    } else if data.starts_with(b"RIFF") && data.len() > 11 && &data[8..12] == b"WEBP" {
+                                    } else if data.starts_with(b"RIFF")
+                                        && data.len() > 11
+                                        && &data[8..12] == b"WEBP"
+                                    {
                                         "webp"
                                     } else {
                                         "png"
@@ -488,7 +503,11 @@ impl IcaApp {
                         viewer_state.lock().unwrap().zoom_out();
                     }
                     if escape {
-                        viewer_state.lock().unwrap().closed.store(true, Ordering::Relaxed);
+                        viewer_state
+                            .lock()
+                            .unwrap()
+                            .closed
+                            .store(true, Ordering::Relaxed);
                         return;
                     }
 
@@ -513,7 +532,11 @@ impl IcaApp {
                                 if state.request_original_size {
                                     state.request_original_size = false;
                                     // 1:1 = 原始像素大小，需要 zoom = 1/base_scale
-                                    state.zoom = if base_scale > 0.0 { 1.0 / base_scale } else { 1.0 };
+                                    state.zoom = if base_scale > 0.0 {
+                                        1.0 / base_scale
+                                    } else {
+                                        1.0
+                                    };
                                     state.pan_offset = egui::Vec2::ZERO;
                                 }
                             }
@@ -544,7 +567,8 @@ impl IcaApp {
                                 egui::Pos2::new(0.0, 0.0),
                                 egui::Pos2::new(1.0, 1.0),
                             );
-                            ui.painter().image(texture.id, paint_rect, uv, egui::Color32::WHITE);
+                            ui.painter()
+                                .image(texture.id, paint_rect, uv, egui::Color32::WHITE);
 
                             // 拖拽平移（在整个可用区域响应）
                             let response = ui.allocate_rect(

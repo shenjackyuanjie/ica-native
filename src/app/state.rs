@@ -70,17 +70,49 @@ pub enum ChatListScrollTarget {
 
 #[derive(Debug, Clone)]
 pub enum MessageAction {
-    Reply { room_id: RoomId, reply: ReplyMessage },
-    Delete { room_id: RoomId, message_id: String },
-    ReEdit { room_id: RoomId, content: String },
-    SetReveal { room_id: RoomId, message_id: String, reveal: bool },
-    CopyToDraft { room_id: RoomId, message_id: String },
-    PlusOne { room_id: RoomId, message_id: String },
-    ToggleForwardSelection { room_id: RoomId, message_id: String },
-    StartForward { room_id: RoomId, message_id: String },
-    PreviewImage { url: String },
-    ScrollToMessage { msg_id: String },
-    RenewMessage { room_id: RoomId, message_id: String },
+    Reply {
+        room_id: RoomId,
+        reply: ReplyMessage,
+    },
+    Delete {
+        room_id: RoomId,
+        message_id: String,
+    },
+    ReEdit {
+        room_id: RoomId,
+        content: String,
+    },
+    SetReveal {
+        room_id: RoomId,
+        message_id: String,
+        reveal: bool,
+    },
+    CopyToDraft {
+        room_id: RoomId,
+        message_id: String,
+    },
+    PlusOne {
+        room_id: RoomId,
+        message_id: String,
+    },
+    ToggleForwardSelection {
+        room_id: RoomId,
+        message_id: String,
+    },
+    StartForward {
+        room_id: RoomId,
+        message_id: String,
+    },
+    PreviewImage {
+        url: String,
+    },
+    ScrollToMessage {
+        msg_id: String,
+    },
+    RenewMessage {
+        room_id: RoomId,
+        message_id: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -240,7 +272,10 @@ impl BridgeState {
 
     pub fn upsert_message(&mut self, room_id: RoomId, message: Message) {
         let messages = self.messages_by_room.entry(room_id).or_default();
-        if let Some(existing) = messages.iter_mut().find(|item| item.msg_id == message.msg_id) {
+        if let Some(existing) = messages
+            .iter_mut()
+            .find(|item| item.msg_id == message.msg_id)
+        {
             *existing = message;
         } else {
             messages.push(message);
@@ -287,7 +322,8 @@ impl BridgeState {
         } else {
             self.join_requests.insert(0, request);
         }
-        self.join_requests.sort_by(|lhs, rhs| rhs.time.cmp(&lhs.time));
+        self.join_requests
+            .sort_by(|lhs, rhs| rhs.time.cmp(&lhs.time));
     }
 
     pub fn replace_join_requests(&mut self, mut requests: Vec<JoinRequestRoom>) {

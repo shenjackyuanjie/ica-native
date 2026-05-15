@@ -14,10 +14,10 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 pub mod client;
 mod command;
 mod handler;
-pub use command::{ICA_PROTOCOL_VERSION, IcaClient, IcaCommand};
 use command::{
     ConnectionSignal, MAX_RECONNECT_ATTEMPTS, emit_ui_event, payload_to_json, reconnect_delay,
 };
+pub use command::{ICA_PROTOCOL_VERSION, IcaClient, IcaCommand};
 pub mod types;
 
 /// 启动 socketio client，并把服务端事件用 unbounded channel 发回 GUI 主线程

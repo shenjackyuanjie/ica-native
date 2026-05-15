@@ -727,5 +727,8 @@ static FACE_NAMES: &[(u16, &str)] = &[
 
 /// 根据表情 ID 获取表情名称
 pub fn get_face_name(id: u16) -> Option<&'static str> {
-    FACE_NAMES.binary_search_by_key(&id, |(fid, _)| *fid).ok().map(|idx| FACE_NAMES[idx].1)
+    FACE_NAMES
+        .binary_search_by_key(&id, |(fid, _)| *fid)
+        .ok()
+        .map(|idx| FACE_NAMES[idx].1)
 }

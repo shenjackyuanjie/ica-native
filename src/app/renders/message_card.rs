@@ -1,6 +1,6 @@
 use crate::app::{IcaApp, MessageAction};
-use crate::ica::types::files::MessageFile;
 use crate::ica::types::RoomId;
+use crate::ica::types::files::MessageFile;
 use egui::{Hyperlink, Image, Label};
 
 use super::format_message_content;
@@ -46,7 +46,9 @@ fn parse_face_segments(content: &str) -> Vec<ContentSegment<'_>> {
 /// 渲染包含 [Face: id] 的消息内容，将表情替换为内联图片
 fn render_rich_content(ui: &mut egui::Ui, content: &str) {
     let segments = parse_face_segments(content);
-    let has_face = segments.iter().any(|s| matches!(s, ContentSegment::Face(_)));
+    let has_face = segments
+        .iter()
+        .any(|s| matches!(s, ContentSegment::Face(_)));
     if !has_face {
         // 纯文本，直接用 Label
         ui.add(Label::new(content).wrap());
@@ -190,7 +192,11 @@ impl IcaApp {
         };
         let mut action = None;
         let row_width = ui.available_width();
-        let selection_width = if options.forward_mode_active { 24.0 } else { 0.0 };
+        let selection_width = if options.forward_mode_active {
+            24.0
+        } else {
+            0.0
+        };
         let content_row_width = (row_width - selection_width).max(48.0);
         let pure_text_mode = self.custom_chat.hide_group_member_avatar;
         let bubble_width = if pure_text_mode {
@@ -258,7 +264,10 @@ impl IcaApp {
                                                 content: message.content.clone(),
                                             });
                                         }
-                                        if !message.deleted && !message.hide && ui.small_button("回复").clicked() {
+                                        if !message.deleted
+                                            && !message.hide
+                                            && ui.small_button("回复").clicked()
+                                        {
                                             action = Some(MessageAction::Reply {
                                                 room_id,
                                                 reply: message.as_reply(),
@@ -295,16 +304,32 @@ impl IcaApp {
                                             ))
                                             .wrap()
                                             .sense(egui::Sense::click());
-                                            if ui.add(label).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                action = Some(MessageAction::ScrollToMessage { msg_id: reply_msg_id });
+                                            if ui
+                                                .add(label)
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .clicked()
+                                            {
+                                                action = Some(MessageAction::ScrollToMessage {
+                                                    msg_id: reply_msg_id,
+                                                });
                                             }
                                         } else {
-                                            let reply_resp = egui::Frame::group(ui.style()).show(ui, |ui| {
-                                                ui.weak(format!("回复 {}", reply.sender_name));
-                                                ui.add(Label::new(formatted_reply_content).wrap());
-                                            });
-                                            if reply_resp.response.interact(egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                                action = Some(MessageAction::ScrollToMessage { msg_id: reply_msg_id });
+                                            let reply_resp =
+                                                egui::Frame::group(ui.style()).show(ui, |ui| {
+                                                    ui.weak(format!("回复 {}", reply.sender_name));
+                                                    ui.add(
+                                                        Label::new(formatted_reply_content).wrap(),
+                                                    );
+                                                });
+                                            if reply_resp
+                                                .response
+                                                .interact(egui::Sense::click())
+                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                .clicked()
+                                            {
+                                                action = Some(MessageAction::ScrollToMessage {
+                                                    msg_id: reply_msg_id,
+                                                });
                                             }
                                         }
                                     }
@@ -318,33 +343,46 @@ impl IcaApp {
 
                                     if !message.files.is_empty() {
                                         has_body = true;
-                                        ui.with_layout(egui::Layout::top_down(content_align), |ui| {
-                                            for file in &message.files {
-                                                let is_image = is_image_file(file);
+                                        ui.with_layout(
+                                            egui::Layout::top_down(content_align),
+                                            |ui| {
+                                                for file in &message.files {
+                                                    let is_image = is_image_file(file);
 
-                                                if is_image && !file.url.is_empty() {
-                                                    let image_max_width = ui.available_width().min(240.0);
-                                                    if let Some(url) = render_message_image(ui, &file.url, image_max_width) {
-                                                        action = Some(MessageAction::PreviewImage { url });
-                                                    }
-                                                } else {
-                                                    let label = file
-                                                        .get_name()
-                                                        .cloned()
-                                                        .unwrap_or_else(|| file.file_type.clone());
-                                                    if file.url.is_empty() {
-                                                        ui.label(label);
+                                                    if is_image && !file.url.is_empty() {
+                                                        let image_max_width =
+                                                            ui.available_width().min(240.0);
+                                                        if let Some(url) = render_message_image(
+                                                            ui,
+                                                            &file.url,
+                                                            image_max_width,
+                                                        ) {
+                                                            action =
+                                                                Some(MessageAction::PreviewImage {
+                                                                    url,
+                                                                });
+                                                        }
                                                     } else {
-                                                        ui.add(Hyperlink::from_label_and_url(
-                                                            label,
-                                                            file.url.clone(),
-                                                        ));
+                                                        let label = file
+                                                            .get_name()
+                                                            .cloned()
+                                                            .unwrap_or_else(|| {
+                                                                file.file_type.clone()
+                                                            });
+                                                        if file.url.is_empty() {
+                                                            ui.label(label);
+                                                        } else {
+                                                            ui.add(Hyperlink::from_label_and_url(
+                                                                label,
+                                                                file.url.clone(),
+                                                            ));
+                                                        }
                                                     }
-                                                }
 
-                                                ui.add_space(4.0);
-                                            }
-                                        });
+                                                    ui.add_space(4.0);
+                                                }
+                                            },
+                                        );
                                     }
 
                                     if !has_body {
@@ -382,14 +420,14 @@ impl IcaApp {
                                     return;
                                 }
 
-                                if !message.deleted && !message.hide
-                                    && ui.button("回复").clicked() {
-                                        action = Some(MessageAction::Reply {
-                                            room_id,
-                                            reply: message.as_reply(),
-                                        });
-                                        ui.close();
-                                    }
+                                if !message.deleted && !message.hide && ui.button("回复").clicked()
+                                {
+                                    action = Some(MessageAction::Reply {
+                                        room_id,
+                                        reply: message.as_reply(),
+                                    });
+                                    ui.close();
+                                }
                                 if ui.button("复制到编辑区").clicked() {
                                     action = Some(MessageAction::CopyToDraft {
                                         room_id,
@@ -397,7 +435,9 @@ impl IcaApp {
                                     });
                                     ui.close();
                                 }
-                                if !message.content.trim().is_empty() && ui.button("复制文本").clicked() {
+                                if !message.content.trim().is_empty()
+                                    && ui.button("复制文本").clicked()
+                                {
                                     ui.ctx().copy_text(message.content.clone());
                                     ui.close();
                                 }
@@ -427,7 +467,11 @@ impl IcaApp {
                                     ui.close();
                                 }
                                 if ui
-                                    .button(if options.forward_selected { "移出多选" } else { "多选" })
+                                    .button(if options.forward_selected {
+                                        "移出多选"
+                                    } else {
+                                        "多选"
+                                    })
                                     .clicked()
                                 {
                                     action = Some(MessageAction::ToggleForwardSelection {

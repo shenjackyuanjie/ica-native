@@ -1,5 +1,5 @@
-use rust_socketio::asynchronous::Client;
 use rust_socketio::Payload;
+use rust_socketio::asynchronous::Client;
 
 use futures_util::future::BoxFuture;
 use std::sync::{
@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde_json::Value as JsonValue;
 use serde_json::json;
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::ica::types::message::{FileAttachment, SendMessage};
@@ -268,7 +268,10 @@ pub(super) async fn handle_command(
             }
         }
         IcaCommand::PinRoom { room_id, pin } => {
-            if let Err(e) = client.emit("pinRoom", vec![json!(room_id), json!(pin)]).await {
+            if let Err(e) = client
+                .emit("pinRoom", vec![json!(room_id), json!(pin)])
+                .await
+            {
                 emit_ui_event(
                     event_tx,
                     bridge_key,
@@ -296,7 +299,10 @@ pub(super) async fn handle_command(
             }
         }
         IcaCommand::IgnoreChat { room_id, room_name } => {
-            if let Err(e) = client.emit("ignoreChat", json!({"id": room_id, "name": room_name})).await {
+            if let Err(e) = client
+                .emit("ignoreChat", json!({"id": room_id, "name": room_name}))
+                .await
+            {
                 emit_ui_event(
                     event_tx,
                     bridge_key,
@@ -324,7 +330,10 @@ pub(super) async fn handle_command(
             }
         }
         IcaCommand::SetRoomPriority { room_id, priority } => {
-            if let Err(e) = client.emit("setRoomPriority", vec![json!(room_id), json!(priority)]).await {
+            if let Err(e) = client
+                .emit("setRoomPriority", vec![json!(room_id), json!(priority)])
+                .await
+            {
                 emit_ui_event(
                     event_tx,
                     bridge_key,
@@ -337,7 +346,10 @@ pub(super) async fn handle_command(
                 );
             }
         }
-        IcaCommand::ReportRead { room_id, message_id } => {
+        IcaCommand::ReportRead {
+            room_id,
+            message_id,
+        } => {
             if let Err(e) = client.emit("reportRead", json!(message_id)).await {
                 emit_ui_event(
                     event_tx,
@@ -356,9 +368,15 @@ pub(super) async fn handle_command(
                 tracing::warn!("send stopFetchingHistory failed: {}", e);
             }
         }
-        IcaCommand::HideMessage { room_id, message_id } => {
+        IcaCommand::HideMessage {
+            room_id,
+            message_id,
+        } => {
             if let Err(e) = client
-                .emit("hideMessage", vec![json!(room_id), json!(message_id.clone())])
+                .emit(
+                    "hideMessage",
+                    vec![json!(room_id), json!(message_id.clone())],
+                )
                 .await
             {
                 emit_ui_event(
@@ -374,9 +392,15 @@ pub(super) async fn handle_command(
                 );
             }
         }
-        IcaCommand::RevealMessage { room_id, message_id } => {
+        IcaCommand::RevealMessage {
+            room_id,
+            message_id,
+        } => {
             if let Err(e) = client
-                .emit("revealMessage", vec![json!(room_id), json!(message_id.clone())])
+                .emit(
+                    "revealMessage",
+                    vec![json!(room_id), json!(message_id.clone())],
+                )
                 .await
             {
                 emit_ui_event(
@@ -392,9 +416,15 @@ pub(super) async fn handle_command(
                 );
             }
         }
-        IcaCommand::RenewMessage { room_id, message_id } => {
+        IcaCommand::RenewMessage {
+            room_id,
+            message_id,
+        } => {
             if let Err(e) = client
-                .emit("renewMessage", vec![json!(room_id), json!(message_id.clone()), json!(null)])
+                .emit(
+                    "renewMessage",
+                    vec![json!(room_id), json!(message_id.clone()), json!(null)],
+                )
                 .await
             {
                 emit_ui_event(
@@ -457,7 +487,12 @@ pub(super) async fn handle_command(
             file_type,
             file_data,
         } => {
-            match upload_and_send_file(client, event_tx, bridge_key, room_id, content, reply_to, &file_name, &file_type, &file_data).await {
+            match upload_and_send_file(
+                client, event_tx, bridge_key, room_id, content, reply_to, &file_name, &file_type,
+                &file_data,
+            )
+            .await
+            {
                 Ok(()) => {}
                 Err(e) => {
                     emit_ui_event(
@@ -523,7 +558,10 @@ async fn upload_and_send_file(
                         .and_then(|a| a.first())
                         .cloned()
                         .unwrap_or(json.clone());
-                    let all_success = value.get("allSuccess").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let all_success = value
+                        .get("allSuccess")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     let uploaded: Vec<usize> = value
                         .get("uploaded")
                         .and_then(|v| v.as_array())
