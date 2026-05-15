@@ -15,6 +15,7 @@ use crate::{
     ica::{IcaClient, IcaCommand},
 };
 
+pub mod chat_group_editor;
 pub mod chat_groups;
 pub mod config_editer;
 pub mod custom_chat;
@@ -37,6 +38,13 @@ use crate::ica::types::{
     room::Room,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelectedChatGroup {
+    All,
+    Private,
+    Custom(usize),
+}
+
 pub struct IcaApp {
     /// 聊天界面定制选项
     pub custom_chat: CustomChat,
@@ -50,12 +58,12 @@ pub struct IcaApp {
     pub mute_any: bool,
     /// 通知等级
     pub notify_level: u8,
-    /// 是否选中某个聊天组
-    pub chat_group_selected: bool,
-    /// 选中了哪个聊天组
-    pub chat_group_idx: usize,
+    /// 当前选中的聊天分组
+    pub selected_chat_group: SelectedChatGroup,
     /// 聊天组
     pub chat_groups: ChatGroups,
+    /// 聊天分组编辑器
+    pub chat_group_editor: chat_group_editor::ChatGroupEditor,
     /// 配置文件修改
     pub config_editer: ConfigEditer,
     /// 聊天列表滚动目标
@@ -318,9 +326,9 @@ impl IcaApp {
             mute_any: false,
             mute_all: false,
             notify_level: 3,
-            chat_group_selected: false,
-            chat_group_idx: 0,
-            chat_groups: ChatGroups::new(),
+            selected_chat_group: SelectedChatGroup::All,
+            chat_groups: config.chat_groups.clone(),
+            chat_group_editor: chat_group_editor::ChatGroupEditor::default(),
             config_editer: ConfigEditer::default(),
             chat_list_scroll_target: ChatListScrollTarget::Top,
             clear_search_on_room_select: config.ui_setting.clear_search_on_room_select,
@@ -422,15 +430,32 @@ impl IcaApp {
         };
 
         let query = state.room_search_query.trim().to_uppercase();
-        let mut rooms: Vec<_> = state
-            .rooms
-            .iter()
+
+        // 先按分组过滤
+        let group_filtered: Vec<Room> = if self.custom_chat.disable_chat_group {
+            state.rooms.clone()
+        } else {
+            match &self.selected_chat_group {
+                SelectedChatGroup::All => state.rooms.clone(),
+                SelectedChatGroup::Private => state
+                    .rooms
+                    .iter()
+                    .filter(|room| room.room_id > 0)
+                    .cloned()
+                    .collect(),
+                SelectedChatGroup::Custom(idx) => {
+                    self.chat_groups.visible_rooms_in_group(*idx, &state.rooms)
+                }
+            }
+        };
+
+        let mut rooms: Vec<_> = group_filtered
+            .into_iter()
             .filter(|room| {
                 query.is_empty()
                     || room.room_name.to_uppercase().contains(&query)
                     || room.room_id.to_string().contains(query.as_str())
             })
-            .cloned()
             .collect();
 
         rooms.sort_by(|a, b| {
@@ -674,6 +699,13 @@ impl IcaApp {
                 Some(format!("有 {} 条消息无法完整转发", failed));
         }
         self.bridge_states[bridge_idx].clear_forward_selection();
+    }
+
+    pub fn save_chat_groups(&self) {
+        let groups = self.chat_groups.clone();
+        cfg::update_and_save_cfg(|cfg| {
+            cfg.chat_groups = groups;
+        });
     }
 
     pub fn set_room_pinned(&mut self, bridge_idx: usize, room_id: RoomId, pin: bool) {
@@ -1123,6 +1155,30 @@ impl IcaApp {
             else {
                 continue;
             };
+
+            // setAllChatGroups 需要写入 IcaApp 而非 BridgeState
+            if event_name == "setAllChatGroups" {
+                if let Some(value) = payload.as_array().and_then(|values| values.first()) {
+                    match serde_json::from_value::<Vec<chat_groups::ChatGroup>>(value.clone()) {
+                        Ok(groups) => {
+                            self.chat_groups.groups = groups;
+                            // 确保 selected_chat_group 的索引仍然有效
+                            if let SelectedChatGroup::Custom(idx) = &self.selected_chat_group {
+                                if *idx >= self.chat_groups.groups.len() {
+                                    self.selected_chat_group = SelectedChatGroup::All;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+                                state.last_error =
+                                    Some(format!("setAllChatGroups 解析失败: {}", e));
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
 
             let should_refresh_system_messages = {
                 let state = &mut self.bridge_states[bridge_idx];

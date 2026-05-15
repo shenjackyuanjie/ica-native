@@ -40,7 +40,7 @@ fn format_message_content(content: &str) -> String {
 }
 
 impl IcaApp {
-    // 顶栏：将多个 menu 合并为一个“功能块”
+    // 顶栏：将多个 menu 合并为一个"功能块"
     pub fn render_top_panel(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("顶栏").show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
@@ -107,49 +107,155 @@ impl IcaApp {
         });
     }
 
-    // 左侧群组面板：合并“所有聊天按钮”和“群列表”渲染为一个函数
+    // 左侧群组面板
     pub fn render_left_groups_panel(&mut self, ui: &mut egui::Ui) {
+        let disable_groups = self.custom_chat.disable_chat_group;
+        let disable_dot = self.custom_chat.disable_chat_group_dot;
+
         egui::Panel::left("群聊组")
             .resizable(false)
             .exact_size(70.0)
             .show_inside(ui, |ui| {
-                ui.label("消息栏");
-                ui.label("头像占位");
-                // 渲染头像
+                let img = Image::new(crate::assets::svg::CHAT_GROUP)
+                    .fit_to_exact_size([24.0, 24.0].into())
+                    .alt_text("chat_group_icon");
+
+                let rooms_snapshot = self
+                    .active_bridge_state()
+                    .map(|state| state.rooms.clone())
+                    .unwrap_or_default();
+
                 ui.spacing_mut().item_spacing.x = 0.5;
-
                 ui.vertical_centered(|ui| {
-                    // 所有聊天按钮
-                    let img = Image::new(crate::assets::svg::CHAT_GROUP)
-                        .fit_to_exact_size([24.0, 24.0].into())
-                        .alt_text("chat_group_icon");
-                    let btn = Button::image(img.clone());
-                    if ui.add(btn).clicked() {
-                        self.chat_group_selected = false;
-                    };
-                    let mut text = RichText::new("所有聊天");
-                    if !self.chat_group_selected {
-                        text = text.strong();
-                    }
-                    let label = Label::new(text).selectable(false);
-                    ui.add(label);
-
-                    // 群组列表
-                    let img = Image::new(crate::assets::svg::CHAT_GROUP)
-                        .fit_to_exact_size([24.0, 24.0].into())
-                        .alt_text("chat_group_icon");
-                    for (idx, group) in self.chat_groups.group_names().iter().enumerate() {
+                    // 所有聊天
+                    {
                         let btn = Button::image(img.clone());
-                        if ui.add(btn).clicked() {
-                            self.chat_group_selected = true;
-                            self.chat_group_idx = idx;
-                        };
-                        let mut text: egui::RichText = group.into();
-                        if idx == self.chat_group_idx && self.chat_group_selected {
+                        let resp = ui.add(btn);
+                        if resp.clicked() {
+                            self.selected_chat_group = SelectedChatGroup::All;
+                        }
+                        let mut text = RichText::new("所有聊天");
+                        if self.selected_chat_group == SelectedChatGroup::All {
                             text = text.strong();
                         }
-                        let label = Label::new(text).selectable(false);
-                        ui.add(label);
+                        ui.add(Label::new(text).selectable(false));
+                    }
+
+                    // 私聊
+                    {
+                        let btn = Button::image(img.clone());
+                        let resp = ui.add(btn);
+                        if resp.clicked() {
+                            self.selected_chat_group = SelectedChatGroup::Private;
+                        }
+                        let mut text = RichText::new("私聊");
+                        if self.selected_chat_group == SelectedChatGroup::Private {
+                            text = text.strong();
+                        }
+                        // 私聊未读红点
+                        if !disable_groups
+                            && !disable_dot
+                            && self.selected_chat_group != SelectedChatGroup::Private
+                        {
+                            let has_unread = rooms_snapshot
+                                .iter()
+                                .any(|r| r.room_id > 0 && r.unread_count > 0);
+                            if has_unread {
+                                let dot_radius = 3.0;
+                                let dot_pos = resp.rect.right_top()
+                                    + egui::vec2(-dot_radius, dot_radius);
+                                ui.painter().circle_filled(
+                                    dot_pos,
+                                    dot_radius,
+                                    egui::Color32::RED,
+                                );
+                            }
+                        }
+                        ui.add(Label::new(text).selectable(false));
+                    }
+
+                    // 用户自定义分组
+                    for (idx, group_name) in self.chat_groups.group_names().iter().enumerate() {
+                        let btn = Button::image(img.clone());
+                        let resp = ui.add(btn);
+                        let is_selected = matches!(
+                            &self.selected_chat_group,
+                            SelectedChatGroup::Custom(i) if *i == idx
+                        );
+                        if resp.clicked() {
+                            self.selected_chat_group = SelectedChatGroup::Custom(idx);
+                        }
+
+                        // 未读红点
+                        if !disable_groups && !disable_dot && !is_selected {
+                            if self
+                                .chat_groups
+                                .has_unread_in_group(idx, &rooms_snapshot)
+                            {
+                                let dot_radius = 3.0;
+                                let dot_pos = resp.rect.right_top()
+                                    + egui::vec2(-dot_radius, dot_radius);
+                                ui.painter().circle_filled(
+                                    dot_pos,
+                                    dot_radius,
+                                    egui::Color32::RED,
+                                );
+                            }
+                        }
+
+                        // 右键菜单
+                        resp.context_menu(|ui| {
+                            if let Some(room_id) = self
+                                .active_bridge_state()
+                                .and_then(|s| s.selected_room_id)
+                            {
+                                let in_group = self
+                                    .chat_groups
+                                    .is_room_in_group(idx, room_id);
+                                let label = if in_group {
+                                    "移出当前会话"
+                                } else {
+                                    "加入当前会话"
+                                };
+                                if ui.button(label).clicked() {
+                                    self.chat_groups
+                                        .toggle_room_in_group(idx, room_id);
+                                    self.save_chat_groups();
+                                    ui.close();
+                                }
+                            }
+                            if ui.button("编辑分组").clicked() {
+                                self.open_page.chat_group_editor = true;
+                                ui.close();
+                            }
+                        });
+
+                        let mut text: egui::RichText = group_name.as_str().into();
+                        if is_selected {
+                            text = text.strong();
+                        }
+                        ui.add(Label::new(text).selectable(false));
+                    }
+
+                    // 管理按钮
+                    ui.add_space(8.0);
+                    if ui
+                        .add_sized(
+                            [24.0, 24.0],
+                            Button::new(RichText::new("+").size(16.0)),
+                        )
+                        .clicked()
+                    {
+                        self.open_page.chat_group_editor = true;
+                    }
+                    if ui
+                        .add_sized(
+                            [24.0, 24.0],
+                            Button::new(RichText::new("⚙").size(14.0)),
+                        )
+                        .clicked()
+                    {
+                        self.open_page.chat_group_editor = true;
                     }
                 });
             });

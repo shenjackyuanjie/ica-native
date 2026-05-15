@@ -7,6 +7,7 @@ use std::{
 use hex;
 use serde::{Deserialize, Serialize};
 
+use crate::app::chat_groups::ChatGroups;
 use crate::app::custom_chat::CustomChat;
 
 /// 全局配置
@@ -41,6 +42,9 @@ pub struct IcaCfg {
     /// 界面设置相关
     #[serde(default)]
     pub ui_setting: UiSetting,
+    /// 聊天分组
+    #[serde(default)]
+    pub chat_groups: ChatGroups,
     /// 定制聊天界面选项
     #[serde(default)]
     pub custom_chat: CustomChat,
@@ -72,6 +76,7 @@ impl Default for IcaCfg {
             bridges: Vec::new(),
             screen: Screen::default(),
             ui_setting: UiSetting::default(),
+            chat_groups: ChatGroups::default(),
             custom_chat: CustomChat::default(),
             cache_path: None,
             image_cache_max_bytes: image_cache_max_bytes_default(),

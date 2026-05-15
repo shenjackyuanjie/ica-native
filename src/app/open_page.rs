@@ -19,4 +19,6 @@ pub struct AppOpenPage {
     pub socketio_status: bool,
     /// 原始的配置文件
     pub raw_config: bool,
+    /// 聊天分组编辑器
+    pub chat_group_editor: bool,
 }

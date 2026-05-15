@@ -130,6 +130,7 @@ pub async fn main(
         builder = builder.on("hideMessage", make_event_cb("hideMessage"));
         builder = builder.on("revealMessage", make_event_cb("revealMessage"));
         builder = builder.on("setAllRooms", make_event_cb("setAllRooms"));
+        builder = builder.on("setAllChatGroups", make_event_cb("setAllChatGroups"));
         builder = builder.on("setMessages", make_event_cb("setMessages"));
         builder = builder.on("handleRequest", make_event_cb("handleRequest"));
         builder = builder.on("updateRoom", make_event_cb("updateRoom"));

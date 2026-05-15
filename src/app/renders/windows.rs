@@ -1,5 +1,6 @@
 use crate::app::IcaApp;
 use crate::app::online_mode::OnlineMode;
+use crate::app::SelectedChatGroup;
 use crate::cfg::{self, ReEditDraftConflictMode};
 use egui::Hyperlink;
 use std::sync::atomic::Ordering;
@@ -357,6 +358,34 @@ impl IcaApp {
                     ui.add_space(6.0);
                 }
             });
+
+        // 聊天分组编辑器
+        let chat_group_editor_open = self.open_page.chat_group_editor;
+        let mut groups_clone = self.chat_groups.clone();
+        let rooms_for_editor = self
+            .active_bridge_state()
+            .map(|state| state.rooms.clone())
+            .unwrap_or_default();
+        let mut dirty = false;
+        egui::Window::new("聊天分组管理")
+            .open(&mut self.open_page.chat_group_editor)
+            .default_size(egui::vec2(420.0, 500.0))
+            .collapsible(false)
+            .show(&ctx, |ui| {
+                dirty = self.chat_group_editor.ui(ui, &mut groups_clone, &rooms_for_editor);
+            });
+        if dirty {
+            self.chat_groups = groups_clone;
+            self.save_chat_groups();
+        }
+        // 如果删除分组导致当前选中失效
+        if chat_group_editor_open && !self.open_page.chat_group_editor {
+            if let SelectedChatGroup::Custom(idx) = &self.selected_chat_group {
+                if *idx >= self.chat_groups.groups.len() {
+                    self.selected_chat_group = SelectedChatGroup::All;
+                }
+            }
+        }
 
         // 配置文件编辑
         egui::Window::new("配置文件编辑")
