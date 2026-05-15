@@ -3,12 +3,25 @@ use egui::TextEdit;
 use crate::app::RoomId;
 use crate::ica::types::room::Room;
 
-#[derive(Default)]
 pub struct ChatGroupEditor {
     new_group_name: String,
     editing_index: Option<usize>,
     editing_name: String,
     error_msg: Option<String>,
+    /// 每个分组的搜索文本
+    search_texts: Vec<String>,
+}
+
+impl Default for ChatGroupEditor {
+    fn default() -> Self {
+        Self {
+            new_group_name: String::new(),
+            editing_index: None,
+            editing_name: String::new(),
+            error_msg: None,
+            search_texts: Vec::new(),
+        }
+    }
 }
 
 impl ChatGroupEditor {
@@ -61,6 +74,14 @@ impl ChatGroupEditor {
         if chat_groups.groups.is_empty() {
             ui.weak("暂无自定义分组，请在上方创建。");
             return dirty;
+        }
+
+        // 确保 search_texts 与 group 数量一致
+        while self.search_texts.len() < chat_groups.groups.len() {
+            self.search_texts.push(String::new());
+        }
+        while self.search_texts.len() > chat_groups.groups.len() {
+            self.search_texts.pop();
         }
 
         egui::ScrollArea::vertical()
@@ -134,11 +155,13 @@ impl ChatGroupEditor {
                             }
                         });
 
-                        ui.collapsing(format!("会话 ({} 个)", group_room_count), |ui| {
-                            if self.render_room_list(ui, rooms, idx, chat_groups) {
-                                dirty = true;
-                            }
-                        });
+                        egui::CollapsingHeader::new(format!("会话 ({} 个)", group_room_count))
+                            .id_salt(idx)
+                            .show(ui, |ui| {
+                                if self.render_room_list(ui, rooms, idx, chat_groups) {
+                                    dirty = true;
+                                }
+                            });
                     });
                 }
 
@@ -191,7 +214,7 @@ impl ChatGroupEditor {
                 let group_type = if room_id < 0 { "群聊" } else { "私聊" };
                 ui.horizontal(|ui| {
                     ui.label(format!("[{}] {}", group_type, room_name));
-                    if ui.button("X").clicked() {
+                    if ui.button(format!("X_{}", room_id)).clicked() {
                         remove_room = Some(room_id);
                     }
                 });
@@ -230,42 +253,50 @@ impl ChatGroupEditor {
             return false;
         }
 
-        ui.collapsing("添加会话", |ui| {
-            let mut search = String::new();
-            let salt = format!("add_room_search_{}", group_idx);
-            ui.add(
-                TextEdit::singleline(&mut search)
-                    .hint_text("搜索会话名或ID")
-                    .desired_width(200.0)
-                    .id(ui.make_persistent_id(&salt)),
-            );
-            let query = search.trim().to_uppercase();
-            egui::ScrollArea::vertical()
-                .max_height(200.0)
-                .show(ui, |ui| {
-                    for room in &available {
-                        if !query.is_empty()
-                            && !room.room_name.to_uppercase().contains(&query)
-                            && !room.room_id.to_string().contains(&query)
-                        {
-                            continue;
+        // 使用 id_salt 让每个分组的 "添加会话" 折叠头拥有唯一 ID
+        egui::CollapsingHeader::new("添加会话")
+            .id_salt(group_idx)
+            .show(ui, |ui| {
+                // 使用持久化的 search 文本，而非每帧新建
+                let search = &mut self.search_texts[group_idx];
+                let salt = format!("add_room_search_{}", group_idx);
+                ui.add(
+                    TextEdit::singleline(search)
+                        .hint_text("搜索会话名或ID")
+                        .desired_width(200.0)
+                        .id(ui.make_persistent_id(&salt)),
+                );
+                let query = search.trim().to_uppercase();
+                egui::ScrollArea::vertical()
+                    .max_height(200.0)
+                    .show(ui, |ui| {
+                        for room in &available {
+                            if !query.is_empty()
+                                && !room.room_name.to_uppercase().contains(&query)
+                                && !room.room_id.to_string().contains(&query)
+                            {
+                                continue;
+                            }
+                            let room_name = if room.room_name.is_empty() {
+                                room.room_id.to_string()
+                            } else {
+                                room.room_name.clone()
+                            };
+                            let group_type = if room.room_id < 0 { "群聊" } else { "私聊" };
+                            // 按钮的 label 保持唯一：room_id 做后缀确保不重复
+                            if ui
+                                .button(format!(
+                                    "[{}] {} (id:{})",
+                                    group_type, room_name, room.room_id
+                                ))
+                                .clicked()
+                            {
+                                chat_groups.toggle_room_in_group(group_idx, room.room_id);
+                                dirty = true;
+                            }
                         }
-                        let room_name = if room.room_name.is_empty() {
-                            room.room_id.to_string()
-                        } else {
-                            room.room_name.clone()
-                        };
-                        let group_type = if room.room_id < 0 { "群聊" } else { "私聊" };
-                        if ui
-                            .button(format!("[{}] {}", group_type, room_name))
-                            .clicked()
-                        {
-                            chat_groups.toggle_room_in_group(group_idx, room.room_id);
-                            dirty = true;
-                        }
-                    }
-                });
-        });
+                    });
+            });
 
         dirty
     }
