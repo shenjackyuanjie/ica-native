@@ -169,6 +169,21 @@ impl Display for AuthState {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct MessageLayoutCacheKey {
+    pub width: f32,
+    pub pure_text_mode: bool,
+    pub forward_mode_active: bool,
+}
+
+impl MessageLayoutCacheKey {
+    pub fn matches(self, other: Self) -> bool {
+        (self.width - other.width).abs() <= 8.0
+            && self.pure_text_mode == other.pure_text_mode
+            && self.forward_mode_active == other.forward_mode_active
+    }
+}
+
 #[derive(Debug, Clone)]
 /// 单个 bridge 在 GUI 侧维护的完整状态。
 ///
@@ -208,6 +223,10 @@ pub struct BridgeState {
     pub last_content_height: HashMap<RoomId, f32>,
     /// 每个房间的消息列表滚动偏移。
     pub message_scroll_offsets: HashMap<RoomId, f32>,
+    /// 每个房间内单条消息渲染后的高度缓存，用于消息列表虚拟化。
+    pub message_row_heights: HashMap<RoomId, HashMap<String, f32>>,
+    /// 消息高度缓存对应的布局参数。布局变化后需要重新测量。
+    pub message_layout_cache_keys: HashMap<RoomId, MessageLayoutCacheKey>,
     /// 需要滚动到的目标消息 ID
     pub scroll_to_message_id: Option<String>,
 }
@@ -243,7 +262,21 @@ impl BridgeState {
             prepend_scroll_fix: HashSet::new(),
             last_content_height: HashMap::new(),
             message_scroll_offsets: HashMap::new(),
+            message_row_heights: HashMap::new(),
+            message_layout_cache_keys: HashMap::new(),
             scroll_to_message_id: None,
+        }
+    }
+
+    pub fn invalidate_message_layout(&mut self, room_id: RoomId) {
+        self.message_row_heights.remove(&room_id);
+        self.message_layout_cache_keys.remove(&room_id);
+        self.last_content_height.remove(&room_id);
+    }
+
+    fn invalidate_message_height(&mut self, msg_id: &str) {
+        for heights in self.message_row_heights.values_mut() {
+            heights.remove(msg_id);
         }
     }
 
@@ -274,6 +307,7 @@ impl BridgeState {
     }
 
     pub fn upsert_message(&mut self, room_id: RoomId, message: Message) {
+        let msg_id = message.msg_id.clone();
         let messages = self.messages_by_room.entry(room_id).or_default();
         if let Some(existing) = messages
             .iter_mut()
@@ -283,35 +317,53 @@ impl BridgeState {
         } else {
             messages.push(message);
         }
+        if let Some(heights) = self.message_row_heights.get_mut(&room_id) {
+            heights.remove(&msg_id);
+        }
     }
 
     pub fn mark_message_deleted(&mut self, msg_id: &str) {
+        let mut changed = false;
         for messages in self.messages_by_room.values_mut() {
             if let Some(message) = messages.iter_mut().find(|item| item.msg_id == msg_id) {
                 message.deleted = true;
                 message.reveal = false;
+                changed = true;
                 break;
             }
+        }
+        if changed {
+            self.invalidate_message_height(msg_id);
         }
     }
 
     pub fn mark_message_hidden(&mut self, msg_id: &str) {
+        let mut changed = false;
         for messages in self.messages_by_room.values_mut() {
             if let Some(message) = messages.iter_mut().find(|item| item.msg_id == msg_id) {
                 message.hide = true;
                 message.reveal = false;
+                changed = true;
                 break;
             }
+        }
+        if changed {
+            self.invalidate_message_height(msg_id);
         }
     }
 
     pub fn mark_message_revealed(&mut self, msg_id: &str) {
+        let mut changed = false;
         for messages in self.messages_by_room.values_mut() {
             if let Some(message) = messages.iter_mut().find(|item| item.msg_id == msg_id) {
                 message.hide = false;
                 message.reveal = true;
+                changed = true;
                 break;
             }
+        }
+        if changed {
+            self.invalidate_message_height(msg_id);
         }
     }
 

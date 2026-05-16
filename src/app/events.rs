@@ -165,6 +165,7 @@ impl IcaApp {
                             // 重置历史加载状态（新的 setMessages 意味着全量刷新）
                             state.no_more_history.remove(&room_id);
                             state.loading_older_messages.remove(&room_id);
+                            state.invalidate_message_layout(room_id);
                             state.messages_by_room.insert(room_id, messages);
                         }
                         Err(e) => {

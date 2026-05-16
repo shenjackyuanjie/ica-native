@@ -122,7 +122,7 @@ fn render_message_image(ui: &mut egui::Ui, url: &str, max_width: f32) -> Option<
     None
 }
 
-pub(super) struct MessageRenderOptions {
+pub(in crate::app::renders) struct MessageRenderOptions {
     pub show_sender_name: bool,
     pub show_separator_before: bool,
     pub forward_mode_active: bool,
