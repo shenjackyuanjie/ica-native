@@ -60,6 +60,15 @@ fn estimate_composer_rows(text: &str, input_width: f32) -> usize {
         .clamp(MIN_ROWS, MAX_ROWS)
 }
 
+fn format_pending_size(bytes: usize) -> String {
+    let size = bytes as f64;
+    if size >= 1024.0 * 1024.0 {
+        format!("{:.1} MB", size / (1024.0 * 1024.0))
+    } else {
+        format!("{:.1} KB", size / 1024.0)
+    }
+}
+
 impl IcaApp {
     // 顶栏：将多个 menu 合并为一个"功能块"
     pub fn render_top_panel(&mut self, ui: &mut egui::Ui) {
@@ -618,9 +627,13 @@ impl IcaApp {
             let has_reply_banner = self.bridge_states[active_bridge_idx]
                 .reply_to_by_room
                 .contains_key(&room_id);
-            let has_pending_image = self.bridge_states[active_bridge_idx]
+            let pending_images = self.bridge_states[active_bridge_idx]
                 .pending_image_by_room
-                .contains_key(&room_id);
+                .get(&room_id)
+                .cloned()
+                .unwrap_or_default();
+            let pending_image_count = pending_images.len();
+            let has_pending_image = pending_image_count > 0;
             let has_pending_file = self.bridge_states[active_bridge_idx]
                 .pending_file_by_room
                 .contains_key(&room_id);
@@ -655,7 +668,7 @@ impl IcaApp {
                 + 6.0
                 + if forward_mode_active { 54.0 } else { 0.0 }
                 + if has_reply_banner { 54.0 } else { 0.0 }
-                + if has_pending_image { 54.0 } else { 0.0 }
+                + if has_pending_image { 144.0 } else { 0.0 }
                 + if has_pending_file { 54.0 } else { 0.0 }
                 + if self.show_face_picker { 220.0 } else { 0.0 };
             let message_list_height = (ui.available_height() - composer_reserved_height).max(120.0);
@@ -912,110 +925,14 @@ impl IcaApp {
             let mut should_send = false;
             let mut choose_image = false;
             let mut choose_file = false;
-            let mut paste_image: Option<PendingImage> = None;
+            let mut paste_images = Vec::new();
+            let mut remove_pending_image_idx = None;
+            let mut open_pending_image = None::<(String, Vec<u8>)>;
             ui.allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), composer_reserved_height),
-                egui::Layout::bottom_up(egui::Align::Min),
+                egui::Layout::top_down(egui::Align::Min),
                 |ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width(), control_height),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            let available_width = ui.available_width();
-                            let button_width = if available_width < 180.0 { 24.0 } else { 30.0 };
-                            let item_spacing = if available_width < 180.0 {
-                                4.0
-                            } else {
-                                ui.spacing().item_spacing.x
-                            };
-                            ui.spacing_mut().item_spacing.x = item_spacing;
-                            // 窄宽度不显示表情按钮
-                            let show_face_btn = available_width >= 180.0;
-                            let btn_count = if show_face_btn { 3.0 } else { 2.0 };
-                            let input_width = (ui.available_width()
-                                - button_width * btn_count
-                                - item_spacing * btn_count)
-                                .max(0.0);
-                            let draft = self.bridge_states[active_bridge_idx]
-                                .draft_by_room
-                                .entry(room_id)
-                                .or_default();
-                            let response = ui.add_sized(
-                                [input_width, control_height],
-                                egui::TextEdit::multiline(draft)
-                                    .desired_rows(composer_rows)
-                                    .hint_text("Enter 发送, Shift+Enter 换行"),
-                            );
-                            // 检测 Enter 键（不带 Shift/Ctrl）→ 发送
-                            let enter_no_mod = response.has_focus()
-                                && ui.input(|input| {
-                                    input.key_pressed(egui::Key::Enter)
-                                        && !input.modifiers.shift
-                                        && !input.modifiers.ctrl
-                                });
-                            if enter_no_mod {
-                                // multiline TextEdit 已经插入了 '\n'，需要撤销
-                                while draft.ends_with('\n') || draft.ends_with('\r') {
-                                    draft.pop();
-                                }
-                            }
-                            // Ctrl+V 粘贴图片
-                            // egui_winit 消费了 Ctrl+V 键事件，当剪贴板是图片时
-                            // raw_input_hook 会设置 clipboard_paste_failed 标志
-                            if response.has_focus()
-                                && self.clipboard_paste_failed
-                                && !has_pending_image
-                            {
-                                match Self::load_clipboard_image() {
-                                    Ok(image) => {
-                                        paste_image = Some(image);
-                                    }
-                                    Err(e) => {
-                                        tracing::debug!("剪贴板无可用图片: {}", e);
-                                    }
-                                }
-                            }
-                            let enter_pressed = enter_no_mod;
-                            // 表情按钮（窄宽度时隐藏）
-                            if show_face_btn
-                                && ui
-                                    .add_sized(
-                                        [button_width, control_height],
-                                        Button::new(RichText::new("😀").size(15.0)),
-                                    )
-                                    .clicked()
-                            {
-                                self.show_face_picker = !self.show_face_picker;
-                            }
-                            let plus_btn = ui.add_sized(
-                                [button_width, control_height],
-                                Button::new(RichText::new("＋").size(16.0)),
-                            );
-                            plus_btn.context_menu(|ui| {
-                                if ui.button("📷 发送图片").clicked() {
-                                    choose_image = true;
-                                    ui.close();
-                                }
-                                if ui.button("📎 发送文件").clicked() {
-                                    choose_file = true;
-                                    ui.close();
-                                }
-                            });
-                            if plus_btn.clicked() {
-                                choose_image = true;
-                            }
-                            should_send = enter_pressed
-                                || ui
-                                    .add_sized(
-                                        [button_width, control_height],
-                                        Button::new(RichText::new("↗").size(15.0)),
-                                    )
-                                    .clicked();
-                        },
-                    );
-
                     if forward_mode_active {
-                        ui.add_space(6.0);
                         egui::Frame::group(ui.style()).show(ui, |ui| {
                             ui.horizontal_wrapped(|ui| {
                                 ui.weak(format!("已选 {} 条消息", forward_selected_count));
@@ -1030,30 +947,70 @@ impl IcaApp {
                                 }
                             });
                         });
+                        ui.add_space(6.0);
                     }
 
-                    if let Some(image) = self.bridge_states[active_bridge_idx]
-                        .pending_image_by_room
-                        .get(&room_id)
-                        .cloned()
-                    {
-                        ui.add_space(6.0);
+                    if has_pending_image {
                         egui::Frame::group(ui.style()).show(ui, |ui| {
                             ui.horizontal_wrapped(|ui| {
-                                ui.weak("待发送图片");
-                                if ui.button("取消").clicked() {
+                                ui.weak(format!("待发送图片（{}）", pending_image_count));
+                                if ui.button("清空").clicked() {
                                     clear_image = true;
                                 }
+                                ui.weak("点击缩略图可预览大图");
                             });
-                            ui.add(
-                                Label::new(format!(
-                                    "{} ({:.1} KB)",
-                                    image.name,
-                                    image.data.len() as f32 / 1024.0
-                                ))
-                                .wrap(),
-                            );
+                            ui.add_space(4.0);
+                            egui::ScrollArea::horizontal()
+                                .id_salt(("pending_image_preview", active_bridge_idx, room_id))
+                                .max_height(104.0)
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        for (idx, image) in pending_images.iter().enumerate() {
+                                            ui.vertical(|ui| {
+                                                let preview_uri = format!(
+                                                    "bytes://pending_image/{}/{}/{}-{}-{}",
+                                                    active_bridge_idx,
+                                                    room_id,
+                                                    idx,
+                                                    image.data.len(),
+                                                    image.name
+                                                );
+                                                let response = ui.add(
+                                                    Image::from_bytes(
+                                                        preview_uri.clone(),
+                                                        image.data.clone(),
+                                                    )
+                                                    .fit_to_exact_size(egui::vec2(72.0, 72.0))
+                                                    .corner_radius(8.0)
+                                                    .sense(egui::Sense::click()),
+                                                );
+                                                if response.clicked() {
+                                                    open_pending_image = Some((
+                                                        preview_uri.clone(),
+                                                        image.data.clone(),
+                                                    ));
+                                                }
+                                                response.on_hover_text(format!(
+                                                    "{}\n{} · {}",
+                                                    image.name,
+                                                    format_pending_size(image.data.len()),
+                                                    image.mime_type
+                                                ));
+                                                ui.small(format!(
+                                                    "#{} · {}",
+                                                    idx + 1,
+                                                    format_pending_size(image.data.len())
+                                                ));
+                                                if ui.small_button("移除").clicked() {
+                                                    remove_pending_image_idx = Some(idx);
+                                                }
+                                            });
+                                            ui.add_space(6.0);
+                                        }
+                                    });
+                                });
                         });
+                        ui.add_space(6.0);
                     }
 
                     if let Some(file) = self.bridge_states[active_bridge_idx]
@@ -1061,7 +1018,6 @@ impl IcaApp {
                         .get(&room_id)
                         .cloned()
                     {
-                        ui.add_space(6.0);
                         egui::Frame::group(ui.style()).show(ui, |ui| {
                             ui.horizontal_wrapped(|ui| {
                                 ui.weak("待发送文件");
@@ -1069,14 +1025,10 @@ impl IcaApp {
                                     clear_file = true;
                                 }
                             });
-                            let size = file.data.len() as f64;
-                            let size_str = if size >= 1024.0 * 1024.0 {
-                                format!("{:.1} MB", size / (1024.0 * 1024.0))
-                            } else {
-                                format!("{:.1} KB", size / 1024.0)
-                            };
+                            let size_str = format_pending_size(file.data.len());
                             ui.add(Label::new(format!("📎 {} ({})", file.name, size_str)).wrap());
                         });
+                        ui.add_space(6.0);
                     }
 
                     if let Some(reply) = self.bridge_states[active_bridge_idx]
@@ -1084,7 +1036,6 @@ impl IcaApp {
                         .get(&room_id)
                         .cloned()
                     {
-                        ui.add_space(6.0);
                         egui::Frame::group(ui.style()).show(ui, |ui| {
                             ui.horizontal_wrapped(|ui| {
                                 ui.weak(format!("正在回复 {}", reply.sender_name));
@@ -1094,11 +1045,11 @@ impl IcaApp {
                             });
                             ui.add(Label::new(format_message_content(&reply.content)).wrap());
                         });
+                        ui.add_space(6.0);
                     }
 
                     // 表情选择器面板
                     if self.show_face_picker {
-                        ui.add_space(4.0);
                         let face_panel_height = 200.0;
                         ui.allocate_ui_with_layout(
                             egui::vec2(ui.available_width(), face_panel_height),
@@ -1160,7 +1111,94 @@ impl IcaApp {
                                 });
                             },
                         );
+                        ui.add_space(6.0);
                     }
+
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), control_height),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            let available_width = ui.available_width();
+                            let button_width = if available_width < 180.0 { 24.0 } else { 30.0 };
+                            let item_spacing = if available_width < 180.0 {
+                                4.0
+                            } else {
+                                ui.spacing().item_spacing.x
+                            };
+                            ui.spacing_mut().item_spacing.x = item_spacing;
+                            // 窄宽度不显示表情按钮
+                            let show_face_btn = available_width >= 180.0;
+                            let btn_count = if show_face_btn { 3.0 } else { 2.0 };
+                            let input_width = (ui.available_width()
+                                - button_width * btn_count
+                                - item_spacing * btn_count)
+                                .max(0.0);
+                            let draft = self.bridge_states[active_bridge_idx]
+                                .draft_by_room
+                                .entry(room_id)
+                                .or_default();
+                            let response = ui.add_sized(
+                                [input_width, control_height],
+                                egui::TextEdit::multiline(draft)
+                                    .desired_rows(composer_rows)
+                                    .hint_text("Enter 发送, Shift+Enter 换行"),
+                            );
+                            let enter_no_mod = response.has_focus()
+                                && ui.input(|input| {
+                                    input.key_pressed(egui::Key::Enter)
+                                        && !input.modifiers.shift
+                                        && !input.modifiers.ctrl
+                                });
+                            if enter_no_mod {
+                                while draft.ends_with('\n') || draft.ends_with('\r') {
+                                    draft.pop();
+                                }
+                            }
+                            if response.has_focus() && self.clipboard_paste_failed {
+                                match Self::load_clipboard_image() {
+                                    Ok(image) => paste_images.push(image),
+                                    Err(e) => {
+                                        tracing::debug!("剪贴板无可用图片: {}", e);
+                                    }
+                                }
+                            }
+                            let enter_pressed = enter_no_mod;
+                            if show_face_btn
+                                && ui
+                                    .add_sized(
+                                        [button_width, control_height],
+                                        Button::new(RichText::new("😀").size(15.0)),
+                                    )
+                                    .clicked()
+                            {
+                                self.show_face_picker = !self.show_face_picker;
+                            }
+                            let plus_btn = ui.add_sized(
+                                [button_width, control_height],
+                                Button::new(RichText::new("＋").size(16.0)),
+                            );
+                            plus_btn.context_menu(|ui| {
+                                if ui.button("📷 发送图片").clicked() {
+                                    choose_image = true;
+                                    ui.close();
+                                }
+                                if ui.button("📎 发送文件").clicked() {
+                                    choose_file = true;
+                                    ui.close();
+                                }
+                            });
+                            if plus_btn.clicked() {
+                                choose_image = true;
+                            }
+                            should_send = enter_pressed
+                                || ui
+                                    .add_sized(
+                                        [button_width, control_height],
+                                        Button::new(RichText::new("↗").size(15.0)),
+                                    )
+                                    .clicked();
+                        },
+                    );
                 },
             );
 
@@ -1176,16 +1214,25 @@ impl IcaApp {
                     .remove(&room_id);
             }
 
+            if let Some(index) = remove_pending_image_idx {
+                self.remove_pending_image_at(active_bridge_idx, room_id, index);
+            }
+
             if clear_file {
                 self.bridge_states[active_bridge_idx]
                     .pending_file_by_room
                     .remove(&room_id);
             }
 
-            if let Some(image) = paste_image {
-                self.bridge_states[active_bridge_idx]
-                    .pending_image_by_room
-                    .insert(room_id, image);
+            if !paste_images.is_empty() {
+                self.append_pending_images(active_bridge_idx, room_id, paste_images);
+            }
+
+            if let Some((preview_uri, preview_bytes)) = open_pending_image {
+                ui.ctx().include_bytes(preview_uri.clone(), preview_bytes);
+                self.image_viewer = Some(std::sync::Arc::new(std::sync::Mutex::new(
+                    crate::app::state::ImageViewerState::new(preview_uri),
+                )));
             }
 
             if clear_forward_selection {
@@ -1234,54 +1281,68 @@ impl IcaApp {
                     });
             }
 
-            if let Some(file) = dropped.into_iter().next() {
-                let file_name = if !file.name.is_empty() {
-                    file.name.clone()
-                } else if let Some(p) = &file.path {
-                    p.file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string()
-                } else {
-                    "unknown".to_string()
-                };
+            if !dropped.is_empty() {
+                let mut dropped_images = Vec::new();
+                let mut dropped_file = None;
+                let mut dropped_errors = Vec::new();
 
-                let data = if let Some(bytes) = file.bytes {
-                    bytes.to_vec()
-                } else if let Some(path) = &file.path {
-                    std::fs::read(path).unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
+                for file in dropped {
+                    let file_name = if !file.name.is_empty() {
+                        file.name.clone()
+                    } else if let Some(p) = &file.path {
+                        p.file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string()
+                    } else {
+                        "unknown".to_string()
+                    };
 
-                if !data.is_empty() {
+                    let data = if let Some(bytes) = file.bytes {
+                        bytes.to_vec()
+                    } else if let Some(path) = &file.path {
+                        std::fs::read(path).unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+
+                    if data.is_empty() {
+                        continue;
+                    }
+
                     let ext = file_name.rsplit('.').next().unwrap_or("").to_lowercase();
                     let image_exts = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
                     if image_exts.contains(&ext.as_str()) {
                         let mime = IcaApp::guess_mime_type(std::path::Path::new(&file_name));
-                        self.bridge_states[active_bridge_idx]
-                            .pending_image_by_room
-                            .insert(
-                                room_id,
-                                PendingImage {
-                                    name: file_name,
-                                    mime_type: mime,
-                                    data,
-                                },
-                            );
-                    } else {
+                        dropped_images.push(PendingImage {
+                            name: file_name,
+                            mime_type: mime,
+                            data,
+                        });
+                    } else if dropped_file.is_none() {
                         let ft = IcaApp::guess_mime_type(std::path::Path::new(&file_name));
-                        self.bridge_states[active_bridge_idx]
-                            .pending_file_by_room
-                            .insert(
-                                room_id,
-                                PendingFile {
-                                    name: file_name,
-                                    file_type: ft,
-                                    data,
-                                },
-                            );
+                        dropped_file = Some(PendingFile {
+                            name: file_name,
+                            file_type: ft,
+                            data,
+                        });
+                    } else {
+                        dropped_errors
+                            .push(format!("暂不支持同时拖放多份非图片文件: {}", file_name));
                     }
+                }
+
+                if !dropped_images.is_empty() {
+                    self.append_pending_images(active_bridge_idx, room_id, dropped_images);
+                }
+                if let Some(file) = dropped_file {
+                    self.bridge_states[active_bridge_idx]
+                        .pending_file_by_room
+                        .insert(room_id, file);
+                }
+                if !dropped_errors.is_empty() {
+                    self.bridge_states[active_bridge_idx].last_error =
+                        Some(dropped_errors.join("；"));
                 }
             }
         });

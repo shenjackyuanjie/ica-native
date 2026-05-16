@@ -17,15 +17,33 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::ica::types::message::{FileAttachment, SendMessage};
 
 use super::client;
-use super::command::{
-    IcaCommand, emit_ui_event, json_preview, payload_to_json, unwrap_singleton_array_layers,
-};
+use super::command::{IcaCommand, emit_ui_event, json_preview};
+
+fn ack_payload_values(payload: &Payload) -> Vec<JsonValue> {
+    match payload {
+        Payload::Text(values) => {
+            if let Some(JsonValue::Array(args)) = values.first()
+                && values.len() == 1
+            {
+                return args.clone();
+            }
+            values.clone()
+        }
+        Payload::Binary(bytes) => vec![json!(bytes.to_vec())],
+        _ => Vec::new(),
+    }
+}
+
+fn ack_payload_first(payload: &Payload) -> Option<JsonValue> {
+    ack_payload_values(payload).into_iter().next()
+}
 
 pub(super) async fn handle_command(
     command: IcaCommand,
     client: &Client,
     event_tx: &Option<UnboundedSender<JsonValue>>,
     bridge_key: &str,
+    api_base_url: &str,
 ) {
     match command {
         IcaCommand::FetchMessages(room_id) => {
@@ -46,19 +64,17 @@ pub(super) async fn handle_command(
                         let bridge_id = bridge_id.clone();
                         Box::pin(async move {
                             ack_received.store(true, Ordering::SeqCst);
-                            let raw_payload = payload_to_json(&payload);
-                            let messages = raw_payload
-                                .as_array()
-                                .and_then(|values| values.first())
+                            let ack_values = ack_payload_values(&payload);
+                            let messages = ack_values
+                                .first()
                                 .cloned()
-                                .map(unwrap_singleton_array_layers)
                                 .unwrap_or_else(|| JsonValue::Array(Vec::new()));
                             if !messages.is_array() {
                                 tracing::warn!(
                                     "fetchMessages ack format unexpected: bridge={} room_id={} raw={}",
                                     bridge_id,
                                     room_id,
-                                    json_preview(&raw_payload, 512)
+                                    json_preview(&JsonValue::Array(ack_values), 512)
                                 );
                             }
 
@@ -132,12 +148,10 @@ pub(super) async fn handle_command(
                         let tx = tx.clone();
                         let bridge_id = bridge_id.clone();
                         Box::pin(async move {
-                            let raw_payload = payload_to_json(&payload);
-                            let messages = raw_payload
-                                .as_array()
-                                .and_then(|values| values.first())
+                            let ack_values = ack_payload_values(&payload);
+                            let messages = ack_values
+                                .first()
                                 .cloned()
-                                .map(unwrap_singleton_array_layers)
                                 .unwrap_or_else(|| JsonValue::Array(Vec::new()));
 
                             emit_ui_event(
@@ -194,7 +208,7 @@ pub(super) async fn handle_command(
                                 &tx,
                                 &bridge_id,
                                 "setSystemMessages",
-                                payload_to_json(&payload),
+                                ack_payload_first(&payload).unwrap_or(JsonValue::Null),
                             );
                         })
                     },
@@ -235,7 +249,36 @@ pub(super) async fn handle_command(
         }
         IcaCommand::SendMessage(message) => {
             let room_id = message.room_id;
-            if !client::send_message(client, &message).await {
+            if message.has_b64img() {
+                match request_send_token(client).await {
+                    Ok(token) => {
+                        if let Err(e) = http_send_message(api_base_url, &token, &message).await {
+                            emit_ui_event(
+                                event_tx,
+                                bridge_key,
+                                "commandFailed",
+                                json!({
+                                    "kind": "sendMessage",
+                                    "roomId": room_id,
+                                    "message": e,
+                                }),
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        emit_ui_event(
+                            event_tx,
+                            bridge_key,
+                            "commandFailed",
+                            json!({
+                                "kind": "sendMessage",
+                                "roomId": room_id,
+                                "message": e,
+                            }),
+                        );
+                    }
+                }
+            } else if !client::send_message(client, &message).await {
                 emit_ui_event(
                     event_tx,
                     bridge_key,
@@ -571,6 +614,74 @@ pub(super) async fn handle_command(
     }
 }
 
+async fn request_send_token(client: &Client) -> Result<String, String> {
+    let timeout = Duration::from_secs(30);
+    let token = Arc::new(tokio::sync::Mutex::new(None::<String>));
+    let token_cb = token.clone();
+
+    let result = client
+        .emit_with_ack(
+            "requestToken",
+            Vec::<JsonValue>::new(),
+            timeout,
+            move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
+                let token = token_cb.clone();
+                Box::pin(async move {
+                    let token_str = ack_payload_first(&payload)
+                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                        .unwrap_or_default();
+                    *token.lock().await = Some(token_str);
+                })
+            },
+        )
+        .await;
+
+    if let Err(e) = result {
+        return Err(format!("requestToken 发送失败: {}", e));
+    }
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut attempts = 0;
+    loop {
+        if let Some(token) = token.lock().await.take() {
+            if token.is_empty() {
+                return Err("requestToken 返回空 token".to_string());
+            }
+            return Ok(token);
+        }
+        attempts += 1;
+        if attempts > 100 {
+            return Err("requestToken 超时".to_string());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+async fn http_send_message(
+    api_base_url: &str,
+    token: &str,
+    message: &SendMessage,
+) -> Result<(), String> {
+    let api_base_url = api_base_url.trim_end_matches('/');
+    let url = format!("{}/api/{}/sendMessage", api_base_url, token);
+    let client = reqwest::Client::new();
+    let value = message.as_value();
+
+    let response = client
+        .post(&url)
+        .json(&value)
+        .send()
+        .await
+        .map_err(|e| format!("HTTP POST 失败: {}", e))?;
+
+    match response.status() {
+        reqwest::StatusCode::ACCEPTED => Ok(()),
+        reqwest::StatusCode::FORBIDDEN => Err("token 验证失败 (403)".to_string()),
+        reqwest::StatusCode::PAYLOAD_TOO_LARGE => Err("图片过大，无法发送 (413)".to_string()),
+        status => Err(format!("sendMessage HTTP 错误: {}", status)),
+    }
+}
+
 /// 分块上传文件并发送消息
 ///
 /// 流程参照 ICA++ socketIoAdapter:
@@ -612,12 +723,7 @@ async fn upload_and_send_file(
             move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
                 let uploaded_offsets = uploaded_offsets_cb.clone();
                 Box::pin(async move {
-                    let json = payload_to_json(&payload);
-                    let value = json
-                        .as_array()
-                        .and_then(|a| a.first())
-                        .cloned()
-                        .unwrap_or(json.clone());
+                    let value = ack_payload_first(&payload).unwrap_or(JsonValue::Null);
                     let all_success = value
                         .get("allSuccess")
                         .and_then(|v| v.as_bool())
@@ -691,10 +797,7 @@ async fn upload_and_send_file(
                         move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
                             let upload_result = upload_result_cb.clone();
                             Box::pin(async move {
-                                let json = payload_to_json(&payload);
-                                let ok = json
-                                    .as_array()
-                                    .and_then(|a| a.first())
+                                let ok = ack_payload_first(&payload)
                                     .and_then(|v| v.as_bool())
                                     .unwrap_or(false);
                                 *upload_result.lock().await = Some(ok);

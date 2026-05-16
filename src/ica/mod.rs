@@ -44,6 +44,15 @@ pub async fn main(
     } else {
         bridge_cfg.name.clone()
     };
+    let http_api_url = {
+        if let Some(rest) = bridge_cfg.url.strip_prefix("ws://") {
+            format!("http://{}", rest)
+        } else if let Some(rest) = bridge_cfg.url.strip_prefix("wss://") {
+            format!("https://{}", rest)
+        } else {
+            bridge_cfg.url.clone()
+        }
+    };
     let private_key = bridge_cfg.private_key.clone();
     let mut stop_alrm = stop_alrm;
     let mut reconnect_attempt = 0_usize;
@@ -230,7 +239,14 @@ pub async fn main(
                     }
                 }
                 Some(command) = command_rx.recv() => {
-                    handler::handle_command(command, &client, &event_tx, &bridge_key).await;
+                    handler::handle_command(
+                        command,
+                        &client,
+                        &event_tx,
+                        &bridge_key,
+                        &http_api_url,
+                    )
+                    .await;
                 }
             }
         };

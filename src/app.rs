@@ -920,9 +920,12 @@ impl IcaApp {
         let draft = state.draft_by_room.entry(room_id).or_default();
         let content = draft.trim().to_string();
         let reply_to = state.reply_to_by_room.remove(&room_id);
-        let pending_image = state.pending_image_by_room.remove(&room_id);
+        let pending_images = state
+            .pending_image_by_room
+            .remove(&room_id)
+            .unwrap_or_default();
         let pending_file = state.pending_file_by_room.remove(&room_id);
-        if content.is_empty() && pending_image.is_none() && pending_file.is_none() {
+        if content.is_empty() && pending_images.is_empty() && pending_file.is_none() {
             if let Some(reply_to) = reply_to {
                 state.reply_to_by_room.insert(room_id, reply_to);
             }
@@ -952,22 +955,45 @@ impl IcaApp {
             return;
         }
 
-        // 图片走 base64 内联
-        let mut message = SendMessage::new(content.clone(), room_id, reply_to.clone());
-        if let Some(image) = pending_image.as_ref() {
-            message.set_img(&image.data, &image.mime_type, false);
+        // 图片走 base64 内联；多图时按顺序拆成多条消息发送（首条带文字/回复）
+        let mut outgoing_messages = Vec::new();
+        if pending_images.is_empty() {
+            outgoing_messages.push(SendMessage::new(content.clone(), room_id, reply_to.clone()));
+        } else {
+            for (idx, image) in pending_images.iter().enumerate() {
+                let mut message = SendMessage::new(
+                    if idx == 0 {
+                        content.clone()
+                    } else {
+                        String::new()
+                    },
+                    room_id,
+                    if idx == 0 { reply_to.clone() } else { None },
+                );
+                message.set_img(&image.data, &image.mime_type, false);
+                outgoing_messages.push(message);
+            }
         }
-        if let Err(e) = self.ica_clients[bridge_idx]
-            .command_tx
-            .send(IcaCommand::SendMessage(message))
-        {
+
+        let mut send_failed = None;
+        for message in outgoing_messages {
+            if let Err(e) = self.ica_clients[bridge_idx]
+                .command_tx
+                .send(IcaCommand::SendMessage(message))
+            {
+                send_failed = Some(e);
+                break;
+            }
+        }
+
+        if let Some(e) = send_failed {
             tracing::warn!("send sendMessage command failed: {}", e);
             state.draft_by_room.insert(room_id, content);
             if let Some(reply_to) = reply_to {
                 state.reply_to_by_room.insert(room_id, reply_to);
             }
-            if let Some(image) = pending_image {
-                state.pending_image_by_room.insert(room_id, image);
+            if !pending_images.is_empty() {
+                state.pending_image_by_room.insert(room_id, pending_images);
             }
         } else if scroll_to_bottom_after_send {
             state.pending_send_scroll_to_bottom.insert(room_id);
@@ -1098,6 +1124,37 @@ impl IcaApp {
         }
     }
 
+    fn append_pending_images(
+        &mut self,
+        bridge_idx: usize,
+        room_id: RoomId,
+        images: impl IntoIterator<Item = PendingImage>,
+    ) {
+        let entry = self.bridge_states[bridge_idx]
+            .pending_image_by_room
+            .entry(room_id)
+            .or_default();
+        entry.extend(images);
+    }
+
+    fn remove_pending_image_at(&mut self, bridge_idx: usize, room_id: RoomId, index: usize) {
+        let mut should_remove_entry = false;
+        if let Some(images) = self.bridge_states[bridge_idx]
+            .pending_image_by_room
+            .get_mut(&room_id)
+        {
+            if index < images.len() {
+                images.remove(index);
+            }
+            should_remove_entry = images.is_empty();
+        }
+        if should_remove_entry {
+            self.bridge_states[bridge_idx]
+                .pending_image_by_room
+                .remove(&room_id);
+        }
+    }
+
     pub fn pick_image_for_current_room(&mut self) {
         let Some(active_bridge_idx) = self.active_bridge_idx else {
             return;
@@ -1106,22 +1163,27 @@ impl IcaApp {
             return;
         };
 
-        let Some(path) = rfd::FileDialog::new()
+        let Some(paths) = rfd::FileDialog::new()
             .add_filter("image", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
-            .pick_file()
+            .pick_files()
         else {
             return;
         };
 
-        match Self::load_pending_image(&path) {
-            Ok(image) => {
-                self.bridge_states[active_bridge_idx]
-                    .pending_image_by_room
-                    .insert(room_id, image);
+        let mut images = Vec::new();
+        let mut errors = Vec::new();
+        for path in paths {
+            match Self::load_pending_image(&path) {
+                Ok(image) => images.push(image),
+                Err(e) => errors.push(e.to_string()),
             }
-            Err(e) => {
-                self.bridge_states[active_bridge_idx].last_error = Some(e.to_string());
-            }
+        }
+
+        if !images.is_empty() {
+            self.append_pending_images(active_bridge_idx, room_id, images);
+        }
+        if !errors.is_empty() {
+            self.bridge_states[active_bridge_idx].last_error = Some(errors.join("；"));
         }
     }
 

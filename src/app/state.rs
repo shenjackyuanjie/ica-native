@@ -183,7 +183,7 @@ pub struct BridgeState {
     pub pending_send_scroll_to_bottom: HashSet<RoomId>,
     pub join_requests: Vec<JoinRequestRoom>,
     pub reply_to_by_room: HashMap<RoomId, ReplyMessage>,
-    pub pending_image_by_room: HashMap<RoomId, PendingImage>,
+    pub pending_image_by_room: HashMap<RoomId, Vec<PendingImage>>,
     pub pending_file_by_room: HashMap<RoomId, PendingFile>,
     pub selected_room_id: Option<RoomId>,
     pub draft_by_room: HashMap<RoomId, String>,

@@ -138,19 +138,6 @@ pub(super) fn json_preview(value: &JsonValue, max_chars: usize) -> String {
     }
 }
 
-pub(super) fn unwrap_singleton_array_layers(mut value: JsonValue) -> JsonValue {
-    loop {
-        match value {
-            JsonValue::Array(mut values)
-                if values.len() == 1 && matches!(values.first(), Some(JsonValue::Array(_))) =>
-            {
-                value = values.remove(0);
-            }
-            _ => return value,
-        }
-    }
-}
-
 pub(super) fn reconnect_delay(attempt: usize) -> Duration {
     let exp = attempt.saturating_sub(1).min(5) as u32;
     let seconds = (1_u64 << exp).min(MAX_RECONNECT_BACKOFF_SECS);

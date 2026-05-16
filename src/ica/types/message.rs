@@ -457,6 +457,10 @@ impl SendMessage {
         serde_json::to_value(self).unwrap()
     }
 
+    pub fn has_b64img(&self) -> bool {
+        self.file_data.is_some()
+    }
+
     /// 设置消息的图片
     ///
     /// as_sticker: 是否当作表情发送
