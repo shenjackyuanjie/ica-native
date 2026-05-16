@@ -1,6 +1,5 @@
 use crate::app::{ChatListScrollTarget, IcaApp};
 use crate::ica::types::room::Room;
-use egui::{Label, RichText};
 
 use super::format_message_content;
 
@@ -184,13 +183,7 @@ impl IcaApp {
                         };
                         ui.painter().rect_filled(row_rect, 4.0, bg_color);
 
-                        ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
-                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                                // 左侧内边距：把整行内容从分割线向右挪一点
-                                ui.add_space(4.0);
-                                self.render_room(ui, room);
-                            });
-                        });
+                        self.render_room(ui, content_rect, room);
 
                         response.context_menu(|ui| {
                             // 房间名 + ID (disabled header)
@@ -264,170 +257,173 @@ impl IcaApp {
             });
     }
 
-    fn render_room(&self, ui: &mut egui::Ui, room: &Room) {
-        ui.style_mut().interaction.selectable_labels = false;
-
-        // 左侧：头像区域（方形，固定大小）
-        // 群聊时右下角叠加发送者头像
-        // 使用 LayerId 叠加两个头像（保留原注释以便后续改进）
+    fn render_room(&self, ui: &mut egui::Ui, rect: egui::Rect, room: &Room) {
+        // 聊天列表是手写虚拟列表：快速滚动时，同一个屏幕 rect 会在 egui
+        // 的多次 pass 之间对应到不同 room。这里刻意不用 Label/Button 等子
+        // widget，只保留外层 row 的 interact id，内部全部 painter 绘制，避免
+        // 行内自动生成的 widget id 在同一 rect 上来回变化并触发 egui warning。
         let is_group = room.room_id < 0;
         let dark_mode = ui.visuals().dark_mode;
         let avatar_size = 40.0;
         let sender_avatar_size = 20.0;
+        // 统一裁剪到当前行，防止长文本或图片越界污染相邻行。
+        let painter = ui.painter().with_clip_rect(rect);
 
-        // 使用 LayerId 叠加两个头像
-        let (rect, _) =
-            ui.allocate_exact_size(egui::vec2(avatar_size, avatar_size), egui::Sense::hover());
-
-        // 主头像（群头像或私聊头像）
-        let avatar_url = room.avatar_url();
-        ui.put(
-            rect,
-            egui::Image::from_uri(avatar_url)
-                .fit_to_exact_size(egui::vec2(avatar_size, avatar_size))
-                .corner_radius(8.0),
+        // 头像不参与布局分配，位置必须由 row_rect 直接推导；这样虚拟滚动时
+        // 不会因为 allocate 顺序变化产生额外 widget id。
+        let avatar_rect = egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 4.0, rect.center().y - avatar_size / 2.0),
+            egui::vec2(avatar_size, avatar_size),
         );
-        // 群聊时叠加发送者头像在右下角
+
+        let avatar_url = room.avatar_url();
+        egui::Image::from_uri(avatar_url)
+            .fit_to_exact_size(egui::vec2(avatar_size, avatar_size))
+            .corner_radius(8.0)
+            .paint_at(ui, avatar_rect);
+
+        // 群聊头像右下角叠加最后发言人的头像，只做绘制，不单独注册 hover/click。
         if is_group && let Some(user_id) = room.last_message.user_id {
             let sender_url = format!("https://q1.qlogo.cn/g?b=qq&nk={}&s=140", user_id);
             let sender_rect = egui::Rect::from_min_size(
                 egui::pos2(
-                    rect.right() - sender_avatar_size - 2.0,
-                    rect.bottom() - sender_avatar_size - 2.0,
+                    avatar_rect.right() - sender_avatar_size - 2.0,
+                    avatar_rect.bottom() - sender_avatar_size - 2.0,
                 ),
                 egui::vec2(sender_avatar_size, sender_avatar_size),
             );
-            ui.put(
-                sender_rect,
-                egui::Image::from_uri(sender_url)
-                    .fit_to_exact_size(egui::vec2(sender_avatar_size, sender_avatar_size))
-                    .corner_radius(4.0),
-            );
+            egui::Image::from_uri(sender_url)
+                .fit_to_exact_size(egui::vec2(sender_avatar_size, sender_avatar_size))
+                .corner_radius(4.0)
+                .paint_at(ui, sender_rect);
         }
 
-        // 头像 与 信息 的间距
-        // ui.add_space(2.0);
+        // 两行文本的固定基线。row 高度在上层虚拟列表中固定，文字位置也要固定，
+        // 否则滚动时内容高度估算和实际绘制会逐渐偏离。
+        let text_left = avatar_rect.right() + 8.0;
+        let text_right = rect.right() - 8.0;
+        let name_y = rect.top() + 5.0;
+        let preview_y = rect.top() + 28.0;
 
-        // 内容区：名称 + 预览
-        let content_width = ui.available_width();
-        ui.allocate_ui_with_layout(
-            egui::vec2(content_width, 0.0),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                // 文字部分相对于头像部分额外的顶部内边距
-                // 用来让文字部分看着居中
-                ui.add_space(2.0);
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                // 第一行：名称、@ 提示、未读数
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some(ref timestamp) = room.last_message.timestamp
-                        && !timestamp.is_empty()
-                    {
-                        let ts_color = if dark_mode {
-                            egui::Color32::from_rgb(0xb3, 0xba, 0xc9)
-                        } else {
-                            egui::Color32::from_rgb(0x60, 0x62, 0x66)
-                        };
-                        ui.label(RichText::new(timestamp).size(11.0).color(ts_color));
-                    }
-                    if room.index > 0 {
-                        let pin_color = if ui.visuals().dark_mode {
-                            egui::Color32::from_rgb(0xC0, 0xC4, 0xCC)
-                        } else {
-                            egui::Color32::from_rgb(0x90, 0x93, 0x99)
-                        };
-                        ui.label(RichText::new("↑").size(11.0).color(pin_color));
-                    }
+        let muted_color = if dark_mode {
+            egui::Color32::from_rgb(0xb3, 0xba, 0xc9)
+        } else {
+            egui::Color32::from_rgb(0x60, 0x62, 0x66)
+        };
+        let pin_color = if dark_mode {
+            egui::Color32::from_rgb(0xC0, 0xC4, 0xCC)
+        } else {
+            egui::Color32::from_rgb(0x90, 0x93, 0x99)
+        };
+        let name_color = ui.visuals().text_color();
 
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        let name_text = if room.room_name.is_empty() {
-                            "未命名聊天"
-                        } else {
-                            &room.room_name
-                        };
-                        let mut text = RichText::new(name_text).size(16.0);
-                        if room.unread_count > 0 {
-                            text = text.strong();
-                        }
-                        ui.label(text);
-                    });
-                });
+        // 第一行右侧先画时间和置顶标记，并把 right_limit 向左推进。
+        // 名称随后裁剪在 [text_left, right_limit] 内，避免和右侧状态文字重叠。
+        let mut right_limit = text_right;
+        if let Some(timestamp) = &room.last_message.timestamp
+            && !timestamp.is_empty()
+        {
+            let galley = painter.layout_no_wrap(
+                timestamp.clone(),
+                egui::FontId::proportional(11.0),
+                muted_color,
+            );
+            let pos = egui::pos2(right_limit - galley.size().x, name_y + 3.0);
+            painter.galley(pos, galley.clone(), muted_color);
+            right_limit = pos.x - 6.0;
+        }
+        if room.index > 0 {
+            let galley =
+                painter.layout_no_wrap("↑".to_owned(), egui::FontId::proportional(11.0), pin_color);
+            let pos = egui::pos2(right_limit - galley.size().x, name_y + 3.0);
+            painter.galley(pos, galley, pin_color);
+            right_limit = pos.x - 6.0;
+        }
 
-                // 第二行：消息预览（群聊显示用户名: 内容）+ 未读数胶囊
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if room.unread_count > 0 {
-                        let unread_text = room.unread_count.to_string();
-                        let font_size = 12.0;
-                        let badge_color = match room.at {
-                            crate::ica::types::message::At::All => egui::Color32::ORANGE,
-                            crate::ica::types::message::At::Bool(true) => egui::Color32::RED,
-                            _ => egui::Color32::from_gray(140),
-                        };
-                        let galley = ui.painter().layout_no_wrap(
-                            unread_text.clone(),
-                            egui::FontId::proportional(font_size),
-                            egui::Color32::WHITE,
-                        );
-                        let text_width = galley.size().x;
-                        let text_height = galley.size().y;
-                        let padding_x = 5.0;
-                        let padding_y = 1.0;
-                        let badge_width = text_width + padding_x * 2.0;
-                        let badge_height = text_height + padding_y * 2.0;
-
-                        let (badge_rect, _) = ui.allocate_exact_size(
-                            egui::vec2(badge_width, badge_height),
-                            egui::Sense::hover(),
-                        );
-                        let rounding = badge_height / 2.0;
-                        ui.painter().rect_filled(badge_rect, rounding, badge_color);
-                        ui.painter().text(
-                            badge_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            unread_text,
-                            egui::FontId::proportional(font_size),
-                            egui::Color32::WHITE,
-                        );
-                    }
-
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        if is_group
-                            && let Some(ref username) = room.last_message.username
-                            && !username.is_empty()
-                        {
-                            ui.add(
-                                Label::new(
-                                    RichText::new(format!("{}:", username)).size(12.0).color(
-                                        if dark_mode {
-                                            egui::Color32::from_rgb(0x52, 0xa3, 0xe8)
-                                        } else {
-                                            egui::Color32::from_rgb(0x19, 0x76, 0xd2)
-                                        },
-                                    ),
-                                )
-                                .selectable(false),
-                            );
-                        }
-                        if let Some(ref content) = room.last_message.content
-                            && !content.is_empty()
-                        {
-                            let preview_color = if dark_mode {
-                                egui::Color32::from_rgb(0xb3, 0xba, 0xc9)
-                            } else {
-                                egui::Color32::from_rgb(0x60, 0x62, 0x66)
-                            };
-                            ui.add(
-                                Label::new(
-                                    RichText::new(format_message_content(content))
-                                        .size(12.0)
-                                        .color(preview_color),
-                                )
-                                .selectable(false),
-                            );
-                        }
-                    });
-                });
-            },
+        // 房间名可能很长，使用独立 clip rect 做截断；不要改回 Label::truncate，
+        // 否则会重新引入行内 widget id。
+        let name_text = if room.room_name.is_empty() {
+            "未命名聊天"
+        } else {
+            &room.room_name
+        };
+        let name_font = egui::FontId::proportional(16.0);
+        let name_clip = egui::Rect::from_min_max(
+            egui::pos2(text_left, rect.top()),
+            egui::pos2(right_limit.max(text_left), rect.bottom()),
         );
+        let name_painter = painter.with_clip_rect(name_clip);
+        let name_galley = name_painter.layout_no_wrap(name_text.to_owned(), name_font, name_color);
+        name_painter.galley(egui::pos2(text_left, name_y), name_galley, name_color);
+
+        // 第二行右侧先画未读胶囊，再让消息预览在剩余宽度里裁剪。
+        let mut preview_right = text_right;
+        if room.unread_count > 0 {
+            let unread_text = room.unread_count.to_string();
+            let font_size = 12.0;
+            let badge_color = match room.at {
+                crate::ica::types::message::At::All => egui::Color32::ORANGE,
+                crate::ica::types::message::At::Bool(true) => egui::Color32::RED,
+                _ => egui::Color32::from_gray(140),
+            };
+            let galley = painter.layout_no_wrap(
+                unread_text,
+                egui::FontId::proportional(font_size),
+                egui::Color32::WHITE,
+            );
+            let padding = egui::vec2(5.0, 1.0);
+            let badge_size = galley.size() + padding * 2.0;
+            let badge_rect = egui::Rect::from_min_size(
+                egui::pos2(preview_right - badge_size.x, preview_y + 2.0),
+                badge_size,
+            );
+            painter.rect_filled(badge_rect, badge_size.y / 2.0, badge_color);
+            painter.galley(badge_rect.min + padding, galley, egui::Color32::WHITE);
+            preview_right = badge_rect.left() - 8.0;
+        }
+
+        // 群聊预览前缀显示发送者名称；preview_x 会继续向右推进，
+        // 后面的消息内容只占用剩下的空间。
+        let mut preview_x = text_left;
+        if is_group
+            && let Some(username) = &room.last_message.username
+            && !username.is_empty()
+        {
+            let username_color = if dark_mode {
+                egui::Color32::from_rgb(0x52, 0xa3, 0xe8)
+            } else {
+                egui::Color32::from_rgb(0x19, 0x76, 0xd2)
+            };
+            let galley = painter.layout_no_wrap(
+                format!("{username}:"),
+                egui::FontId::proportional(12.0),
+                username_color,
+            );
+            painter.galley(
+                egui::pos2(preview_x, preview_y),
+                galley.clone(),
+                username_color,
+            );
+            preview_x += galley.size().x + 4.0;
+        }
+        // 消息内容也通过 painter clip 截断。这里用 layout_no_wrap 是为了保持
+        // 单行预览，和旧的 TextWrapMode::Truncate 行为一致。
+        if let Some(content) = &room.last_message.content
+            && !content.is_empty()
+            && preview_x < preview_right
+        {
+            let preview = format_message_content(content);
+            let preview_clip = egui::Rect::from_min_max(
+                egui::pos2(preview_x, rect.top()),
+                egui::pos2(preview_right, rect.bottom()),
+            );
+            let preview_painter = painter.with_clip_rect(preview_clip);
+            let galley = preview_painter.layout_no_wrap(
+                preview,
+                egui::FontId::proportional(12.0),
+                muted_color,
+            );
+            preview_painter.galley(egui::pos2(preview_x, preview_y), galley, muted_color);
+        }
     }
 }

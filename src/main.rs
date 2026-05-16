@@ -38,8 +38,9 @@ fn init_logging() {
         tracing::Level::DEBUG => "debug",
         tracing::Level::TRACE => "trace",
     };
-    let filter = tracing_subscriber::EnvFilter::new(format!("{level_name}"));
-    // tracing_subscriber::EnvFilter::new(format!("{level_name},egui_winit::clipboard=off"));
+    let filter = tracing_subscriber::EnvFilter::new(format!(
+        "{level_name},egui_winit::clipboard=off,ica_native::image_loader=off"
+    ));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
