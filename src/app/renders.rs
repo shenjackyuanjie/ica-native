@@ -39,6 +39,27 @@ fn format_message_content(content: &str) -> String {
     result
 }
 
+fn estimate_composer_rows(text: &str, input_width: f32) -> usize {
+    const MIN_ROWS: usize = 1;
+    const MAX_ROWS: usize = 6;
+
+    if text.is_empty() {
+        return MIN_ROWS;
+    }
+
+    let chars_per_row = (input_width / 8.5).floor().max(12.0) as usize;
+    text.split('\n')
+        .map(|line| {
+            let weighted_chars = line
+                .chars()
+                .map(|ch| if ch.is_ascii() { 1 } else { 2 })
+                .sum::<usize>();
+            weighted_chars.div_ceil(chars_per_row).max(1)
+        })
+        .sum::<usize>()
+        .clamp(MIN_ROWS, MAX_ROWS)
+}
+
 impl IcaApp {
     // 顶栏：将多个 menu 合并为一个"功能块"
     pub fn render_top_panel(&mut self, ui: &mut egui::Ui) {
@@ -603,7 +624,35 @@ impl IcaApp {
             let has_pending_file = self.bridge_states[active_bridge_idx]
                 .pending_file_by_room
                 .contains_key(&room_id);
-            let composer_reserved_height = 36.0
+            let composer_available_width = ui.available_width();
+            let composer_button_width = if composer_available_width < 180.0 {
+                24.0
+            } else {
+                30.0
+            };
+            let composer_item_spacing = if composer_available_width < 180.0 {
+                4.0
+            } else {
+                ui.spacing().item_spacing.x
+            };
+            let composer_button_count = if composer_available_width >= 180.0 {
+                3.0
+            } else {
+                2.0
+            };
+            let estimated_input_width = (composer_available_width
+                - composer_button_width * composer_button_count
+                - composer_item_spacing * composer_button_count)
+                .max(0.0);
+            let composer_rows = self.bridge_states[active_bridge_idx]
+                .draft_by_room
+                .get(&room_id)
+                .map(|draft| estimate_composer_rows(draft, estimated_input_width))
+                .unwrap_or(1);
+            let line_height = ui.text_style_height(&egui::TextStyle::Body);
+            let control_height = (line_height * composer_rows as f32 + 12.0).clamp(30.0, 132.0);
+            let composer_reserved_height = control_height
+                + 6.0
                 + if forward_mode_active { 54.0 } else { 0.0 }
                 + if has_reply_banner { 54.0 } else { 0.0 }
                 + if has_pending_image { 54.0 } else { 0.0 }
@@ -868,7 +917,6 @@ impl IcaApp {
                 egui::vec2(ui.available_width(), composer_reserved_height),
                 egui::Layout::bottom_up(egui::Align::Min),
                 |ui| {
-                    let control_height = 30.0;
                     ui.allocate_ui_with_layout(
                         egui::vec2(ui.available_width(), control_height),
                         egui::Layout::left_to_right(egui::Align::Center),
@@ -895,7 +943,7 @@ impl IcaApp {
                             let response = ui.add_sized(
                                 [input_width, control_height],
                                 egui::TextEdit::multiline(draft)
-                                    .desired_rows(1)
+                                    .desired_rows(composer_rows)
                                     .hint_text("Enter 发送, Shift+Enter 换行"),
                             );
                             // 检测 Enter 键（不带 Shift/Ctrl）→ 发送
@@ -918,48 +966,12 @@ impl IcaApp {
                                 && self.clipboard_paste_failed
                                 && !has_pending_image
                             {
-                                match arboard::Clipboard::new() {
-                                    Ok(mut clipboard) => match clipboard.get_image() {
-                                        Ok(img) => {
-                                            tracing::debug!(
-                                                "剪贴板图片: {}x{}, {} bytes",
-                                                img.width,
-                                                img.height,
-                                                img.bytes.len()
-                                            );
-                                            let rgba: Vec<u8> = img.bytes.into_owned();
-                                            if let Some(buf) = image::RgbaImage::from_raw(
-                                                img.width as u32,
-                                                img.height as u32,
-                                                rgba,
-                                            ) {
-                                                let mut png_data = Vec::new();
-                                                let encoder = image::codecs::png::PngEncoder::new(
-                                                    std::io::Cursor::new(&mut png_data),
-                                                );
-                                                if image::ImageEncoder::write_image(
-                                                    encoder,
-                                                    buf.as_raw(),
-                                                    buf.width(),
-                                                    buf.height(),
-                                                    image::ExtendedColorType::Rgba8,
-                                                )
-                                                .is_ok()
-                                                {
-                                                    paste_image = Some(PendingImage {
-                                                        name: "clipboard.png".to_string(),
-                                                        mime_type: "image/png".to_string(),
-                                                        data: png_data,
-                                                    });
-                                                }
-                                            }
-                                        }
-                                        Err(e) => {
-                                            tracing::debug!("剪贴板无图片: {}", e);
-                                        }
-                                    },
+                                match Self::load_clipboard_image() {
+                                    Ok(image) => {
+                                        paste_image = Some(image);
+                                    }
                                     Err(e) => {
-                                        tracing::warn!("无法打开剪贴板: {}", e);
+                                        tracing::debug!("剪贴板无可用图片: {}", e);
                                     }
                                 }
                             }

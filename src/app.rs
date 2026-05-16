@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::Path, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 use eframe::CreationContext;
 use rand::RngExt;
@@ -17,6 +17,7 @@ use crate::{
 
 pub mod chat_group_editor;
 pub mod chat_groups;
+mod clipboard;
 pub mod config_editer;
 pub mod custom_chat;
 pub mod events;
@@ -864,73 +865,6 @@ impl IcaApp {
         });
     }
 
-    fn image_mime_type(path: &Path) -> Option<&'static str> {
-        let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
-        match ext.as_str() {
-            "png" => Some("image/png"),
-            "jpg" | "jpeg" => Some("image/jpeg"),
-            "gif" => Some("image/gif"),
-            "webp" => Some("image/webp"),
-            "bmp" => Some("image/bmp"),
-            _ => None,
-        }
-    }
-
-    fn load_pending_image(path: &Path) -> anyhow::Result<PendingImage> {
-        let mime_type = Self::image_mime_type(path)
-            .ok_or_else(|| anyhow::anyhow!("不支持的图片格式: {}", path.display()))?;
-        let data = std::fs::read(path)?;
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(|| "image".to_string());
-
-        Ok(PendingImage {
-            name,
-            mime_type: mime_type.to_string(),
-            data,
-        })
-    }
-
-    fn guess_mime_type(path: &Path) -> String {
-        let ext = path
-            .extension()
-            .map(|e| e.to_string_lossy().to_ascii_lowercase())
-            .unwrap_or_default();
-        match ext.as_str() {
-            "png" => "image/png",
-            "jpg" | "jpeg" => "image/jpeg",
-            "gif" => "image/gif",
-            "webp" => "image/webp",
-            "bmp" => "image/bmp",
-            "mp3" => "audio/mpeg",
-            "wav" => "audio/wav",
-            "ogg" => "audio/ogg",
-            "flac" => "audio/flac",
-            "mp4" => "video/mp4",
-            "pdf" => "application/pdf",
-            "zip" => "application/zip",
-            "txt" => "text/plain",
-            _ => "application/octet-stream",
-        }
-        .to_string()
-    }
-
-    fn load_pending_file(path: &Path) -> anyhow::Result<PendingFile> {
-        let data = std::fs::read(path)?;
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(|| "file".to_string());
-        let file_type = Self::guess_mime_type(path);
-
-        Ok(PendingFile {
-            name,
-            file_type,
-            data,
-        })
-    }
-
     pub fn select_active_room(&mut self, room_id: RoomId) {
         let mut should_request = false;
         let clear_search_on_room_select = self.clear_search_on_room_select;
@@ -1277,41 +1211,26 @@ impl IcaApp {
 
 impl eframe::App for IcaApp {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        // 检测 Ctrl+V 被 egui_winit 消费但文字粘贴失败的情况（剪贴板可能是图片）
-        // 当 command modifier 按下时，egui_winit 拦截 Key::V 并尝试文字粘贴。
-        // 若剪贴板无文字，则既无 Event::Paste 也无 Event::Key(V) 出现在 events 中。
+        // 检测 Ctrl+V 但没有文字粘贴事件的情况（剪贴板可能是图片）。
         let has_paste = raw_input
             .events
             .iter()
             .any(|e| matches!(e, egui::Event::Paste(_)));
-        let has_key_v = raw_input.events.iter().any(|e| {
-            matches!(
-                e,
-                egui::Event::Key {
-                    key: egui::Key::V,
-                    pressed: true,
-                    ..
-                }
-            )
+        let paste_shortcut = raw_input.events.iter().any(|e| {
+            if let egui::Event::Key {
+                key: egui::Key::V,
+                pressed: true,
+                modifiers,
+                ..
+            } = e
+            {
+                raw_input.modifiers.command || modifiers.command
+            } else {
+                false
+            }
         });
-        // 如果 Ctrl 按下，且无 V 键事件也无 Paste 事件，则可能是图片粘贴
-        // （正常按 Ctrl 不松手不会触发任何事件，只有 Ctrl+V 被消费才会出现这种情况）
-        // 额外条件：events 中有某些新的键盘/输入事件（排除纯修饰键状态更新）
-        let has_new_events = raw_input.events.iter().any(|e| {
-            matches!(
-                e,
-                egui::Event::Key { pressed: true, .. }
-                    | egui::Event::Cut
-                    | egui::Event::Copy
-                    | egui::Event::Paste(_)
-            )
-        });
-        // 没有任何新按键事件，但可能有被消费的按键
-        // egui_winit 消费 Ctrl+V 后 return，events 里完全没有这个键相关的痕迹
-        // 检测方式：如果当前帧有 modifiers.command=true 且既无 key_v 也无 paste，
-        // 也不是因为有其他键按下（has_new_events=false），这是 Ctrl+V 被吃掉的信号
         self.clipboard_paste_failed =
-            raw_input.modifiers.command && !has_paste && !has_key_v && !has_new_events;
+            !has_paste && (paste_shortcut || Self::system_paste_shortcut_pressed());
     }
 
     fn on_exit(&mut self) {

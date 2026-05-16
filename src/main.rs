@@ -13,10 +13,39 @@ pub const GITHUB_LINK: &str = "https://github.com/shenjackyuanjie/ica-native";
 
 pub type StopGetter = tokio::sync::oneshot::Receiver<()>;
 
+fn cli_log_level_from_args<I, S>(args: I) -> tracing::Level
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut level = tracing::Level::INFO;
+    for arg in args {
+        match arg.as_ref() {
+            "--vv" => return tracing::Level::TRACE,
+            "--v" => level = tracing::Level::DEBUG,
+            _ => {}
+        }
+    }
+    level
+}
+
+fn init_logging() {
+    let level = cli_log_level_from_args(std::env::args().skip(1));
+    let level_name = match level {
+        tracing::Level::ERROR => "error",
+        tracing::Level::WARN => "warn",
+        tracing::Level::INFO => "info",
+        tracing::Level::DEBUG => "debug",
+        tracing::Level::TRACE => "trace",
+    };
+    let filter =
+        tracing_subscriber::EnvFilter::new(format!("{level_name}"));
+        // tracing_subscriber::EnvFilter::new(format!("{level_name},egui_winit::clipboard=off"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+}
+
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .init();
+    init_logging();
     egui_main()
 }
 
