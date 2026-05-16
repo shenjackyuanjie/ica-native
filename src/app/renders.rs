@@ -615,8 +615,14 @@ impl IcaApp {
             let scroll_to_target = self.bridge_states[active_bridge_idx]
                 .scroll_to_message_id
                 .take();
+            let saved_scroll_offset = self.bridge_states[active_bridge_idx]
+                .message_scroll_offsets
+                .get(&room_id)
+                .copied()
+                .unwrap_or(0.0);
             let scroll_output = egui::ScrollArea::vertical()
-                .id_salt(("message_list", active_bridge_idx, room_id))
+                .id_salt("message_list")
+                .vertical_scroll_offset(saved_scroll_offset)
                 .max_height(message_list_height)
                 .show(ui, |ui| {
                     ui.set_min_width(ui.max_rect().width());
@@ -702,6 +708,9 @@ impl IcaApp {
                 bridge_state
                     .last_content_height
                     .insert(room_id, new_content_height);
+                bridge_state
+                    .message_scroll_offsets
+                    .insert(room_id, scroll_output.state.offset.y);
             }
 
             // 检测是否滚动到底部：内容高度 - 滚动偏移 - 可视高度 < 阈值

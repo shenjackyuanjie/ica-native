@@ -43,12 +43,12 @@ impl ChatGroupEditor {
         }
 
         // 新建分组
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("新建分组:");
             ui.add(
                 TextEdit::singleline(&mut self.new_group_name)
                     .hint_text("分组名称（最多10个字符）")
-                    .desired_width(160.0),
+                    .desired_width(ui.available_width().clamp(120.0, 240.0)),
             );
             if ui.button("创建").clicked() {
                 let name = self.new_group_name.trim().to_string();
@@ -84,8 +84,12 @@ impl ChatGroupEditor {
             self.search_texts.pop();
         }
 
+        let groups_height = ui.available_height().max(0.0);
         egui::ScrollArea::vertical()
-            .max_height(400.0)
+            .id_salt("chat_group_editor_groups")
+            .auto_shrink([false, false])
+            .min_scrolled_height(0.0)
+            .max_height(groups_height)
             .show(ui, |ui| {
                 let mut remove_idx: Option<usize> = None;
                 let mut move_up: Option<usize> = None;
@@ -97,11 +101,11 @@ impl ChatGroupEditor {
                     let group_room_count = chat_groups.groups[idx].rooms.len();
                     let group_include_all = chat_groups.groups[idx].include_all_personal;
                     egui::Frame::group(ui.style()).show(ui, |ui| {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             if self.editing_index == Some(idx) {
                                 ui.add(
                                     TextEdit::singleline(&mut self.editing_name)
-                                        .desired_width(120.0),
+                                        .desired_width(ui.available_width().clamp(100.0, 220.0)),
                                 );
                                 if ui.button("ok").clicked() {
                                     let new_name = self.editing_name.trim().to_string();
@@ -263,39 +267,35 @@ impl ChatGroupEditor {
                 ui.add(
                     TextEdit::singleline(search)
                         .hint_text("搜索会话名或ID")
-                        .desired_width(200.0)
+                        .desired_width(ui.available_width().clamp(120.0, 320.0))
                         .id(ui.make_persistent_id(&salt)),
                 );
                 let query = search.trim().to_uppercase();
-                egui::ScrollArea::vertical()
-                    .max_height(200.0)
-                    .show(ui, |ui| {
-                        for room in &available {
-                            if !query.is_empty()
-                                && !room.room_name.to_uppercase().contains(&query)
-                                && !room.room_id.to_string().contains(&query)
-                            {
-                                continue;
-                            }
-                            let room_name = if room.room_name.is_empty() {
-                                room.room_id.to_string()
-                            } else {
-                                room.room_name.clone()
-                            };
-                            let group_type = if room.room_id < 0 { "群聊" } else { "私聊" };
-                            // 按钮的 label 保持唯一：room_id 做后缀确保不重复
-                            if ui
-                                .button(format!(
-                                    "[{}] {} (id:{})",
-                                    group_type, room_name, room.room_id
-                                ))
-                                .clicked()
-                            {
-                                chat_groups.toggle_room_in_group(group_idx, room.room_id);
-                                dirty = true;
-                            }
-                        }
-                    });
+                for room in &available {
+                    if !query.is_empty()
+                        && !room.room_name.to_uppercase().contains(&query)
+                        && !room.room_id.to_string().contains(&query)
+                    {
+                        continue;
+                    }
+                    let room_name = if room.room_name.is_empty() {
+                        room.room_id.to_string()
+                    } else {
+                        room.room_name.clone()
+                    };
+                    let group_type = if room.room_id < 0 { "群聊" } else { "私聊" };
+                    // 按钮的 label 保持唯一：room_id 做后缀确保不重复
+                    if ui
+                        .button(format!(
+                            "[{}] {} (id:{})",
+                            group_type, room_name, room.room_id
+                        ))
+                        .clicked()
+                    {
+                        chat_groups.toggle_room_in_group(group_idx, room.room_id);
+                        dirty = true;
+                    }
+                }
             });
 
         dirty

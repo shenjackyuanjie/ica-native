@@ -206,6 +206,8 @@ pub struct BridgeState {
     pub prepend_scroll_fix: HashSet<RoomId>,
     /// 每帧记录每个房间消息列表的 content_size.y
     pub last_content_height: HashMap<RoomId, f32>,
+    /// 每个房间的消息列表滚动偏移。
+    pub message_scroll_offsets: HashMap<RoomId, f32>,
     /// 需要滚动到的目标消息 ID
     pub scroll_to_message_id: Option<String>,
 }
@@ -240,6 +242,7 @@ impl BridgeState {
             no_more_history: HashSet::new(),
             prepend_scroll_fix: HashSet::new(),
             last_content_height: HashMap::new(),
+            message_scroll_offsets: HashMap::new(),
             scroll_to_message_id: None,
         }
     }
