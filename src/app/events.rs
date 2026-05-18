@@ -23,6 +23,27 @@ impl IcaApp {
             .map(ToString::to_string)
     }
 
+    fn value_to_display_message(value: &JsonValue) -> Option<String> {
+        if let Some(msg) = value.as_str() {
+            return Some(msg.to_string());
+        }
+
+        let title = value.get("title").and_then(|value| value.as_str());
+        let message = value.get("message").and_then(|value| value.as_str());
+        match (title, message) {
+            (Some(title), Some(message)) if !title.is_empty() && !message.is_empty() => {
+                Some(format!("{title}: {message}"))
+            }
+            (_, Some(message)) if !message.is_empty() => Some(message.to_string()),
+            (Some(title), _) if !title.is_empty() => Some(title.to_string()),
+            _ => None,
+        }
+    }
+
+    fn first_payload_display_message(payload: &JsonValue) -> Option<String> {
+        Self::first_payload_value(payload).and_then(Self::value_to_display_message)
+    }
+
     fn json_preview(value: &JsonValue, max_chars: usize) -> String {
         let raw = value.to_string();
         if raw.len() > max_chars {
@@ -272,6 +293,19 @@ impl IcaApp {
                     }
                 }
             }
+            "sendAddRequest" => {
+                if let Some(value) = Self::first_payload_value(payload) {
+                    match Self::parse_join_request(value.clone(), None) {
+                        Ok(request) => {
+                            state.upsert_join_request(request);
+                            state.last_notice = Some("收到新的验证消息".to_string());
+                        }
+                        Err(e) => {
+                            state.last_error = Some(format!("sendAddRequest 解析失败: {}", e));
+                        }
+                    }
+                }
+            }
             "updateRoom" => {
                 if let Some(value) = Self::first_payload_value(payload) {
                     match serde_json::from_value::<Room>(value.clone()) {
@@ -323,6 +357,42 @@ impl IcaApp {
                     }
                 }
             }
+            "renewMessageURL" => {
+                if let Some(value) = Self::first_payload_value(payload) {
+                    let message_id = value
+                        .get("messageId")
+                        .and_then(|value| {
+                            value
+                                .as_str()
+                                .map(ToString::to_string)
+                                .or_else(|| value.as_i64().map(|id| id.to_string()))
+                        })
+                        .unwrap_or_default();
+                    let Some(url) = value.get("URL").and_then(|value| value.as_str()) else {
+                        return;
+                    };
+                    if message_id.is_empty() {
+                        return;
+                    }
+
+                    for messages in state.messages_by_room.values_mut() {
+                        if let Some(message) = messages
+                            .iter_mut()
+                            .find(|message| message.msg_id == message_id)
+                        {
+                            for file in &mut message.files {
+                                if file.file_type.eq_ignore_ascii_case("image")
+                                    || file.file_type.starts_with("image/")
+                                {
+                                    file.url = url.to_string();
+                                }
+                            }
+                            state.invalidate_message_height(&message_id);
+                            break;
+                        }
+                    }
+                }
+            }
             "setOnline" => {
                 state.socket_state = SocketState::Connected;
             }
@@ -334,20 +404,75 @@ impl IcaApp {
                     state.last_error = Some(msg.to_string());
                 }
             }
-            "messageSuccess" => {}
+            "setShutUp" => {
+                state.is_shut_up = Self::first_payload_value(payload)
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            }
+            "messageSuccess" => {
+                state.last_notice = Self::first_payload_display_message(payload);
+            }
             "messageError" => {
-                if let Some(value) = Self::first_payload_value(payload) {
-                    let msg = value.as_str().unwrap_or("消息发送失败");
-                    state.last_error = Some(msg.to_string());
+                if let Some(msg) = Self::first_payload_display_message(payload) {
+                    state.last_error = Some(msg);
+                } else {
+                    state.last_error = Some("消息发送失败".to_string());
                 }
+            }
+            "addMessageText" => {
+                if let Some(text) =
+                    Self::first_payload_value(payload).and_then(|value| value.as_str())
+                    && let Some(room_id) = state.selected_room_id
+                {
+                    let draft = state.draft_by_room.entry(room_id).or_default();
+                    draft.push_str(text);
+                }
+            }
+            "notifyMessage" => {
+                state.last_notice = Self::first_payload_display_message(payload);
             }
             "closeLoading" => {}
             "notifyError" => {
-                if let Some(value) = Self::first_payload_value(payload)
-                    && let Some(msg) = value.as_str()
-                {
-                    state.last_error = Some(msg.to_string());
+                if let Some(msg) = Self::first_payload_display_message(payload) {
+                    state.last_error = Some(msg);
                 }
+            }
+            "requestSetup" => {
+                if let Some(value) = Self::first_payload_value(payload) {
+                    state.setup_requested = Some(Self::json_preview(value, 512));
+                    state.last_error =
+                        Some("bridge 尚未登录，需要先在 Icalingua++/bridge 完成登录".to_string());
+                }
+            }
+            "fatal" => {
+                let message = Self::first_payload_display_message(payload)
+                    .unwrap_or_else(|| "bridge 发生致命错误".to_string());
+                state.fatal_error = Some(message.clone());
+                state.last_error = Some(message);
+                state.socket_state = SocketState::Failed;
+            }
+            "login-verify" => {
+                state.last_error = Some(
+                    "bridge 请求网页登录验证；可在“账号/登录设备”窗口重试或完成验证".to_string(),
+                );
+            }
+            "login-qrcodeLogin" => {
+                state.last_error = Some(
+                    "bridge 请求扫码登录；请查看 bridge 日志/二维码输出后在“账号/登录设备”继续"
+                        .to_string(),
+                );
+            }
+            "login-smsCodeVerify" => {
+                state.last_error =
+                    Some("bridge 请求短信验证码；可在“账号/登录设备”填写验证码".to_string());
+            }
+            "login-error" => {
+                state.last_error = Self::first_payload_display_message(payload)
+                    .or_else(|| Some("bridge 登录失败".to_string()));
+            }
+            "login-slider" => {
+                state.last_error =
+                    Some("bridge 请求滑块验证；可在“账号/登录设备”填写滑块 ticket".to_string());
             }
             "setSystemMessages" => {
                 if let Some(value) = Self::first_payload_value(payload) {
@@ -364,6 +489,16 @@ impl IcaApp {
             }
             "commandFailed" => {
                 state.last_error = Self::payload_message(payload);
+            }
+            "socketApiResponse" | "fileManagerResponse" => {
+                let response = Self::json_preview(payload, 1024);
+                state.last_socket_api_response = Some(response.clone());
+                let label = if event_name == "fileManagerResponse" {
+                    "文件管理"
+                } else {
+                    "Socket API"
+                };
+                state.last_notice = Some(format!("{}: {}", label, response));
             }
             _ => {}
         }

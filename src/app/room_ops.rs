@@ -1,0 +1,164 @@
+use crate::cfg::{self, ReEditDraftConflictMode};
+use crate::ica::IcaCommand;
+use crate::ica::types::{RoomId, room::Room};
+
+use super::{IcaApp, SelectedChatGroup};
+
+impl IcaApp {
+    pub fn request_room_messages(
+        &mut self,
+        bridge_idx: usize,
+        room_id: RoomId,
+        scroll_to_bottom: bool,
+    ) {
+        let Some(client) = self.ica_clients.get(bridge_idx) else {
+            return;
+        };
+
+        if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+            if scroll_to_bottom {
+                state.pending_message_scroll_to_bottom.insert(room_id);
+            } else {
+                state.pending_message_scroll_to_bottom.remove(&room_id);
+                state.message_scroll_to_bottom.remove(&room_id);
+            }
+        }
+
+        if let Err(e) = client.command_tx.send(IcaCommand::FetchMessages(room_id)) {
+            tracing::warn!("send fetchMessages command failed: {}", e);
+        }
+    }
+
+    pub fn request_older_messages(&mut self, bridge_idx: usize, room_id: RoomId) {
+        let Some(state) = self.bridge_states.get_mut(bridge_idx) else {
+            return;
+        };
+        if state.loading_older_messages.contains(&room_id)
+            || state.no_more_history.contains(&room_id)
+        {
+            return;
+        }
+        let offset = state.messages_by_room.get(&room_id).map_or(0, |m| m.len());
+        state.loading_older_messages.insert(room_id);
+
+        let Some(client) = self.ica_clients.get(bridge_idx) else {
+            return;
+        };
+        if let Err(e) = client
+            .command_tx
+            .send(IcaCommand::FetchOlderMessages { room_id, offset })
+        {
+            tracing::warn!("send fetchOlderMessages command failed: {}", e);
+            if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+                state.loading_older_messages.remove(&room_id);
+            }
+        }
+    }
+
+    pub fn request_system_messages(&self, bridge_idx: usize) {
+        let Some(client) = self.ica_clients.get(bridge_idx) else {
+            return;
+        };
+
+        if let Err(e) = client.command_tx.send(IcaCommand::GetSystemMsg) {
+            tracing::warn!("send getSystemMsg command failed: {}", e);
+        }
+    }
+
+    pub fn visible_rooms(&self, bridge_idx: usize) -> Vec<Room> {
+        let Some(state) = self.bridge_states.get(bridge_idx) else {
+            return Vec::new();
+        };
+
+        let query = state.room_search_query.trim().to_uppercase();
+        let group_filtered: Vec<Room> = if self.custom_chat.disable_chat_group {
+            state.rooms.clone()
+        } else {
+            match &self.selected_chat_group {
+                SelectedChatGroup::All => state.rooms.clone(),
+                SelectedChatGroup::Private => state
+                    .rooms
+                    .iter()
+                    .filter(|room| room.room_id > 0)
+                    .cloned()
+                    .collect(),
+                SelectedChatGroup::Custom(idx) => {
+                    self.chat_groups.visible_rooms_in_group(*idx, &state.rooms)
+                }
+            }
+        };
+
+        let mut rooms: Vec<_> = group_filtered
+            .into_iter()
+            .filter(|room| {
+                query.is_empty()
+                    || room.room_name.to_uppercase().contains(&query)
+                    || room.room_id.to_string().contains(query.as_str())
+            })
+            .collect();
+
+        rooms.sort_by(|a, b| {
+            let pinned_a = a.index > 0;
+            let pinned_b = b.index > 0;
+            pinned_b.cmp(&pinned_a).then(b.utime.cmp(&a.utime))
+        });
+        rooms
+    }
+
+    pub fn set_clear_search_on_room_select(&mut self, enabled: bool) {
+        self.clear_search_on_room_select = enabled;
+        cfg::update_and_save_cfg(|cfg| {
+            cfg.ui_setting.clear_search_on_room_select = enabled;
+        });
+    }
+
+    pub fn set_scroll_to_bottom_after_send(&mut self, enabled: bool) {
+        self.scroll_to_bottom_after_send = enabled;
+        cfg::update_and_save_cfg(|cfg| {
+            cfg.ui_setting.scroll_to_bottom_after_send = enabled;
+        });
+    }
+
+    pub fn set_reedit_draft_conflict_mode(&mut self, mode: ReEditDraftConflictMode) {
+        self.reedit_draft_conflict_mode = mode;
+        cfg::update_and_save_cfg(|cfg| {
+            cfg.ui_setting.reedit_draft_conflict_mode = mode;
+        });
+    }
+
+    pub fn select_active_room(&mut self, room_id: RoomId) {
+        let mut should_request = false;
+        let clear_search_on_room_select = self.clear_search_on_room_select;
+        let auto_read = self.custom_chat.auto_read_on_select;
+        let mut last_msg_id: Option<String> = None;
+        if let Some(state) = self.active_bridge_state_mut() {
+            state.selected_room_id = Some(room_id);
+            if clear_search_on_room_select {
+                state.room_search_query.clear();
+            }
+            should_request = state.requested_rooms.insert(room_id);
+            if auto_read {
+                last_msg_id = state
+                    .messages_by_room
+                    .get(&room_id)
+                    .and_then(|msgs| msgs.last())
+                    .map(|m| m.msg_id.clone());
+            }
+        }
+
+        if should_request && let Some(bridge_idx) = self.active_bridge_idx {
+            self.request_room_messages(bridge_idx, room_id, true);
+        }
+
+        if auto_read
+            && let Some(msg_id) = last_msg_id
+            && let Some(bridge_idx) = self.active_bridge_idx
+            && let Some(client) = self.ica_clients.get(bridge_idx)
+        {
+            let _ = client.command_tx.send(IcaCommand::ReportRead {
+                room_id,
+                message_id: msg_id,
+            });
+        }
+    }
+}

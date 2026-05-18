@@ -113,6 +113,10 @@ pub enum MessageAction {
         room_id: RoomId,
         message_id: String,
     },
+    Poke {
+        room_id: RoomId,
+        target_id: i64,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -211,7 +215,17 @@ pub struct BridgeState {
     pub socket_state: SocketState,
     pub auth_state: AuthState,
     pub online_data: OnlineData,
+    /// 当前会话/账号是否被禁言。
+    pub is_shut_up: bool,
     pub last_error: Option<String>,
+    /// 非错误类的最近提示，例如服务端通知、消息发送成功等。
+    pub last_notice: Option<String>,
+    /// 高级 Socket API 最近一次响应。
+    pub last_socket_api_response: Option<String>,
+    /// Bridge 要求登录/初始化时附带的账号信息。
+    pub setup_requested: Option<String>,
+    /// 服务端广播的致命错误。
+    pub fatal_error: Option<String>,
     pub last_event: Option<String>,
     /// 正在加载更旧历史消息的房间
     pub loading_older_messages: HashSet<RoomId>,
@@ -255,7 +269,12 @@ impl BridgeState {
             socket_state: SocketState::Connecting,
             auth_state: AuthState::Unknown,
             online_data: OnlineData::default(),
+            is_shut_up: false,
             last_error: None,
+            last_notice: None,
+            last_socket_api_response: None,
+            setup_requested: None,
+            fatal_error: None,
             last_event: None,
             loading_older_messages: HashSet::new(),
             no_more_history: HashSet::new(),
@@ -274,7 +293,7 @@ impl BridgeState {
         self.last_content_height.remove(&room_id);
     }
 
-    fn invalidate_message_height(&mut self, msg_id: &str) {
+    pub(super) fn invalidate_message_height(&mut self, msg_id: &str) {
         for heights in self.message_row_heights.values_mut() {
             heights.remove(msg_id);
         }

@@ -21,6 +21,8 @@ impl IcaApp {
             let auth_state = self.bridge_states[active_bridge_idx].auth_state;
             let online_data = self.bridge_states[active_bridge_idx].online_data.clone();
             let last_error = self.bridge_states[active_bridge_idx].last_error.clone();
+            let last_notice = self.bridge_states[active_bridge_idx].last_notice.clone();
+            let is_shut_up = self.bridge_states[active_bridge_idx].is_shut_up;
             let selected_room_id = self.bridge_states[active_bridge_idx].selected_room_id;
 
             if let Some(room_id) = selected_room_id {
@@ -38,6 +40,12 @@ impl IcaApp {
                     ui.label(format!("Bridge: {}", bridge_key));
                     ui.label(format!("Socket: {}", socket_state));
                     ui.label(format!("认证: {}", auth_state));
+                    if is_shut_up {
+                        ui.colored_label(egui::Color32::YELLOW, "禁言中");
+                    }
+                    if room_id < 0 && ui.button("群签到").clicked() {
+                        self.send_group_sign(room_id);
+                    }
                     if ui.button("重新拉取历史").clicked() {
                         self.request_room_messages(active_bridge_idx, room_id, false);
                     }
@@ -53,6 +61,9 @@ impl IcaApp {
 
             if let Some(last_error) = last_error {
                 ui.colored_label(egui::Color32::LIGHT_RED, last_error);
+            }
+            if let Some(last_notice) = last_notice {
+                ui.weak(last_notice);
             }
 
             ui.add_space(4.0);
@@ -487,6 +498,9 @@ impl IcaApp {
                         message_id,
                     } => {
                         self.send_renew_message(room_id, message_id);
+                    }
+                    MessageAction::Poke { room_id, target_id } => {
+                        self.send_group_poke(room_id, target_id);
                     }
                 }
             }

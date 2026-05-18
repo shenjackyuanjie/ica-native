@@ -21,4 +21,14 @@ pub struct AppOpenPage {
     pub raw_config: bool,
     /// 聊天分组编辑器
     pub chat_group_editor: bool,
+    /// 群/成员管理工具
+    pub group_tools: bool,
+    /// 账号/登录设备工具
+    pub account_tools: bool,
+    /// 文件/资源工具
+    pub file_tools: bool,
+    /// 消息检索/历史工具
+    pub message_tools: bool,
+    /// 会话设置工具
+    pub room_tools: bool,
 }

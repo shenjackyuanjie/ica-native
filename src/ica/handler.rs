@@ -18,6 +18,7 @@ use crate::ica::types::message::{FileAttachment, SendMessage};
 
 use super::client;
 use super::command::{IcaCommand, emit_ui_event, json_preview};
+use super::file_manager::call_file_manager;
 
 fn ack_payload_values(payload: &Payload) -> Vec<JsonValue> {
     match payload {
@@ -43,6 +44,7 @@ pub(super) async fn handle_command(
     client: &Client,
     event_tx: &Option<UnboundedSender<JsonValue>>,
     bridge_key: &str,
+    socket_url: &str,
     api_base_url: &str,
 ) {
     match command {
@@ -310,6 +312,99 @@ pub(super) async fn handle_command(
                 );
             }
         }
+        IcaCommand::SocketApiCall {
+            event,
+            args,
+            expect_ack,
+        } => {
+            if expect_ack {
+                let event_for_cb = event.clone();
+                let tx = event_tx.clone();
+                let bridge_id = bridge_key.to_string();
+                if let Err(e) = client
+                    .emit_with_ack(
+                        event.as_str(),
+                        args,
+                        Duration::from_secs(15),
+                        move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
+                            let tx = tx.clone();
+                            let bridge_id = bridge_id.clone();
+                            let event = event_for_cb.clone();
+                            Box::pin(async move {
+                                emit_ui_event(
+                                    &tx,
+                                    &bridge_id,
+                                    "socketApiResponse",
+                                    json!({
+                                        "event": event,
+                                        "ack": ack_payload_values(&payload),
+                                    }),
+                                );
+                            })
+                        },
+                    )
+                    .await
+                {
+                    emit_ui_event(
+                        event_tx,
+                        bridge_key,
+                        "commandFailed",
+                        json!({
+                            "kind": "socketApiCall",
+                            "event": event,
+                            "message": e.to_string(),
+                        }),
+                    );
+                }
+            } else if let Err(e) = client.emit(event.as_str(), args).await {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "commandFailed",
+                    json!({
+                        "kind": "socketApiCall",
+                        "event": event,
+                        "message": e.to_string(),
+                    }),
+                );
+            } else {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "socketApiResponse",
+                    json!({
+                        "event": event,
+                        "sent": true,
+                    }),
+                );
+            }
+        }
+        IcaCommand::FileManagerCall {
+            gin,
+            event,
+            args,
+            expect_ack,
+        } => {
+            match call_file_manager(
+                client, event_tx, bridge_key, socket_url, gin, event, args, expect_ack,
+            )
+            .await
+            {
+                Ok(()) => {}
+                Err(e) => {
+                    emit_ui_event(
+                        event_tx,
+                        bridge_key,
+                        "commandFailed",
+                        json!({
+                            "kind": "fileManagerCall",
+                            "gin": gin,
+                            "message": e,
+                        }),
+                    );
+                }
+            }
+        }
         IcaCommand::PinRoom { room_id, pin } => {
             if let Err(e) = client
                 .emit("pinRoom", vec![json!(room_id), json!(pin)])
@@ -402,6 +497,48 @@ pub(super) async fn handle_command(
                         "kind": "reportRead",
                         "roomId": room_id,
                         "message": e.to_string(),
+                    }),
+                );
+            }
+        }
+        IcaCommand::SetOnlineStatus(status) => {
+            if let Err(e) = client.emit("setOnlineStatus", json!(status)).await {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "commandFailed",
+                    json!({
+                        "kind": "setOnlineStatus",
+                        "message": e.to_string(),
+                    }),
+                );
+            }
+        }
+        IcaCommand::SendGroupSign { room_id } => {
+            if !client::send_room_sign_in(client, room_id).await {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "commandFailed",
+                    json!({
+                        "kind": "sendGroupSign",
+                        "roomId": room_id,
+                        "message": "sendGroupSign failed",
+                    }),
+                );
+            }
+        }
+        IcaCommand::SendGroupPoke { room_id, target_id } => {
+            if !client::send_poke(client, room_id, target_id).await {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "commandFailed",
+                    json!({
+                        "kind": "sendGroupPoke",
+                        "roomId": room_id,
+                        "targetId": target_id,
+                        "message": "sendGroupPoke failed",
                     }),
                 );
             }

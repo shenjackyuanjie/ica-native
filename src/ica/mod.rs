@@ -13,6 +13,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 pub mod client;
 mod command;
+mod file_manager;
 mod handler;
 use command::{
     ConnectionSignal, MAX_RECONNECT_ATTEMPTS, emit_ui_event, payload_to_json, reconnect_delay,
@@ -142,15 +143,27 @@ pub async fn main(
         builder = builder.on("setAllChatGroups", make_event_cb("setAllChatGroups"));
         builder = builder.on("setMessages", make_event_cb("setMessages"));
         builder = builder.on("handleRequest", make_event_cb("handleRequest"));
+        builder = builder.on("sendAddRequest", make_event_cb("sendAddRequest"));
         builder = builder.on("updateRoom", make_event_cb("updateRoom"));
         builder = builder.on("syncRead", make_event_cb("syncRead"));
         builder = builder.on("renewMessage", make_event_cb("renewMessage"));
+        builder = builder.on("renewMessageURL", make_event_cb("renewMessageURL"));
         builder = builder.on("setOnline", make_event_cb("setOnline"));
         builder = builder.on("setOffline", make_event_cb("setOffline"));
+        builder = builder.on("setShutUp", make_event_cb("setShutUp"));
         builder = builder.on("messageSuccess", make_event_cb("messageSuccess"));
         builder = builder.on("messageError", make_event_cb("messageError"));
+        builder = builder.on("addMessageText", make_event_cb("addMessageText"));
+        builder = builder.on("notifyMessage", make_event_cb("notifyMessage"));
         builder = builder.on("closeLoading", make_event_cb("closeLoading"));
         builder = builder.on("notifyError", make_event_cb("notifyError"));
+        builder = builder.on("requestSetup", make_event_cb("requestSetup"));
+        builder = builder.on("fatal", make_event_cb("fatal"));
+        builder = builder.on("login-verify", make_event_cb("login-verify"));
+        builder = builder.on("login-qrcodeLogin", make_event_cb("login-qrcodeLogin"));
+        builder = builder.on("login-smsCodeVerify", make_event_cb("login-smsCodeVerify"));
+        builder = builder.on("login-error", make_event_cb("login-error"));
+        builder = builder.on("login-slider", make_event_cb("login-slider"));
 
         let client = match builder.connect().await {
             Ok(client) => {
@@ -244,6 +257,7 @@ pub async fn main(
                         &client,
                         &event_tx,
                         &bridge_key,
+                        &bridge_cfg.url,
                         &http_api_url,
                     )
                     .await;

@@ -466,6 +466,13 @@ impl IcaApp {
                                     });
                                     ui.close();
                                 }
+                                if !is_self && ui.button("戳一戳").clicked() {
+                                    action = Some(MessageAction::Poke {
+                                        room_id,
+                                        target_id: message.sender_id,
+                                    });
+                                    ui.close();
+                                }
                                 if ui
                                     .button(if options.forward_selected {
                                         "移出多选"

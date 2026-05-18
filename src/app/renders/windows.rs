@@ -160,6 +160,8 @@ impl IcaApp {
         }
 
         // 在线状态
+        let mut online_status_open = self.open_page.online_status;
+        let mut apply_online_status = false;
         let active_bridge_info = self.active_bridge_state().map(|state| {
             (
                 state.bridge_key.clone(),
@@ -169,7 +171,7 @@ impl IcaApp {
             )
         });
         egui::Window::new("在线状态")
-            .open(&mut self.open_page.online_status)
+            .open(&mut online_status_open)
             .resizable(false)
             .show(&ctx, |ui| {
                 ui.heading("在线状态");
@@ -191,7 +193,15 @@ impl IcaApp {
                     OnlineMode::DoNotDisturb,
                     "请勿打扰",
                 );
+                ui.add_space(6.0);
+                if ui.button("应用到 bridge").clicked() {
+                    apply_online_status = true;
+                }
             });
+        self.open_page.online_status = online_status_open;
+        if apply_online_status {
+            self.apply_online_status();
+        }
 
         let verify_message_data = self
             .active_bridge_state()
@@ -326,8 +336,10 @@ impl IcaApp {
             });
 
         // Socketio 状态
+        let mut socketio_status_open = self.open_page.socketio_status;
+        let mut send_socket_api = false;
         egui::Window::new("Socketio 状态")
-            .open(&mut self.open_page.socketio_status)
+            .open(&mut socketio_status_open)
             .collapsible(true)
             .show(&ctx, |ui| {
                 ui.heading("Socketio 状态");
@@ -348,16 +360,90 @@ impl IcaApp {
                         ui.label(format!("已缓存会话: {}", state.messages_by_room.len()));
                         ui.label(format!("验证消息: {}", state.join_requests.len()));
                         ui.label(format!("QQ: {}", state.online_data.qqid));
+                        ui.label(format!(
+                            "禁言: {}",
+                            if state.is_shut_up { "是" } else { "否" }
+                        ));
                         if let Some(last_event) = &state.last_event {
                             ui.label(format!("最近事件: {}", last_event));
+                        }
+                        if let Some(last_notice) = &state.last_notice {
+                            ui.weak(format!("最近提示: {}", last_notice));
                         }
                         if let Some(last_error) = &state.last_error {
                             ui.colored_label(egui::Color32::LIGHT_RED, last_error);
                         }
+                        if let Some(setup_requested) = &state.setup_requested {
+                            ui.collapsing("登录/初始化请求", |ui| {
+                                ui.monospace(setup_requested);
+                            });
+                        }
+                        if let Some(fatal_error) = &state.fatal_error {
+                            ui.colored_label(
+                                egui::Color32::LIGHT_RED,
+                                format!("致命错误: {}", fatal_error),
+                            );
+                        }
                     });
                     ui.add_space(6.0);
                 }
+
+                ui.separator();
+                ui.collapsing("高级 Socket API", |ui| {
+                    let presets = Self::socket_api_presets();
+                    let selected_label = presets
+                        .get(self.socket_api_preset_idx)
+                        .map(|preset| preset.label)
+                        .unwrap_or("自定义");
+                    let mut selected_preset = self.socket_api_preset_idx;
+                    egui::ComboBox::from_label("预设")
+                        .selected_text(selected_label)
+                        .show_ui(ui, |ui| {
+                            for (idx, preset) in presets.iter().enumerate() {
+                                ui.selectable_value(&mut selected_preset, idx, preset.label);
+                            }
+                        });
+                    if selected_preset != self.socket_api_preset_idx {
+                        self.apply_socket_api_preset(selected_preset);
+                    }
+                    if let Some(preset) = presets.get(self.socket_api_preset_idx)
+                        && !preset.note.is_empty()
+                    {
+                        ui.weak(preset.note);
+                    }
+                    ui.add_sized(
+                        [ui.available_width(), 0.0],
+                        egui::TextEdit::singleline(&mut self.socket_api_event)
+                            .hint_text("事件名，例如 getGroupMembers"),
+                    );
+                    ui.add_sized(
+                        [ui.available_width(), 96.0],
+                        egui::TextEdit::multiline(&mut self.socket_api_args)
+                            .hint_text("JSON 参数数组，例如 [123456]"),
+                    );
+                    ui.checkbox(&mut self.socket_api_expect_ack, "等待 ack");
+                    if ui.button("发送").clicked() {
+                        send_socket_api = true;
+                    }
+                    if let Some(active) = self.active_bridge_state() {
+                        if let Some(response) = &active.last_socket_api_response {
+                            ui.separator();
+                            ui.label("最近响应");
+                            ui.monospace(response);
+                        }
+                    }
+                });
             });
+        self.open_page.socketio_status = socketio_status_open;
+        if send_socket_api {
+            self.send_socket_api_call();
+        }
+
+        self.render_group_tools_window(&ctx);
+        self.render_account_tools_window(&ctx);
+        self.render_file_tools_window(&ctx);
+        self.render_message_tools_window(&ctx);
+        self.render_room_tools_window(&ctx);
 
         // 聊天分组编辑器
         let chat_group_editor_open = self.open_page.chat_group_editor;

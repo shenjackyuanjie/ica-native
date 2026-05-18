@@ -48,6 +48,14 @@ pub enum IcaCommand {
         room_id: RoomId,
         message_id: String,
     },
+    SetOnlineStatus(u8),
+    SendGroupSign {
+        room_id: RoomId,
+    },
+    SendGroupPoke {
+        room_id: RoomId,
+        target_id: i64,
+    },
     StopFetchingHistory,
     HideMessage {
         room_id: RoomId,
@@ -61,6 +69,17 @@ pub enum IcaCommand {
     SendRawMessage {
         room_id: RoomId,
         content: JsonValue,
+    },
+    SocketApiCall {
+        event: String,
+        args: Vec<JsonValue>,
+        expect_ack: bool,
+    },
+    FileManagerCall {
+        gin: i64,
+        event: String,
+        args: Vec<JsonValue>,
+        expect_ack: bool,
     },
     /// 分块上传文件后发送消息
     SendFileMessage {
