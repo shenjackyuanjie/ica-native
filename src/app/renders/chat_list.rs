@@ -3,6 +3,17 @@ use crate::ica::types::room::Room;
 
 use super::format_message_content;
 
+fn visible_row_range(
+    viewport_top: f32,
+    viewport_bottom: f32,
+    row_height: f32,
+    row_count: usize,
+) -> std::ops::Range<usize> {
+    let start = ((viewport_top / row_height).floor() as isize - 2).max(0) as usize;
+    let end = ((viewport_bottom / row_height).ceil() as isize + 2).max(0) as usize;
+    start.min(row_count)..end.min(row_count)
+}
+
 impl IcaApp {
     pub fn render_chat_list_panel(&mut self, ui: &mut egui::Ui) {
         egui::Panel::left("聊天列表")
@@ -128,21 +139,14 @@ impl IcaApp {
                         return;
                     }
 
-                    let viewport_top = viewport.top();
-                    let viewport_bottom = viewport.bottom();
-
-                    let mut start = (viewport_top / row_height).floor() as isize - 2;
-                    let mut end = (viewport_bottom / row_height).ceil() as isize + 2;
-
-                    if start < 0 {
-                        start = 0;
-                    }
-                    if end < 0 {
-                        end = 0;
-                    }
-
-                    let start = start as usize;
-                    let end = (end as usize).min(room_count);
+                    let visible_range = visible_row_range(
+                        viewport.top(),
+                        viewport.bottom(),
+                        row_height,
+                        room_count,
+                    );
+                    let start = visible_range.start;
+                    let end = visible_range.end;
 
                     for (offset, &room_idx) in visible_room_indices[start..end].iter().enumerate() {
                         let idx = start + offset;
@@ -430,5 +434,20 @@ impl IcaApp {
             );
             preview_painter.galley(egui::pos2(preview_x, preview_y), galley, muted_color);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::visible_row_range;
+
+    #[test]
+    fn visible_range_is_empty_when_stale_scroll_offset_exceeds_shortened_list() {
+        assert_eq!(visible_row_range(2_500.0, 3_000.0, 54.0, 17), 17..17);
+    }
+
+    #[test]
+    fn visible_range_keeps_overscan_inside_list_bounds() {
+        assert_eq!(visible_row_range(108.0, 324.0, 54.0, 20), 0..8);
     }
 }
