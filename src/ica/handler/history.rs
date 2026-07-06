@@ -12,7 +12,17 @@ use serde_json::{Value as JsonValue, json};
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::{ack_payload_first, ack_payload_values};
-use crate::ica::command::{emit_ui_event, json_preview};
+use crate::ica::command::emit_ui_event;
+
+fn normalize_ack_list(mut values: Vec<JsonValue>) -> JsonValue {
+    if values.len() == 1 {
+        return match values.remove(0) {
+            JsonValue::Array(items) => JsonValue::Array(items),
+            value => JsonValue::Array(vec![value]),
+        };
+    }
+    JsonValue::Array(values)
+}
 
 pub(super) async fn fetch_messages(
     client: &Client,
@@ -37,19 +47,7 @@ pub(super) async fn fetch_messages(
                 let bridge_id = bridge_id.clone();
                 Box::pin(async move {
                     ack_received.store(true, Ordering::SeqCst);
-                    let ack_values = ack_payload_values(&payload);
-                    let messages = ack_values
-                        .first()
-                        .cloned()
-                        .unwrap_or_else(|| JsonValue::Array(Vec::new()));
-                    if !messages.is_array() {
-                        tracing::warn!(
-                            "fetchMessages ack format unexpected: bridge={} room_id={} raw={}",
-                            bridge_id,
-                            room_id,
-                            json_preview(&JsonValue::Array(ack_values), 512)
-                        );
-                    }
+                    let messages = normalize_ack_list(ack_payload_values(&payload));
 
                     emit_ui_event(
                         &tx,
@@ -128,11 +126,7 @@ pub(super) async fn fetch_older_messages(
                 let tx = tx.clone();
                 let bridge_id = bridge_id.clone();
                 Box::pin(async move {
-                    let ack_values = ack_payload_values(&payload);
-                    let messages = ack_values
-                        .first()
-                        .cloned()
-                        .unwrap_or_else(|| JsonValue::Array(Vec::new()));
+                    let messages = normalize_ack_list(ack_payload_values(&payload));
 
                     emit_ui_event(
                         &tx,
@@ -184,13 +178,15 @@ pub(super) async fn fetch_group_members(
                 let tx = tx.clone();
                 let bridge_id = bridge_id.clone();
                 Box::pin(async move {
+                    let members = normalize_ack_list(ack_payload_values(&payload));
+
                     emit_ui_event(
                         &tx,
                         &bridge_id,
                         "groupMembersResponse",
                         json!({
                             "roomId": room_id,
-                            "members": ack_payload_values(&payload),
+                            "members": members,
                         }),
                     );
                 })
@@ -274,5 +270,24 @@ pub(super) async fn get_system_messages(
                 }),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::normalize_ack_list;
+
+    #[test]
+    fn ack_list_accepts_flat_and_nested_socket_payloads() {
+        assert_eq!(
+            normalize_ack_list(vec![json!({"id": 1})]),
+            json!([{"id": 1}])
+        );
+        assert_eq!(
+            normalize_ack_list(vec![json!([{"id": 1}, {"id": 2}])]),
+            json!([{"id": 1}, {"id": 2}])
+        );
     }
 }
