@@ -36,44 +36,43 @@ impl IcaApp {
         }
         draft.clear();
 
-        if let Some(file) = pending_file {
-            let command = IcaCommand::SendFileMessage {
+        let mut outgoing_commands = Vec::new();
+        let mut content_attached = false;
+        if let Some(file) = &pending_file {
+            outgoing_commands.push(IcaCommand::SendFileMessage {
                 room_id,
                 content: content.clone(),
                 reply_to: reply_to.clone(),
-                file_name: file.name,
-                file_type: file.file_type,
-                file_data: file.data,
-            };
-            if let Err(e) = self.ica_clients[bridge_idx].command_tx.send(command) {
-                tracing::warn!("send sendFileMessage command failed: {}", e);
-                state.draft_by_room.insert(room_id, content);
-                if let Some(reply_to) = reply_to {
-                    state.reply_to_by_room.insert(room_id, reply_to);
-                }
-            } else if scroll_to_bottom_after_send {
-                state.pending_send_scroll_to_bottom.insert(room_id);
-            }
-            return;
+                file_name: file.name.clone(),
+                file_type: file.file_type.clone(),
+                file_data: file.data.clone(),
+            });
+            content_attached = true;
         }
 
-        let mut outgoing_commands = Vec::new();
         if pending_images.is_empty() {
-            outgoing_commands.push(IcaCommand::SendMessage(SendMessage::new(
-                content.clone(),
-                room_id,
-                reply_to.clone(),
-            )));
+            if !content_attached {
+                outgoing_commands.push(IcaCommand::SendMessage(SendMessage::new(
+                    content.clone(),
+                    room_id,
+                    reply_to.clone(),
+                )));
+            }
         } else {
             for (idx, image) in pending_images.iter().enumerate() {
+                let attach_metadata = !content_attached && idx == 0;
                 outgoing_commands.push(IcaCommand::SendImageMessage {
                     room_id,
-                    content: if idx == 0 {
+                    content: if attach_metadata {
                         content.clone()
                     } else {
                         String::new()
                     },
-                    reply_to: if idx == 0 { reply_to.clone() } else { None },
+                    reply_to: if attach_metadata {
+                        reply_to.clone()
+                    } else {
+                        None
+                    },
                     image_type: image.mime_type.clone(),
                     image_data: image.data.clone(),
                 });
@@ -96,6 +95,9 @@ impl IcaApp {
             }
             if !pending_images.is_empty() {
                 state.pending_image_by_room.insert(room_id, pending_images);
+            }
+            if let Some(pending_file) = pending_file {
+                state.pending_file_by_room.insert(room_id, pending_file);
             }
         } else if scroll_to_bottom_after_send {
             state.pending_send_scroll_to_bottom.insert(room_id);

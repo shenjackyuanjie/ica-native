@@ -154,6 +154,7 @@ impl IcaApp {
                 + if self.show_face_picker { 220.0 } else { 0.0 };
             let message_list_height = (ui.available_height() - composer_reserved_height).max(120.0);
             let mut pending_action = None;
+            let mut request_composer_focus = false;
             let pure_text_mode = self.custom_chat.hide_group_member_avatar;
             let message_layout_width =
                 (ui.available_width() - if forward_mode_active { 24.0 } else { 0.0 }).max(48.0);
@@ -477,6 +478,7 @@ impl IcaApp {
                 match action {
                     MessageAction::Reply { room_id, reply } => {
                         self.queue_reply(room_id, reply);
+                        request_composer_focus = true;
                     }
                     MessageAction::Delete {
                         room_id,
@@ -486,6 +488,7 @@ impl IcaApp {
                     }
                     MessageAction::ReEdit { room_id, content } => {
                         self.restore_deleted_message_to_draft(room_id, content);
+                        request_composer_focus = true;
                     }
                     MessageAction::SetReveal {
                         room_id,
@@ -499,6 +502,7 @@ impl IcaApp {
                         message_id,
                     } => {
                         self.copy_message_to_draft(room_id, message_id);
+                        request_composer_focus = true;
                     }
                     MessageAction::PlusOne {
                         room_id,
@@ -741,6 +745,7 @@ impl IcaApp {
                                                                 face_id
                                                             ));
                                                             self.show_face_picker = false;
+                                                            request_composer_focus = true;
                                                         }
                                                     }
                                                 });
@@ -781,6 +786,9 @@ impl IcaApp {
                                     .desired_rows(composer_rows)
                                     .hint_text("Enter 发送, Shift+Enter 换行"),
                             );
+                            if request_composer_focus {
+                                response.request_focus();
+                            }
                             let enter_no_mod = response.has_focus()
                                 && ui.input(|input| {
                                     input.key_pressed(egui::Key::Enter)
@@ -828,12 +836,17 @@ impl IcaApp {
                             if plus_btn.clicked() {
                                 choose_image = true;
                             }
+                            let can_send =
+                                !draft.trim().is_empty() || has_pending_image || has_pending_file;
                             should_send = enter_pressed
                                 || ui
-                                    .add_sized(
-                                        [button_width, control_height],
-                                        Button::new(RichText::new("↗").size(15.0)),
-                                    )
+                                    .add_enabled_ui(can_send, |ui| {
+                                        ui.add_sized(
+                                            [button_width, control_height],
+                                            Button::new(RichText::new("↗").size(15.0)),
+                                        )
+                                    })
+                                    .inner
                                     .clicked();
                         },
                     );
@@ -894,6 +907,7 @@ impl IcaApp {
             }
 
             if should_send {
+                self.show_face_picker = false;
                 self.send_current_message();
             }
 

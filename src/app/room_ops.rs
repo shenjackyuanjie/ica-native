@@ -130,6 +130,7 @@ impl IcaApp {
     }
 
     pub fn select_active_room(&mut self, room_id: RoomId) {
+        self.show_face_picker = false;
         let mut should_request = false;
         let clear_search_on_room_select = self.clear_search_on_room_select;
         let auto_read = self.custom_chat.auto_read_on_select;
