@@ -110,6 +110,8 @@ pub struct IcaApp {
     pub show_mention_picker: bool,
     /// @ 选择器搜索词。
     pub mention_search_query: String,
+    /// @ 选择器打开后，下一帧是否自动聚焦搜索框。
+    pub mention_search_focus_requested: bool,
     /// 是否由输入字符 @ 触发；选中成员时需替换该字符。
     pub mention_replace_trigger: bool,
     /// 图片查看器状态（与独立窗口共享）
@@ -390,6 +392,7 @@ impl IcaApp {
             show_face_picker: false,
             show_mention_picker: false,
             mention_search_query: String::new(),
+            mention_search_focus_requested: false,
             mention_replace_trigger: false,
             image_viewer: None,
             socket_api_event: String::new(),
@@ -435,6 +438,7 @@ impl IcaApp {
         self.show_face_picker = false;
         self.show_mention_picker = false;
         self.mention_search_query.clear();
+        self.mention_search_focus_requested = false;
         self.mention_replace_trigger = false;
     }
 

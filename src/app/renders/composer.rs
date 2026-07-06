@@ -40,6 +40,9 @@ impl IcaApp {
             composer_rows,
             mut request_composer_focus,
         } = params;
+        const MENTION_PANEL_HEIGHT: f32 = 220.0;
+        const MENTION_RESULTS_HEIGHT_RATIO: f32 = 0.70;
+
         let mut clear_reply = false;
         let mut clear_image = false;
         let mut clear_file = false;
@@ -192,7 +195,9 @@ impl IcaApp {
                 }
 
                 if self.show_mention_picker && room_id < 0 {
-                    let mention_panel_height = 220.0;
+                    let mention_panel_height = MENTION_PANEL_HEIGHT;
+                    let mention_results_height =
+                        mention_panel_height * MENTION_RESULTS_HEIGHT_RATIO;
                     let has_members = self.bridge_states[active_bridge_idx]
                         .group_members_by_room
                         .contains_key(&room_id);
@@ -214,15 +219,23 @@ impl IcaApp {
                                     }
                                     if ui.small_button("关闭").clicked() {
                                         self.show_mention_picker = false;
+                                        self.mention_search_focus_requested = false;
                                         self.mention_replace_trigger = false;
                                     }
                                 });
-                                ui.add(
+                                let mention_search_id =
+                                    egui::Id::new(("mention_search", active_bridge_idx, room_id));
+                                let search_response = ui.add(
                                     egui::TextEdit::singleline(
                                         &mut self.mention_search_query,
                                     )
+                                    .id(mention_search_id)
                                     .hint_text("搜索群名片、昵称或 QQ"),
                                 );
+                                if self.mention_search_focus_requested {
+                                    search_response.request_focus();
+                                    self.mention_search_focus_requested = false;
+                                }
 
                                 if loading && !has_members {
                                     ui.horizontal(|ui| {
@@ -255,7 +268,7 @@ impl IcaApp {
                                             active_bridge_idx,
                                             room_id,
                                         ))
-                                        .max_height(mention_panel_height - 62.0)
+                                        .max_height(mention_results_height)
                                         .show_rows(ui, 38.0, total_rows, |ui, rows| {
                                             for row in rows {
                                                 if row == 0 {
@@ -453,11 +466,13 @@ impl IcaApp {
                                 self.show_mention_picker = true;
                                 self.mention_replace_trigger = true;
                                 self.mention_search_query.clear();
+                                self.mention_search_focus_requested = true;
                                 self.show_face_picker = false;
                                 request_group_members = true;
                             } else if self.show_mention_picker && self.mention_replace_trigger {
                                 self.show_mention_picker = false;
                                 self.mention_search_query.clear();
+                                self.mention_search_focus_requested = false;
                                 self.mention_replace_trigger = false;
                             }
                         }
@@ -474,6 +489,7 @@ impl IcaApp {
                             self.show_mention_picker = !self.show_mention_picker;
                             self.mention_replace_trigger = false;
                             self.mention_search_query.clear();
+                            self.mention_search_focus_requested = self.show_mention_picker;
                             self.show_face_picker = false;
                             if self.show_mention_picker {
                                 request_group_members = true;
@@ -559,6 +575,7 @@ impl IcaApp {
             }
             self.show_mention_picker = false;
             self.mention_search_query.clear();
+            self.mention_search_focus_requested = false;
             self.mention_replace_trigger = false;
             ui.memory_mut(|memory| memory.request_focus(composer_id));
         }
@@ -626,6 +643,7 @@ impl IcaApp {
             self.show_face_picker = false;
             self.show_mention_picker = false;
             self.mention_search_query.clear();
+            self.mention_search_focus_requested = false;
             self.mention_replace_trigger = false;
             self.send_current_message();
         }
