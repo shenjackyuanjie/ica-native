@@ -7,6 +7,7 @@ pub mod cfg;
 pub mod face_data;
 pub mod ica;
 pub mod image_loader;
+pub mod memory_probe;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GITHUB_LINK: &str = "https://github.com/shenjackyuanjie/ica-native";
@@ -46,14 +47,18 @@ fn init_logging() {
 
 fn main() -> anyhow::Result<()> {
     init_logging();
+    memory_probe::log("main:start");
     egui_main()
 }
 
 fn egui_main() -> anyhow::Result<()> {
+    memory_probe::log("egui_main:start");
     cfg::init_cfg();
+    memory_probe::log("cfg:init");
 
     // 获取一个 cfg 快照
     let config = cfg::get_cfg_snapshot();
+    memory_probe::log("cfg:snapshot");
 
     let icon = {
         let img =
@@ -66,6 +71,7 @@ fn egui_main() -> anyhow::Result<()> {
             height: h,
         }
     };
+    memory_probe::log("icon:loaded");
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -83,13 +89,19 @@ fn egui_main() -> anyhow::Result<()> {
         Box::new(|cc| {
             // 安装 egui extra
             egui_extras::install_image_loaders(&cc.egui_ctx);
+            memory_probe::log("egui:image_loaders");
             // 安装图片统计加载器
             image_loader::install_tracking_image_loader(&cc.egui_ctx);
-            Ok(Box::new(app::IcaApp::new(cc)))
+            memory_probe::log("egui:tracking_loader");
+            let app = app::IcaApp::new(cc);
+            memory_probe::log("app:new");
+            Ok(Box::new(app))
         }),
     )
     .expect("error in eframe::run_native");
 
+    memory_probe::log("egui_main:exit");
     cfg::write_back_cfg()?;
+    memory_probe::log("cfg:write_back");
     Ok(())
 }
