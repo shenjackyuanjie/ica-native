@@ -137,6 +137,7 @@ impl IcaApp {
         let mut last_msg_id: Option<String> = None;
         if let Some(state) = self.active_bridge_state_mut() {
             state.selected_room_id = Some(room_id);
+            state.scroll_to_message_id = None;
             if clear_search_on_room_select {
                 state.room_search_query.clear();
             }

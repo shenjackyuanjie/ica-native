@@ -181,7 +181,9 @@ impl IcaApp {
 
             let scroll_to_target = self.bridge_states[active_bridge_idx]
                 .scroll_to_message_id
-                .take();
+                .clone();
+            let mut scroll_target_found = scroll_to_target.is_none();
+            let mut scroll_target_rendered = scroll_to_target.is_none();
             let saved_scroll_offset = self.bridge_states[active_bridge_idx]
                 .message_scroll_offsets
                 .get(&room_id)
@@ -191,6 +193,7 @@ impl IcaApp {
             let scroll_output = egui::ScrollArea::vertical()
                 .id_salt(("message_list", active_bridge_idx, room_id))
                 .vertical_scroll_offset(saved_scroll_offset)
+                .stick_to_bottom(true)
                 .max_height(message_list_height)
                 .show_viewport(ui, |ui, viewport| {
                     ui.set_min_width(ui.max_rect().width());
@@ -266,6 +269,7 @@ impl IcaApp {
                                     .iter()
                                     .position(|message| message.msg_id == target_id)
                             });
+                            scroll_target_found |= target_index.is_some();
 
                             let list_top = ui.cursor().min.y;
                             if let Some(target_index) = target_index
@@ -329,6 +333,7 @@ impl IcaApp {
                                         .push((message.msg_id.clone(), measured_height));
                                 }
                                 if is_scroll_target {
+                                    scroll_target_rendered = true;
                                     let message_rect = egui::Rect::from_min_size(
                                         egui::pos2(ui.min_rect().left(), before_y),
                                         egui::vec2(row_width, measured_height),
@@ -359,6 +364,15 @@ impl IcaApp {
                         ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
                     }
                 });
+
+            if scroll_to_target.is_some() && (scroll_target_rendered || !scroll_target_found) {
+                let bridge_state = &mut self.bridge_states[active_bridge_idx];
+                bridge_state.scroll_to_message_id = None;
+                if !scroll_target_found {
+                    bridge_state.last_notice =
+                        Some("引用消息尚未加载，请向上滚动加载更多历史消息".to_string());
+                }
+            }
 
             if !measured_message_heights.is_empty() {
                 let bridge_state = &mut self.bridge_states[active_bridge_idx];
