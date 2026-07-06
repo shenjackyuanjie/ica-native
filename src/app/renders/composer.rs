@@ -251,14 +251,7 @@ impl IcaApp {
                                     let filtered = members
                                         .iter()
                                         .enumerate()
-                                        .filter(|(_, member)| {
-                                            query.is_empty()
-                                                || member.user_id.to_string().contains(&query)
-                                                || member
-                                                    .display_name()
-                                                    .to_lowercase()
-                                                    .contains(&query)
-                                        })
+                                        .filter(|(_, member)| member.matches_search(&query))
                                         .map(|(index, _)| index)
                                         .collect::<Vec<_>>();
                                     let total_rows = filtered.len() + 1;

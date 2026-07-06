@@ -21,6 +21,14 @@ pub struct GroupMember {
     pub nickname: String,
     #[serde(default)]
     pub card: String,
+    #[serde(default)]
+    pub remark: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub level: String,
+    #[serde(default)]
+    pub role: String,
 }
 
 impl GroupMember {
@@ -30,6 +38,22 @@ impl GroupMember {
         } else {
             &self.card
         }
+    }
+
+    pub fn matches_search(&self, query: &str) -> bool {
+        query.is_empty()
+            || self.user_id.to_string().contains(query)
+            || [
+                self.display_name(),
+                self.nickname.as_str(),
+                self.card.as_str(),
+                self.remark.as_str(),
+                self.title.as_str(),
+                self.level.as_str(),
+                self.role.as_str(),
+            ]
+            .iter()
+            .any(|field| field.to_lowercase().contains(query))
     }
 }
 
