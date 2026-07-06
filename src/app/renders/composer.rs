@@ -293,18 +293,28 @@ impl IcaApp {
                                                     );
                                                     let label = format!(
                                                         "{}  ·  {}",
-                                                        member.display_name(),
+                                                        safe_mention_text(
+                                                            member.display_name(),
+                                                        ),
                                                         member.user_id
                                                     );
-                                                    if ui
-                                                        .selectable_label(false, label)
-                                                        .clicked()
-                                                    {
+                                                    let response = ui.add_sized(
+                                                        [
+                                                            ui.available_width(),
+                                                            32.0,
+                                                        ],
+                                                        egui::Button::selectable(
+                                                            false,
+                                                            egui::RichText::new(label)
+                                                                .size(14.0),
+                                                        ),
+                                                    );
+                                                    if response.clicked() {
                                                         selected_mention = Some((
                                                             member.user_id,
-                                                            member
-                                                                .display_name()
-                                                                .to_string(),
+                                                            safe_mention_text(
+                                                                member.display_name(),
+                                                            ),
                                                         ));
                                                     }
                                                 });
@@ -642,5 +652,78 @@ impl IcaApp {
         }
 
         self.handle_composer_drop(ui, active_bridge_idx, room_id);
+    }
+}
+
+fn safe_mention_text(text: &str) -> String {
+    const MAX_CHARS: usize = 48;
+
+    let mut output = String::new();
+    let mut last_was_space = false;
+    let mut truncated = false;
+
+    for ch in text.chars() {
+        if output.chars().count() >= MAX_CHARS {
+            truncated = true;
+            break;
+        }
+
+        let normalized = match ch {
+            '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' => None,
+            ch if ch.is_control() => Some(' '),
+            ch => Some(ch),
+        };
+
+        let Some(ch) = normalized else {
+            continue;
+        };
+
+        if ch.is_whitespace() {
+            if last_was_space {
+                continue;
+            }
+            output.push(' ');
+            last_was_space = true;
+        } else {
+            output.push(ch);
+            last_was_space = false;
+        }
+    }
+
+    let output = output.trim();
+    if output.is_empty() {
+        return "未命名成员".to_string();
+    }
+
+    if truncated {
+        format!("{output}…")
+    } else {
+        output.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_mention_text;
+
+    #[test]
+    fn mention_text_removes_layout_controls() {
+        assert_eq!(
+            safe_mention_text("Alice\n\u{202E}Bob\tCarol"),
+            "Alice Bob Carol"
+        );
+    }
+
+    #[test]
+    fn mention_text_limits_long_names() {
+        let sanitized = safe_mention_text("a".repeat(80).as_str());
+
+        assert_eq!(sanitized.chars().count(), 49);
+        assert!(sanitized.ends_with('…'));
+    }
+
+    #[test]
+    fn mention_text_uses_fallback_for_blank_names() {
+        assert_eq!(safe_mention_text("\n\t\u{202E}"), "未命名成员");
     }
 }
