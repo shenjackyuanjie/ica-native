@@ -2,6 +2,7 @@ mod central_panel;
 mod chat_list;
 mod composer;
 mod composer_drop;
+mod image_viewer;
 mod left_groups;
 mod message_card;
 mod top_panel;
