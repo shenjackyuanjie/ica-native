@@ -31,4 +31,6 @@ pub struct AppOpenPage {
     pub message_tools: bool,
     /// 会话设置工具
     pub room_tools: bool,
+    /// 全群自动签到
+    pub auto_sign: bool,
 }

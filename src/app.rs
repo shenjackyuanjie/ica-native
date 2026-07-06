@@ -14,6 +14,7 @@ use crate::{assets, ica::IcaClient};
 
 mod account_tools;
 mod actions;
+pub mod auto_sign;
 pub mod chat_group_editor;
 pub mod chat_groups;
 mod clipboard;
@@ -33,6 +34,7 @@ mod socket_api;
 pub mod state;
 
 use account_tools::AccountToolsState;
+use auto_sign::AutoSignState;
 use chat_groups::ChatGroups;
 use config_editer::ConfigEditer;
 use custom_chat::CustomChat;
@@ -134,6 +136,8 @@ pub struct IcaApp {
     pub message_tools: MessageToolsState,
     /// 会话设置工具状态
     pub room_tools: RoomToolsState,
+    /// 全群自动签到状态
+    pub auto_sign: AutoSignState,
 }
 
 impl IcaApp {
@@ -404,6 +408,7 @@ impl IcaApp {
             file_tools: FileToolsState::default(),
             message_tools: MessageToolsState::default(),
             room_tools: RoomToolsState::default(),
+            auto_sign: AutoSignState::default(),
         }
     }
 
@@ -568,6 +573,7 @@ impl eframe::App for IcaApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_socketio_events(ui.ctx());
+        self.tick_auto_sign(ui.ctx());
 
         // 检测 ESC 键取消选择
         if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape))

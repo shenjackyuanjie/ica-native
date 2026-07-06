@@ -60,6 +60,7 @@ impl IcaApp {
             let _ = ui.checkbox(&mut self.open_page.file_tools, "文件/资源工具");
             let _ = ui.checkbox(&mut self.open_page.message_tools, "消息检索/历史");
             let _ = ui.checkbox(&mut self.open_page.room_tools, "会话设置");
+            let _ = ui.checkbox(&mut self.open_page.auto_sign, "全群自动签到");
             let _ = ui.checkbox(&mut self.open_page.raw_config, "配置文件编辑");
         });
 
