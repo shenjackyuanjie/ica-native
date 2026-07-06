@@ -86,6 +86,18 @@ impl IcaApp {
             let room_id = selected_room_id.expect("selected_room_id checked above");
             let composer_id = egui::Id::new(("message_composer", active_bridge_idx, room_id));
             let self_id = self.bridge_states[active_bridge_idx].online_data.qqid;
+            let mut request_composer_focus = false;
+            if self.clipboard_paste_failed {
+                match Self::load_clipboard_image() {
+                    Ok(image) => {
+                        self.append_pending_images(active_bridge_idx, room_id, [image]);
+                        request_composer_focus = true;
+                    }
+                    Err(e) => {
+                        tracing::debug!("剪贴板无可用图片: {}", e);
+                    }
+                }
+            }
             let has_requested = self.bridge_states[active_bridge_idx]
                 .requested_rooms
                 .contains(&room_id);
@@ -159,7 +171,6 @@ impl IcaApp {
                 };
             let message_list_height = (ui.available_height() - composer_reserved_height).max(120.0);
             let mut pending_action = None;
-            let mut request_composer_focus = false;
             let pure_text_mode = self.custom_chat.hide_group_member_avatar;
             let message_layout_width =
                 (ui.available_width() - if forward_mode_active { 24.0 } else { 0.0 }).max(48.0);

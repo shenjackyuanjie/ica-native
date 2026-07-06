@@ -50,7 +50,7 @@ impl IcaApp {
         let mut should_send = false;
         let mut choose_image = false;
         let mut choose_file = false;
-        let mut paste_images = Vec::new();
+        let paste_images = Vec::new();
         let mut remove_pending_image_idx = None;
         let mut selected_mention = None::<(i64, String)>;
         let mut request_group_members = false;
@@ -459,14 +459,6 @@ impl IcaApp {
                                 self.show_mention_picker = false;
                                 self.mention_search_query.clear();
                                 self.mention_replace_trigger = false;
-                            }
-                        }
-                        if response.has_focus() && self.clipboard_paste_failed {
-                            match Self::load_clipboard_image() {
-                                Ok(image) => paste_images.push(image),
-                                Err(e) => {
-                                    tracing::debug!("剪贴板无可用图片: {}", e);
-                                }
                             }
                         }
                         let enter_pressed = enter_no_mod;
