@@ -185,27 +185,6 @@ impl IcaApp {
         ctx.set_fonts(fonts);
     }
 
-    /// 预注册所有表情图片字节数据并触发纹理解码
-    fn preload_faces(ctx: &egui::Context) {
-        let start = std::time::Instant::now();
-        for face_id in crate::face_data::all_face_ids() {
-            let bytes = crate::face_data::get_face(face_id).unwrap();
-            let uri = format!("bytes://face_{face_id}");
-            ctx.include_bytes(uri.clone(), bytes);
-            // 触发纹理解码
-            let _ = ctx.try_load_texture(
-                &uri,
-                egui::TextureOptions::default(),
-                egui::load::SizeHint::default(),
-            );
-        }
-        tracing::info!(
-            "预加载 {} 个表情纹理完成，耗时 {:?}",
-            crate::face_data::FACE_COUNT,
-            start.elapsed()
-        );
-    }
-
     fn setup_async_rt() -> Runtime {
         let config = crate::cfg::get_cfg_snapshot();
         tokio::runtime::Builder::new_multi_thread()
@@ -323,7 +302,6 @@ impl IcaApp {
 
     pub fn new(cc: &CreationContext<'_>) -> Self {
         Self::setup_fonts(&cc.egui_ctx);
-        Self::preload_faces(&cc.egui_ctx);
 
         let (ui_tx, ui_rx) = unbounded_channel::<JsonValue>();
 
