@@ -233,6 +233,10 @@ pub struct BridgeState {
     pub message_scroll_to_bottom: HashSet<RoomId>,
     pub pending_message_scroll_to_bottom: HashSet<RoomId>,
     pub pending_send_scroll_to_bottom: HashSet<RoomId>,
+    /// 上一帧位于消息列表底部附近的房间。
+    pub message_near_bottom: HashSet<RoomId>,
+    /// 用户上滑后当前会话收到的新消息数量。
+    pub new_message_counts: HashMap<RoomId, usize>,
     pub join_requests: Vec<JoinRequestRoom>,
     pub reply_to_by_room: HashMap<RoomId, ReplyMessage>,
     pub pending_image_by_room: HashMap<RoomId, Vec<PendingImage>>,
@@ -291,6 +295,8 @@ impl BridgeState {
             message_scroll_to_bottom: HashSet::new(),
             pending_message_scroll_to_bottom: HashSet::new(),
             pending_send_scroll_to_bottom: HashSet::new(),
+            message_near_bottom: HashSet::new(),
+            new_message_counts: HashMap::new(),
             join_requests: Vec::new(),
             reply_to_by_room: HashMap::new(),
             pending_image_by_room: HashMap::new(),
@@ -370,21 +376,24 @@ impl BridgeState {
         room.utime = message.time.timestamp_millis();
     }
 
-    pub fn upsert_message(&mut self, room_id: RoomId, message: Message) {
+    pub fn upsert_message(&mut self, room_id: RoomId, message: Message) -> bool {
         let msg_id = message.msg_id.clone();
         let messages = self.messages_by_room.entry(room_id).or_default();
-        if let Some(existing) = messages
+        let inserted = if let Some(existing) = messages
             .iter_mut()
             .find(|item| item.msg_id == message.msg_id)
         {
             *existing = message;
+            false
         } else {
             messages.push(message);
-        }
+            true
+        };
         if let Some(heights) = self.message_row_heights.get_mut(&room_id) {
             heights.remove(&msg_id);
         }
         self.invalidate_message_rows(room_id);
+        inserted
     }
 
     pub fn mark_message_deleted(&mut self, msg_id: &str) {

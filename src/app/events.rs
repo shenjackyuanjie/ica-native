@@ -185,6 +185,7 @@ impl IcaApp {
                             // 重置历史加载状态（新的 setMessages 意味着全量刷新）
                             state.no_more_history.remove(&room_id);
                             state.loading_older_messages.remove(&room_id);
+                            state.new_message_counts.remove(&room_id);
                             state.invalidate_message_layout(room_id);
                             state.messages_by_room.insert(room_id, messages);
                         }
@@ -247,11 +248,18 @@ impl IcaApp {
                             let should_scroll_to_bottom = new_message.msg.sender_id
                                 == state.online_data.qqid
                                 && state.pending_send_scroll_to_bottom.remove(&room_id);
+                            let is_selected_room = state.selected_room_id == Some(room_id);
+                            let should_follow_new_message =
+                                is_selected_room && state.message_near_bottom.contains(&room_id);
                             state.requested_rooms.insert(room_id);
                             state.sync_room_preview(room_id, &new_message.msg);
-                            state.upsert_message(room_id, new_message.msg);
-                            if should_scroll_to_bottom {
+                            let inserted = state.upsert_message(room_id, new_message.msg);
+                            if should_scroll_to_bottom || should_follow_new_message {
                                 state.message_scroll_to_bottom.insert(room_id);
+                                state.new_message_counts.remove(&room_id);
+                            } else if inserted && is_selected_room {
+                                let count = state.new_message_counts.entry(room_id).or_default();
+                                *count = count.saturating_add(1);
                             }
                         }
                         Err(e) => {

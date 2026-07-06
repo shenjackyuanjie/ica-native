@@ -438,9 +438,19 @@ impl IcaApp {
                 let offset_y = scroll_output.state.offset.y;
                 let visible_height = inner_rect.height();
                 let max_scroll = (content_size.y - visible_height).max(0.0);
-                user_scrolled_to_bottom = max_scroll < 1.0 || (max_scroll - offset_y) < 20.0;
+                user_scrolled_to_bottom = max_scroll < 1.0 || (max_scroll - offset_y) < 60.0;
                 // 滚动到顶部检测：offset_y 接近 0
                 user_scrolled_to_top = offset_y < 20.0 && content_size.y > visible_height;
+            }
+
+            {
+                let bridge_state = &mut self.bridge_states[active_bridge_idx];
+                if user_scrolled_to_bottom {
+                    bridge_state.message_near_bottom.insert(room_id);
+                    bridge_state.new_message_counts.remove(&room_id);
+                } else {
+                    bridge_state.message_near_bottom.remove(&room_id);
+                }
             }
 
             // 滚动到顶部时自动加载更旧的历史消息
@@ -474,7 +484,21 @@ impl IcaApp {
             // 未滚动到底部时，在滚动区域右下角悬浮显示 "↓" 按钮
             if !user_scrolled_to_bottom {
                 let scroll_rect = scroll_output.inner_rect;
-                let btn_size = egui::vec2(32.0, 32.0);
+                let new_message_count = self.bridge_states[active_bridge_idx]
+                    .new_message_counts
+                    .get(&room_id)
+                    .copied()
+                    .unwrap_or(0);
+                let count_text = if new_message_count > 99 {
+                    "99+".to_string()
+                } else {
+                    new_message_count.to_string()
+                };
+                let btn_size = if new_message_count > 0 {
+                    egui::vec2(52.0, 32.0)
+                } else {
+                    egui::vec2(32.0, 32.0)
+                };
                 let btn_pos = egui::pos2(
                     scroll_rect.right() - btn_size.x - 12.0,
                     scroll_rect.bottom() - btn_size.y - 12.0,
@@ -489,7 +513,12 @@ impl IcaApp {
                 .show(ui.ctx(), |ui| {
                     ui.set_min_size(btn_size);
                     ui.set_max_size(btn_size);
-                    let btn_text = egui::RichText::new("↓").size(18.0);
+                    let btn_text = egui::RichText::new(if new_message_count > 0 {
+                        format!("↓ {count_text}")
+                    } else {
+                        "↓".to_string()
+                    })
+                    .size(if new_message_count > 0 { 13.0 } else { 18.0 });
                     let btn = egui::Button::new(btn_text)
                         .corner_radius(16.0)
                         .min_size(btn_size);
@@ -497,6 +526,9 @@ impl IcaApp {
                         self.bridge_states[active_bridge_idx]
                             .message_scroll_to_bottom
                             .insert(room_id);
+                        self.bridge_states[active_bridge_idx]
+                            .new_message_counts
+                            .remove(&room_id);
                     }
                 });
             }
