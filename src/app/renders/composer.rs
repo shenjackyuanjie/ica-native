@@ -448,16 +448,18 @@ impl IcaApp {
                                 draft.pop();
                             }
                         }
-                        if response.changed()
-                            && room_id < 0
-                            && !self.ime_composing
-                            && saved_cursor_preceded_by(ui.ctx(), composer_id, draft, '@')
-                        {
-                            self.show_mention_picker = true;
-                            self.mention_replace_trigger = true;
-                            self.mention_search_query.clear();
-                            self.show_face_picker = false;
-                            request_group_members = true;
+                        if response.changed() && room_id < 0 && !self.ime_composing {
+                            if saved_cursor_preceded_by(ui.ctx(), composer_id, draft, '@') {
+                                self.show_mention_picker = true;
+                                self.mention_replace_trigger = true;
+                                self.mention_search_query.clear();
+                                self.show_face_picker = false;
+                                request_group_members = true;
+                            } else if self.show_mention_picker && self.mention_replace_trigger {
+                                self.show_mention_picker = false;
+                                self.mention_search_query.clear();
+                                self.mention_replace_trigger = false;
+                            }
                         }
                         if response.has_focus() && self.clipboard_paste_failed {
                             match Self::load_clipboard_image() {
@@ -630,6 +632,9 @@ impl IcaApp {
 
         if should_send {
             self.show_face_picker = false;
+            self.show_mention_picker = false;
+            self.mention_search_query.clear();
+            self.mention_replace_trigger = false;
             self.send_current_message();
         }
 
