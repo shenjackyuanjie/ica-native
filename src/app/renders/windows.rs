@@ -532,11 +532,54 @@ impl IcaApp {
                     return;
                 }
 
+                let (escape, previous, next) = ui.ctx().input(|input| {
+                    (
+                        input.key_pressed(egui::Key::Escape),
+                        input.key_pressed(egui::Key::ArrowLeft) && !input.modifiers.ctrl,
+                        input.key_pressed(egui::Key::ArrowRight) && !input.modifiers.ctrl,
+                    )
+                });
+                if escape {
+                    viewer_state
+                        .lock()
+                        .unwrap()
+                        .closed
+                        .store(true, Ordering::Relaxed);
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    return;
+                }
+                if previous {
+                    viewer_state.lock().unwrap().navigate(-1);
+                } else if next {
+                    viewer_state.lock().unwrap().navigate(1);
+                }
+
                 let url = viewer_state.lock().unwrap().url.clone();
 
                 // 顶部工具栏
                 egui::Panel::top("image_viewer_toolbar").show_inside(ui, |ui| {
                     ui.horizontal(|ui| {
+                        let (image_index, image_count) = {
+                            let state = viewer_state.lock().unwrap();
+                            (state.image_index, state.images.len())
+                        };
+                        if ui
+                            .add_enabled(image_index > 0, egui::Button::new("← 上一张"))
+                            .clicked()
+                        {
+                            viewer_state.lock().unwrap().navigate(-1);
+                        }
+                        if ui
+                            .add_enabled(
+                                image_index + 1 < image_count,
+                                egui::Button::new("下一张 →"),
+                            )
+                            .clicked()
+                        {
+                            viewer_state.lock().unwrap().navigate(1);
+                        }
+                        ui.weak(format!("{} / {}", image_index + 1, image_count));
+                        ui.separator();
                         // 适应窗口
                         if ui.button("⊡ 适应窗口").clicked() {
                             viewer_state.lock().unwrap().fit_to_window();
@@ -598,18 +641,26 @@ impl IcaApp {
                                 }
                             }
                         }
+                        ui.separator();
+                        if ui.button("关闭 (Esc)").clicked() {
+                            viewer_state
+                                .lock()
+                                .unwrap()
+                                .closed
+                                .store(true, Ordering::Relaxed);
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
                     });
                 });
 
                 // 图片内容区域
                 egui::CentralPanel::default().show_inside(ui, |ui| {
                     // 键盘缩放: Ctrl+↑/↓
-                    let (ctrl_up, ctrl_down, escape) = ui.input(|i| {
+                    let (ctrl_up, ctrl_down) = ui.input(|i| {
                         let ctrl = i.modifiers.ctrl;
                         (
                             ctrl && i.key_pressed(egui::Key::ArrowUp),
                             ctrl && i.key_pressed(egui::Key::ArrowDown),
-                            i.key_pressed(egui::Key::Escape),
                         )
                     });
                     if ctrl_up {
@@ -618,15 +669,6 @@ impl IcaApp {
                     if ctrl_down {
                         viewer_state.lock().unwrap().zoom_out();
                     }
-                    if escape {
-                        viewer_state
-                            .lock()
-                            .unwrap()
-                            .closed
-                            .store(true, Ordering::Relaxed);
-                        return;
-                    }
-
                     match ui.ctx().try_load_texture(
                         &url,
                         egui::TextureOptions::default(),

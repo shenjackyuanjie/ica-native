@@ -6,7 +6,7 @@ use egui::{Button, Image, Label, RichText};
 use super::message_card::MessageRenderOptions;
 use super::{
     estimate_composer_rows, estimate_message_row_height, format_message_content,
-    format_pending_size, insert_text_at_saved_cursor, message_visible_range,
+    format_pending_size, insert_text_at_saved_cursor, is_image_file_type, message_visible_range,
 };
 
 impl IcaApp {
@@ -588,8 +588,19 @@ impl IcaApp {
                         self.begin_forward_selection(room_id, message_id, true);
                     }
                     MessageAction::PreviewImage { url } => {
+                        let images = self.bridge_states[active_bridge_idx]
+                            .messages_by_room
+                            .get(&room_id)
+                            .into_iter()
+                            .flatten()
+                            .flat_map(|message| &message.files)
+                            .filter(|file| {
+                                is_image_file_type(&file.file_type) && !file.url.is_empty()
+                            })
+                            .map(|file| file.url.clone())
+                            .collect();
                         self.image_viewer = Some(std::sync::Arc::new(std::sync::Mutex::new(
-                            crate::app::state::ImageViewerState::new(url),
+                            crate::app::state::ImageViewerState::with_images(url, images),
                         )));
                     }
                     MessageAction::ScrollToMessage { msg_id } => {
@@ -621,7 +632,8 @@ impl IcaApp {
             let mut choose_file = false;
             let mut paste_images = Vec::new();
             let mut remove_pending_image_idx = None;
-            let mut open_pending_image = None::<(String, std::sync::Arc<[u8]>)>;
+            let mut open_pending_image =
+                None::<(String, Vec<(String, std::sync::Arc<[u8]>)>)>;
             ui.allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), composer_reserved_height),
                 egui::Layout::top_down(egui::Align::Min),
@@ -679,10 +691,24 @@ impl IcaApp {
                                                     .sense(egui::Sense::click()),
                                                 );
                                                 if response.clicked() {
-                                                    open_pending_image = Some((
-                                                        preview_uri.clone(),
-                                                        image.data.clone(),
-                                                    ));
+                                                    let gallery = pending_images
+                                                        .iter()
+                                                        .map(|pending| {
+                                                            (
+                                                                format!(
+                                                                    "bytes://pending_image/{}/{}/{}-{}-{}",
+                                                                    active_bridge_idx,
+                                                                    room_id,
+                                                                    pending.preview_id,
+                                                                    pending.data.len(),
+                                                                    pending.name
+                                                                ),
+                                                                pending.data.clone(),
+                                                            )
+                                                        })
+                                                        .collect();
+                                                    open_pending_image =
+                                                        Some((preview_uri.clone(), gallery));
                                                 }
                                                 response.on_hover_text(format!(
                                                     "{}\n{} · {}",
@@ -954,10 +980,16 @@ impl IcaApp {
                 self.append_pending_images(active_bridge_idx, room_id, paste_images);
             }
 
-            if let Some((preview_uri, preview_bytes)) = open_pending_image {
-                ui.ctx().include_bytes(preview_uri.clone(), preview_bytes);
+            if let Some((preview_uri, gallery)) = open_pending_image {
+                let image_urls = gallery
+                    .iter()
+                    .map(|(url, _)| url.clone())
+                    .collect::<Vec<_>>();
+                for (url, bytes) in gallery {
+                    ui.ctx().include_bytes(url, bytes);
+                }
                 self.image_viewer = Some(std::sync::Arc::new(std::sync::Mutex::new(
-                    crate::app::state::ImageViewerState::new(preview_uri),
+                    crate::app::state::ImageViewerState::with_images(preview_uri, image_urls),
                 )));
             }
 

@@ -17,8 +17,12 @@ use super::{ChatGroups, SelectedChatGroup};
 /// 图片查看器状态（通过 Arc<Mutex<>> 在主窗口和 viewport 间共享）
 #[derive(Debug)]
 pub struct ImageViewerState {
-    /// 图片 URL
+    /// 当前图片 URL
     pub url: String,
+    /// 当前会话中可连续浏览的图片 URL。
+    pub images: Vec<String>,
+    /// 当前图片在 images 中的位置。
+    pub image_index: usize,
     /// 缩放比例 (1.0 = 适应窗口)
     pub zoom: f32,
     /// 平移偏移量（像素）
@@ -33,14 +37,37 @@ pub struct ImageViewerState {
 
 impl ImageViewerState {
     pub fn new(url: String) -> Self {
+        Self::with_images(url.clone(), vec![url])
+    }
+
+    pub fn with_images(url: String, mut images: Vec<String>) -> Self {
+        if images.is_empty() {
+            images.push(url.clone());
+        }
+        let image_index = images.iter().position(|item| item == &url).unwrap_or(0);
+        let url = images[image_index].clone();
         Self {
             url,
+            images,
+            image_index,
             zoom: 1.0,
             pan_offset: egui::Vec2::ZERO,
             closed: AtomicBool::new(false),
             base_scale: 1.0,
             request_original_size: false,
         }
+    }
+
+    pub fn navigate(&mut self, offset: isize) -> bool {
+        let next_index = self.image_index as isize + offset;
+        if !(0..self.images.len() as isize).contains(&next_index) {
+            return false;
+        }
+        self.image_index = next_index as usize;
+        self.url = self.images[self.image_index].clone();
+        self.fit_to_window();
+        self.request_original_size = false;
+        true
     }
 
     /// 适应窗口大小（重置缩放和偏移）
@@ -518,5 +545,26 @@ impl BridgeState {
         } else {
             self.forward_selected_message_ids.push(message_id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ImageViewerState;
+
+    #[test]
+    fn image_viewer_navigates_within_gallery_and_resets_transform() {
+        let mut viewer = ImageViewerState::with_images(
+            "second".to_string(),
+            vec!["first".to_string(), "second".to_string()],
+        );
+        viewer.zoom = 3.0;
+        viewer.pan_offset = egui::vec2(12.0, 8.0);
+
+        assert!(viewer.navigate(-1));
+        assert_eq!(viewer.url, "first");
+        assert_eq!(viewer.zoom, 1.0);
+        assert_eq!(viewer.pan_offset, egui::Vec2::ZERO);
+        assert!(!viewer.navigate(-1));
     }
 }
