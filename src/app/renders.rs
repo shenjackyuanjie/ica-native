@@ -6,6 +6,7 @@ mod top_panel;
 mod windows;
 
 use std::borrow::Cow;
+use std::ops::Range;
 
 use crate::app::MessageRowLayout;
 
@@ -51,6 +52,54 @@ pub(super) fn is_image_file_type(file_type: &str) -> bool {
         || file_type
             .get(..6)
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"))
+}
+
+pub(super) fn replace_text_char_range(
+    text: &mut String,
+    range: Range<usize>,
+    replacement: &str,
+) -> usize {
+    let char_count = text.chars().count();
+    let start = range.start.min(char_count);
+    let end = range.end.clamp(start, char_count);
+    let start_byte = text
+        .char_indices()
+        .nth(start)
+        .map_or(text.len(), |(idx, _)| idx);
+    let end_byte = text
+        .char_indices()
+        .nth(end)
+        .map_or(text.len(), |(idx, _)| idx);
+    text.replace_range(start_byte..end_byte, replacement);
+    start + replacement.chars().count()
+}
+
+pub(super) fn insert_text_at_saved_cursor(
+    ctx: &egui::Context,
+    id: egui::Id,
+    text: &mut String,
+    replacement: &str,
+) {
+    let mut edit_state = egui::widgets::text_edit::TextEditState::load(ctx, id);
+    let selected_range = edit_state
+        .as_ref()
+        .and_then(|state| state.cursor.char_range())
+        .map(|range| range.as_sorted_char_range());
+    let new_cursor = if let Some(range) = selected_range {
+        replace_text_char_range(text, range, replacement)
+    } else {
+        text.push_str(replacement);
+        text.chars().count()
+    };
+
+    if let Some(mut state) = edit_state.take() {
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(new_cursor),
+            )));
+        state.store(ctx, id);
+    }
 }
 
 pub(super) fn estimate_composer_rows(text: &str, input_width: f32) -> usize {
@@ -196,7 +245,7 @@ pub(super) fn message_visible_range(
 mod tests {
     use std::borrow::Cow;
 
-    use super::format_message_content;
+    use super::{format_message_content, replace_text_char_range};
 
     #[test]
     fn plain_message_uses_borrowed_fast_path() {
@@ -219,5 +268,25 @@ mod tests {
         let content = "你好 <IcalinguaAt qq=10001>Alice";
 
         assert_eq!(format_message_content(content), content);
+    }
+
+    #[test]
+    fn insertion_uses_character_cursor_for_unicode_text() {
+        let mut content = "你ab好".to_string();
+
+        let cursor = replace_text_char_range(&mut content, 1..1, "[Face: 1]");
+
+        assert_eq!(content, "你[Face: 1]ab好");
+        assert_eq!(cursor, 10);
+    }
+
+    #[test]
+    fn insertion_replaces_selected_characters() {
+        let mut content = "你ab好".to_string();
+
+        let cursor = replace_text_char_range(&mut content, 1..3, "表情");
+
+        assert_eq!(content, "你表情好");
+        assert_eq!(cursor, 3);
     }
 }

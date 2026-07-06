@@ -6,7 +6,7 @@ use egui::{Button, Image, Label, RichText};
 use super::message_card::MessageRenderOptions;
 use super::{
     estimate_composer_rows, estimate_message_row_height, format_message_content,
-    format_pending_size, message_visible_range,
+    format_pending_size, insert_text_at_saved_cursor, message_visible_range,
 };
 
 impl IcaApp {
@@ -88,6 +88,7 @@ impl IcaApp {
             }
 
             let room_id = selected_room_id.expect("selected_room_id checked above");
+            let composer_id = egui::Id::new(("message_composer", active_bridge_idx, room_id));
             let self_id = self.bridge_states[active_bridge_idx].online_data.qqid;
             let has_requested = self.bridge_states[active_bridge_idx]
                 .requested_rooms
@@ -775,10 +776,14 @@ impl IcaApp {
                                                                 .draft_by_room
                                                                 .entry(room_id)
                                                                 .or_default();
-                                                            draft.push_str(&format!(
-                                                                "[Face: {}]",
-                                                                face_id
-                                                            ));
+                                                            let face_markup =
+                                                                format!("[Face: {}]", face_id);
+                                                            insert_text_at_saved_cursor(
+                                                                ui.ctx(),
+                                                                composer_id,
+                                                                draft,
+                                                                &face_markup,
+                                                            );
                                                             self.show_face_picker = false;
                                                             request_composer_focus = true;
                                                         }
@@ -818,6 +823,7 @@ impl IcaApp {
                             let response = ui.add_sized(
                                 [input_width, control_height],
                                 egui::TextEdit::multiline(draft)
+                                    .id(composer_id)
                                     .desired_rows(composer_rows)
                                     .hint_text("Enter 发送, Shift+Enter 换行"),
                             );
