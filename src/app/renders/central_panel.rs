@@ -679,24 +679,38 @@ impl IcaApp {
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
                                 egui::Frame::group(ui.style()).show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.weak("选择表情");
+                                        if ui.small_button("关闭").clicked() {
+                                            self.show_face_picker = false;
+                                        }
+                                    });
+                                    let face_size = 32.0;
+                                    let button_size = 40.0;
+                                    let spacing = 4.0;
+                                    let content_width =
+                                        (ui.available_width() - 16.0).max(button_size);
+                                    let cols = ((content_width + spacing) / (button_size + spacing))
+                                        .max(1.0)
+                                        as usize;
+                                    let total_rows = crate::face_data::FACE_COUNT.div_ceil(cols);
                                     egui::ScrollArea::vertical()
-                                        .max_height(face_panel_height - 10.0)
-                                        .show(ui, |ui| {
-                                            let face_size = 32.0;
-                                            let spacing = 4.0;
-                                            let avail = ui.available_width();
-                                            // Button 有内边距，实际每个按钮宽度约为 face_size + 2 * button_padding
-                                            let button_padding =
-                                                ui.spacing().button_padding.x * 2.0;
-                                            let cell_width = face_size + button_padding + spacing;
-                                            let cols =
-                                                ((avail + spacing) / cell_width).max(1.0) as usize;
-                                            egui::Grid::new("face_picker_grid")
-                                                .spacing([spacing, spacing])
-                                                .show(ui, |ui| {
-                                                    for (i, face_id) in
-                                                        crate::face_data::all_face_ids().enumerate()
-                                                    {
+                                        .id_salt(("face_picker", active_bridge_idx, room_id))
+                                        .max_height(face_panel_height - 30.0)
+                                        .show_rows(ui, button_size, total_rows, |ui, row_range| {
+                                            ui.spacing_mut().item_spacing.x = spacing;
+
+                                            for row in row_range {
+                                                ui.horizontal(|ui| {
+                                                    let start = row * cols;
+                                                    let end = (start + cols)
+                                                        .min(crate::face_data::FACE_COUNT);
+                                                    for index in start..end {
+                                                        let Some(face_id) =
+                                                            crate::face_data::face_id_at(index)
+                                                        else {
+                                                            continue;
+                                                        };
                                                         let bytes =
                                                             crate::face_data::get_face(face_id)
                                                                 .unwrap();
@@ -705,7 +719,10 @@ impl IcaApp {
                                                             .fit_to_exact_size(egui::vec2(
                                                                 face_size, face_size,
                                                             ));
-                                                        let btn = ui.add(Button::image(img));
+                                                        let btn = ui.add_sized(
+                                                            [button_size, button_size],
+                                                            Button::image(img),
+                                                        );
                                                         let clicked = btn.clicked();
                                                         let name = crate::face_data::get_face_name(
                                                             face_id,
@@ -725,11 +742,9 @@ impl IcaApp {
                                                             ));
                                                             self.show_face_picker = false;
                                                         }
-                                                        if (i + 1) % cols == 0 {
-                                                            ui.end_row();
-                                                        }
                                                     }
                                                 });
+                                            }
                                         });
                                 });
                             },

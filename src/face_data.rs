@@ -409,6 +409,11 @@ pub fn all_face_ids() -> impl Iterator<Item = u16> {
     FACE_DATA.iter().map(|(id, _)| *id)
 }
 
+/// 按展示顺序获取表情 ID，用于虚拟化表情选择器。
+pub fn face_id_at(index: usize) -> Option<u16> {
+    FACE_DATA.get(index).map(|(id, _)| *id)
+}
+
 /// 可用表情总数
 pub const FACE_COUNT: usize = 391;
 
