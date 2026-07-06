@@ -246,8 +246,11 @@ impl IcaApp {
         self.bridge_states[bridge_idx].clear_forward_selection();
     }
 
-    pub fn save_chat_groups(&self) {
+    pub fn save_chat_groups(&mut self) {
         let groups = self.chat_groups.clone();
+        if let Some(state) = self.active_bridge_state_mut() {
+            state.chat_groups = groups.clone();
+        }
         cfg::update_and_save_cfg(|cfg| {
             cfg.chat_groups = groups;
         });

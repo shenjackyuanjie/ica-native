@@ -12,6 +12,8 @@ use crate::ica::types::{
     room::{JoinRequestRoom, Room},
 };
 
+use super::{ChatGroups, SelectedChatGroup};
+
 /// 图片查看器状态（通过 Arc<Mutex<>> 在主窗口和 viewport 间共享）
 #[derive(Debug)]
 pub struct ImageViewerState {
@@ -228,6 +230,10 @@ pub struct MessageRowLayout {
 /// 这样切换 bridge 时不需要把全局状态来回覆写。
 pub struct BridgeState {
     pub bridge_key: String,
+    /// 由当前 bridge 同步下来的聊天分组，避免多连接事件互相覆盖。
+    pub chat_groups: ChatGroups,
+    /// 每个 bridge 独立保存当前选中的聊天分组。
+    pub selected_chat_group: SelectedChatGroup,
     pub rooms: Vec<Room>,
     pub messages_by_room: HashMap<RoomId, Vec<Message>>,
     pub message_scroll_to_bottom: HashSet<RoomId>,
@@ -287,9 +293,11 @@ pub struct BridgeState {
 }
 
 impl BridgeState {
-    pub fn new(bridge_key: String) -> Self {
+    pub fn new(bridge_key: String, chat_groups: ChatGroups) -> Self {
         Self {
             bridge_key,
+            chat_groups,
+            selected_chat_group: SelectedChatGroup::All,
             rooms: Vec::new(),
             messages_by_room: HashMap::new(),
             message_scroll_to_bottom: HashSet::new(),

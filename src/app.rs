@@ -339,7 +339,10 @@ impl IcaApp {
                 bridge_key: bridge_key.clone(),
                 command_tx,
             });
-            bridge_states.push(BridgeState::new(bridge_key.clone()));
+            bridge_states.push(BridgeState::new(
+                bridge_key.clone(),
+                config.chat_groups.clone(),
+            ));
 
             let ui_tx_clone = ui_tx.clone();
             runtime.spawn(async move {
@@ -402,6 +405,27 @@ impl IcaApp {
             .and_then(|idx| self.bridge_states.get_mut(idx))
     }
 
+    pub fn switch_active_bridge(&mut self, bridge_idx: usize) {
+        if self.active_bridge_idx == Some(bridge_idx) || bridge_idx >= self.bridge_states.len() {
+            return;
+        }
+
+        if let Some(previous_idx) = self.active_bridge_idx
+            && let Some(previous) = self.bridge_states.get_mut(previous_idx)
+        {
+            previous.chat_groups = self.chat_groups.clone();
+            previous.selected_chat_group = self.selected_chat_group.clone();
+        }
+
+        let next = &self.bridge_states[bridge_idx];
+        self.chat_groups = next.chat_groups.clone();
+        self.selected_chat_group = next.selected_chat_group.clone();
+        self.active_bridge_idx = Some(bridge_idx);
+        self.ensure_selected_chat_group_valid();
+        self.chat_list_scroll_target = ChatListScrollTarget::Top;
+        self.show_face_picker = false;
+    }
+
     fn poll_socketio_events(&mut self, ctx: &egui::Context) {
         const MAX_EVENTS_PER_FRAME: usize = 128;
         let mut processed = 0;
@@ -428,17 +452,20 @@ impl IcaApp {
                 continue;
             };
 
-            // setAllChatGroups 需要写入 IcaApp 而非 BridgeState
             if event_name == "setAllChatGroups" {
                 if let Some(value) = payload.as_array().and_then(|values| values.first()) {
                     match <Vec<chat_groups::ChatGroup> as serde::Deserialize>::deserialize(value) {
                         Ok(groups) => {
-                            self.chat_groups.groups = groups;
-                            // 确保 selected_chat_group 的索引仍然有效
-                            if let SelectedChatGroup::Custom(idx) = &self.selected_chat_group {
-                                if *idx >= self.chat_groups.groups.len() {
-                                    self.selected_chat_group = SelectedChatGroup::All;
-                                }
+                            let state = &mut self.bridge_states[bridge_idx];
+                            state.chat_groups.groups = groups;
+                            if let SelectedChatGroup::Custom(idx) = &state.selected_chat_group
+                                && *idx >= state.chat_groups.groups.len()
+                            {
+                                state.selected_chat_group = SelectedChatGroup::All;
+                            }
+                            if self.active_bridge_idx == Some(bridge_idx) {
+                                self.chat_groups = state.chat_groups.clone();
+                                self.selected_chat_group = state.selected_chat_group.clone();
                             }
                         }
                         Err(e) => {

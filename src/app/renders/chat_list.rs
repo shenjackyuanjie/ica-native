@@ -47,7 +47,7 @@ impl IcaApp {
                                         )
                                         .clicked()
                                     {
-                                        self.active_bridge_idx = Some(idx);
+                                        self.switch_active_bridge(idx);
                                     }
                                 }
                             });
