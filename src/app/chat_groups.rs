@@ -54,20 +54,6 @@ impl ChatGroups {
             .unwrap_or(false)
     }
 
-    pub fn visible_rooms_in_group(&self, group_index: usize, all_rooms: &[Room]) -> Vec<Room> {
-        let Some(group) = self.groups.get(group_index) else {
-            return Vec::new();
-        };
-        all_rooms
-            .iter()
-            .filter(|room| {
-                group.rooms.contains(&room.room_id)
-                    || (group.include_all_personal && room.room_id > 0)
-            })
-            .cloned()
-            .collect()
-    }
-
     pub fn has_unread_in_group(&self, group_index: usize, rooms: &[Room]) -> bool {
         let Some(group) = self.groups.get(group_index) else {
             return false;

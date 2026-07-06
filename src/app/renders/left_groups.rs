@@ -14,9 +14,19 @@ impl IcaApp {
                     .fit_to_exact_size([24.0, 24.0].into())
                     .alt_text("chat_group_icon");
 
-                let rooms_snapshot = self
+                let (private_has_unread, group_has_unread) = self
                     .active_bridge_state()
-                    .map(|state| state.rooms.clone())
+                    .map(|state| {
+                        (
+                            state
+                                .rooms
+                                .iter()
+                                .any(|room| room.room_id > 0 && room.unread_count > 0),
+                            (0..self.chat_groups.groups.len())
+                                .map(|idx| self.chat_groups.has_unread_in_group(idx, &state.rooms))
+                                .collect::<Vec<_>>(),
+                        )
+                    })
                     .unwrap_or_default();
 
                 ui.spacing_mut().item_spacing.x = 0.5;
@@ -51,10 +61,7 @@ impl IcaApp {
                             && !disable_dot
                             && self.selected_chat_group != SelectedChatGroup::Private
                         {
-                            let has_unread = rooms_snapshot
-                                .iter()
-                                .any(|r| r.room_id > 0 && r.unread_count > 0);
-                            if has_unread {
+                            if private_has_unread {
                                 let dot_radius = 3.0;
                                 let dot_pos =
                                     resp.rect.right_top() + egui::vec2(-dot_radius, dot_radius);
@@ -78,14 +85,16 @@ impl IcaApp {
                         }
 
                         // 未读红点
-                        if !disable_groups && !disable_dot && !is_selected {
-                            if self.chat_groups.has_unread_in_group(idx, &rooms_snapshot) {
-                                let dot_radius = 3.0;
-                                let dot_pos =
-                                    resp.rect.right_top() + egui::vec2(-dot_radius, dot_radius);
-                                ui.painter()
-                                    .circle_filled(dot_pos, dot_radius, egui::Color32::RED);
-                            }
+                        if !disable_groups
+                            && !disable_dot
+                            && !is_selected
+                            && group_has_unread.get(idx).copied().unwrap_or(false)
+                        {
+                            let dot_radius = 3.0;
+                            let dot_pos =
+                                resp.rect.right_top() + egui::vec2(-dot_radius, dot_radius);
+                            ui.painter()
+                                .circle_filled(dot_pos, dot_radius, egui::Color32::RED);
                         }
 
                         // 右键菜单

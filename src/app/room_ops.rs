@@ -1,6 +1,6 @@
 use crate::cfg::{self, ReEditDraftConflictMode};
 use crate::ica::IcaCommand;
-use crate::ica::types::{RoomId, room::Room};
+use crate::ica::types::RoomId;
 
 use super::{IcaApp, SelectedChatGroup};
 
@@ -65,44 +65,47 @@ impl IcaApp {
         }
     }
 
-    pub fn visible_rooms(&self, bridge_idx: usize) -> Vec<Room> {
+    pub fn visible_room_indices(&self, bridge_idx: usize) -> Vec<usize> {
         let Some(state) = self.bridge_states.get(bridge_idx) else {
             return Vec::new();
         };
 
         let query = state.room_search_query.trim().to_uppercase();
-        let group_filtered: Vec<Room> = if self.custom_chat.disable_chat_group {
-            state.rooms.clone()
-        } else {
-            match &self.selected_chat_group {
-                SelectedChatGroup::All => state.rooms.clone(),
-                SelectedChatGroup::Private => state
-                    .rooms
-                    .iter()
-                    .filter(|room| room.room_id > 0)
-                    .cloned()
-                    .collect(),
-                SelectedChatGroup::Custom(idx) => {
-                    self.chat_groups.visible_rooms_in_group(*idx, &state.rooms)
+        let mut room_indices: Vec<_> = state
+            .rooms
+            .iter()
+            .enumerate()
+            .filter(|(_, room)| {
+                if self.custom_chat.disable_chat_group {
+                    return true;
                 }
-            }
-        };
-
-        let mut rooms: Vec<_> = group_filtered
-            .into_iter()
-            .filter(|room| {
+                match &self.selected_chat_group {
+                    SelectedChatGroup::All => true,
+                    SelectedChatGroup::Private => room.room_id > 0,
+                    SelectedChatGroup::Custom(idx) => {
+                        self.chat_groups.groups.get(*idx).is_some_and(|group| {
+                            group.rooms.contains(&room.room_id)
+                                || (group.include_all_personal && room.room_id > 0)
+                        })
+                    }
+                }
+            })
+            .filter(|(_, room)| {
                 query.is_empty()
                     || room.room_name.to_uppercase().contains(&query)
                     || room.room_id.to_string().contains(query.as_str())
             })
+            .map(|(idx, _)| idx)
             .collect();
 
-        rooms.sort_by(|a, b| {
+        room_indices.sort_by(|&a_idx, &b_idx| {
+            let a = &state.rooms[a_idx];
+            let b = &state.rooms[b_idx];
             let pinned_a = a.index > 0;
             let pinned_b = b.index > 0;
             pinned_b.cmp(&pinned_a).then(b.utime.cmp(&a.utime))
         });
-        rooms
+        room_indices
     }
 
     pub fn set_clear_search_on_room_select(&mut self, enabled: bool) {

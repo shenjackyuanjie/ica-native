@@ -78,8 +78,8 @@ impl IcaApp {
                 });
                 ui.separator();
 
-                let visible_rooms = self.visible_rooms(active_bridge_idx);
-                if visible_rooms.is_empty() {
+                let visible_room_indices = self.visible_room_indices(active_bridge_idx);
+                if visible_room_indices.is_empty() {
                     let has_query = self
                         .bridge_states
                         .get(active_bridge_idx)
@@ -93,7 +93,7 @@ impl IcaApp {
                     return;
                 }
 
-                let room_count = visible_rooms.len();
+                let room_count = visible_room_indices.len();
                 // 内容矩形顶部内边距（头像与文字一起下移）
                 let content_top_padding = 4.0;
                 let content_height = 50.0;
@@ -103,6 +103,7 @@ impl IcaApp {
                 let mut pending_pin_change = None;
                 let mut pending_remove_chat = None;
                 let mut pending_ignore_chat: Option<(i64, String)> = None;
+                let mut pending_room_selection = None;
 
                 let scroll_area =
                     egui::ScrollArea::vertical().id_salt(("chat_list_scroll", active_bridge_idx));
@@ -143,8 +144,9 @@ impl IcaApp {
                     let start = start as usize;
                     let end = (end as usize).min(room_count);
 
-                    for (offset, room) in visible_rooms[start..end].iter().enumerate() {
+                    for (offset, &room_idx) in visible_room_indices[start..end].iter().enumerate() {
                         let idx = start + offset;
+                        let room = &self.bridge_states[active_bridge_idx].rooms[room_idx];
                         let selected_room_id =
                             self.bridge_states[active_bridge_idx].selected_room_id;
                         let room_id = room.room_id;
@@ -226,7 +228,7 @@ impl IcaApp {
                         });
 
                         if response.clicked() {
-                            self.select_active_room(room_id);
+                            pending_room_selection = Some(room_id);
                         }
 
                         // // 分隔线稍微往上提，避免紧贴行底
@@ -245,6 +247,9 @@ impl IcaApp {
                     self.chat_list_scroll_target = ChatListScrollTarget::None;
                 }
 
+                if let Some(room_id) = pending_room_selection {
+                    self.select_active_room(room_id);
+                }
                 if let Some((room_id, pin)) = pending_pin_change {
                     self.set_room_pinned(active_bridge_idx, room_id, pin);
                 }
