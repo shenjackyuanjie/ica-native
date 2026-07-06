@@ -9,13 +9,21 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 /// 从 UI 线程挪走，并且限制并发度，避免旧实现那种“一张图一个线程”
 /// 带来的线程数膨胀和内存峰值失控。
 pub struct DecodeWorkerPool {
-    sender: mpsc::Sender<Job>,
+    sender: mpsc::SyncSender<Job>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduleError {
+    Full,
+    Closed,
 }
 
 impl DecodeWorkerPool {
     pub fn new(worker_count: usize, thread_name_prefix: &'static str) -> Self {
         let worker_count = worker_count.max(1);
-        let (sender, receiver) = mpsc::channel::<Job>();
+        // 解码任务会持有原始图片字节，队列必须有界，否则快速滚过大量图片时
+        // 即使线程数固定，待执行任务仍会推高内存峰值。
+        let (sender, receiver) = mpsc::sync_channel::<Job>(worker_count * 4);
         let receiver = Arc::new(Mutex::new(receiver));
 
         for worker_idx in 0..worker_count {
@@ -43,12 +51,15 @@ impl DecodeWorkerPool {
         Self { sender }
     }
 
-    pub fn schedule<F>(&self, job: F) -> Result<(), &'static str>
+    pub fn schedule<F>(&self, job: F) -> Result<(), ScheduleError>
     where
         F: FnOnce() + Send + 'static,
     {
         self.sender
-            .send(Box::new(job))
-            .map_err(|_| "image decode worker pool is shut down")
+            .try_send(Box::new(job))
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) => ScheduleError::Full,
+                mpsc::TrySendError::Disconnected(_) => ScheduleError::Closed,
+            })
     }
 }

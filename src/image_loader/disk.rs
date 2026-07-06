@@ -1,7 +1,10 @@
 use std::{
     fs, io,
     path::PathBuf,
-    sync::Mutex,
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -21,6 +24,7 @@ use super::util::format_bytes;
 pub struct DiskCache {
     root: PathBuf,
     max_bytes: u64,
+    tracked_bytes: AtomicU64,
     mutation_lock: Mutex<()>,
 }
 
@@ -29,6 +33,7 @@ impl DiskCache {
         let cache = Self {
             root,
             max_bytes,
+            tracked_bytes: AtomicU64::new(0),
             mutation_lock: Mutex::new(()),
         };
 
@@ -39,6 +44,9 @@ impl DiskCache {
             );
             return None;
         }
+        cache
+            .tracked_bytes
+            .store(cache.scan_total_bytes(), Ordering::Relaxed);
 
         info!("disk image cache dir: {:?}", cache.root);
         Some(cache)
@@ -71,8 +79,14 @@ impl DiskCache {
             .expect("disk cache mutation lock poisoned");
 
         let path = self.cache_path(uri);
+        let old_size = fs::metadata(&path).map_or(0, |metadata| metadata.len());
         match fs::remove_file(&path) {
             Ok(()) => {
+                let _ = self.tracked_bytes.fetch_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |total| Some(total.saturating_sub(old_size)),
+                );
                 debug!("disk cache removed: {}", path.display());
             }
             Err(err) if err.kind() == io::ErrorKind::NotFound => {}
@@ -90,6 +104,7 @@ impl DiskCache {
         self.ensure_layout()?;
 
         let path = self.cache_path(uri);
+        let old_size = fs::metadata(&path).map_or(0, |metadata| metadata.len());
         let Some(parent) = path.parent() else {
             return Ok(());
         };
@@ -118,6 +133,15 @@ impl DiskCache {
             let _ = fs::remove_file(&tmp_path);
             return Err(err);
         }
+        let _ = self
+            .tracked_bytes
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |total| {
+                Some(
+                    total
+                        .saturating_sub(old_size)
+                        .saturating_add(bytes.len() as u64),
+                )
+            });
 
         debug!(
             "disk cache saved: uri={} path={} raw_bytes={}",
@@ -133,6 +157,12 @@ impl DiskCache {
     fn evict_if_needed_locked(&self) {
         if self.max_bytes == 0 {
             // 0 = 不限制大小。
+            return;
+        }
+
+        // 大多数写入都没有达到上限，直接通过增量记账判断，避免每保存一张
+        // 图片就 O(n) 扫描整个缓存目录。
+        if self.tracked_bytes.load(Ordering::Relaxed) <= self.max_bytes {
             return;
         }
 
@@ -204,12 +234,25 @@ impl DiskCache {
                 }
             }
         }
+        self.tracked_bytes.store(total_bytes, Ordering::Relaxed);
     }
 
     fn ensure_layout(&self) -> io::Result<()> {
         fs::create_dir_all(self.root.join("image"))?;
         fs::create_dir_all(self.root.join("avatar"))?;
         Ok(())
+    }
+
+    fn scan_total_bytes(&self) -> u64 {
+        [self.root.join("image"), self.root.join("avatar")]
+            .into_iter()
+            .filter_map(|directory| fs::read_dir(directory).ok())
+            .flat_map(|entries| entries.flatten())
+            .filter_map(|entry| entry.metadata().ok())
+            .filter(|metadata| metadata.is_file())
+            .fold(0_u64, |total, metadata| {
+                total.saturating_add(metadata.len())
+            })
     }
 
     fn cache_path(&self, uri: &str) -> PathBuf {

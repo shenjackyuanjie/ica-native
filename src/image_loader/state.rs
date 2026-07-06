@@ -1,4 +1,9 @@
-use std::{collections::HashMap, num::NonZeroUsize, sync::Arc};
+use std::{
+    collections::HashMap,
+    num::NonZeroUsize,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use egui::{ColorImage, Vec2};
 use lru::LruCache;
@@ -10,6 +15,8 @@ use super::util::format_bytes;
 /// - 可以避免同一坏 URL 每帧都重新报错；
 /// - 又不会像旧实现那样无限堆积失败条目。
 const MAX_ERROR_ENTRIES: usize = 128;
+/// 同一屏图片允许短暂突破缓存预算，避免可见工作集大于预算时来回解码。
+const ACTIVE_IMAGE_GRACE: Duration = Duration::from_millis(750);
 
 pub enum PrepareLoad {
     Ready(Arc<ColorImage>),
@@ -42,6 +49,7 @@ struct PendingEntry {
 struct ReadyEntry {
     image: Arc<ColorImage>,
     byte_size: u64,
+    last_used: Instant,
 }
 
 struct ErrorEntry {
@@ -88,10 +96,15 @@ impl LoaderState {
     }
 
     /// 读取当前缓存状态；若完全未见过该 URI，则创建一个新的 pending slot。
-    pub fn prepare_load(&mut self, uri: &str) -> PrepareLoad {
-        if let Some(entry) = self.ready.get(uri) {
-            return PrepareLoad::Ready(Arc::clone(&entry.image));
+    pub fn prepare_load(&mut self, uri: &str, now: Instant) -> PrepareLoad {
+        if let Some(entry) = self.ready.get_mut(uri) {
+            entry.last_used = now;
+            let image = Arc::clone(&entry.image);
+            self.evict_ready_if_needed(now);
+            return PrepareLoad::Ready(image);
         }
+
+        self.evict_ready_if_needed(now);
 
         if let Some(entry) = self.errors.get(uri) {
             return PrepareLoad::Error(Arc::clone(&entry.message));
@@ -172,6 +185,7 @@ impl LoaderState {
         generation: u64,
         image: Arc<ColorImage>,
         byte_size: u64,
+        now: Instant,
     ) -> bool {
         let Some(entry) = self.pending.get(uri) else {
             return false;
@@ -183,15 +197,19 @@ impl LoaderState {
         self.pending.remove(uri);
         self.remove_error(uri);
 
-        if let Some(old) = self
-            .ready
-            .put(uri.to_owned(), ReadyEntry { image, byte_size })
-        {
+        if let Some(old) = self.ready.put(
+            uri.to_owned(),
+            ReadyEntry {
+                image,
+                byte_size,
+                last_used: now,
+            },
+        ) {
             self.ready_bytes = self.ready_bytes.saturating_sub(old.byte_size);
         }
         self.ready_bytes = self.ready_bytes.saturating_add(byte_size);
 
-        self.evict_ready_if_needed(uri);
+        self.evict_ready_if_needed(now);
         true
     }
 
@@ -285,18 +303,14 @@ impl LoaderState {
         }
     }
 
-    fn evict_ready_if_needed(&mut self, just_loaded_uri: &str) {
-        // 软限制：至少保留刚解码完成的那一张。
-        //
-        // 如果严格执行 `max=0` 或“单张图片就大于上限”时的立即清空，
-        // UI 下一帧可能永远观察不到 Ready 状态，图片会一直加载失败/抖动。
+    fn evict_ready_if_needed(&mut self, now: Instant) {
         while self.ready.len() > 1 && self.ready_limit_exceeded() {
             let Some((uri, entry)) = self.ready.pop_lru() else {
                 break;
             };
-
-            if uri == just_loaded_uri {
-                // 正常情况下 put 之后它应该是 MRU，这里只是最后的保险。
+            if now.saturating_duration_since(entry.last_used) <= ACTIVE_IMAGE_GRACE {
+                // LRU 都仍在近期可见工作集中，后面的条目只会更新；暂时允许
+                // 突破软预算，等图片离屏超过 grace 后再回收，避免反复解码。
                 self.ready.put(uri, entry);
                 break;
             }
@@ -314,5 +328,43 @@ impl LoaderState {
 
     fn ready_limit_exceeded(&self) -> bool {
         self.max_ready_bytes == 0 || self.ready_bytes > self.max_ready_bytes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn image() -> Arc<ColorImage> {
+        Arc::new(ColorImage::new([1, 1], vec![egui::Color32::WHITE]))
+    }
+
+    fn begin(state: &mut LoaderState, uri: &str, now: Instant) -> u64 {
+        match state.prepare_load(uri, now) {
+            PrepareLoad::WaitingBytes { generation } => generation,
+            _ => panic!("expected pending image"),
+        }
+    }
+
+    #[test]
+    fn active_working_set_can_temporarily_exceed_budget_then_recovers() {
+        let now = Instant::now();
+        let mut state = LoaderState::new(4);
+        let first = begin(&mut state, "first", now);
+        assert!(state.mark_decoding("first", first, None));
+        assert!(state.complete_ready("first", first, image(), 4, now));
+
+        let second = begin(&mut state, "second", now);
+        assert!(state.mark_decoding("second", second, None));
+        assert!(state.complete_ready("second", second, image(), 4, now));
+        assert_eq!(state.ready.len(), 2);
+
+        let later = now + ACTIVE_IMAGE_GRACE + Duration::from_millis(1);
+        assert!(matches!(
+            state.prepare_load("second", later),
+            PrepareLoad::Ready(_)
+        ));
+        assert_eq!(state.ready.len(), 1);
+        assert!(state.ready.contains("second"));
     }
 }

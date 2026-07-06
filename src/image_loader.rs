@@ -15,7 +15,7 @@ mod state;
 mod util;
 mod worker;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use decode::{
     decode_image, decoded_image_byte_size, is_permanent_download_error, normalize_image_load_error,
@@ -30,7 +30,7 @@ use egui::{
 use state::{LoaderState, PrepareLoad};
 use tracing::{debug, info, warn};
 use util::{decode_worker_count, format_bytes};
-use worker::DecodeWorkerPool;
+use worker::{DecodeWorkerPool, ScheduleError};
 
 use crate::cfg;
 
@@ -123,8 +123,13 @@ impl TrackingImageLoader {
 
                         let (committed, total_ready_bytes) = {
                             let mut state = state.lock();
-                            let committed =
-                                state.complete_ready(&uri, generation, image, decoded_bytes);
+                            let committed = state.complete_ready(
+                                &uri,
+                                generation,
+                                image,
+                                decoded_bytes,
+                                Instant::now(),
+                            );
                             let total_ready_bytes = state.ready_byte_size();
                             (committed, total_ready_bytes)
                         };
@@ -177,10 +182,22 @@ impl TrackingImageLoader {
                 }
             })
             .map_err(|err| {
-                let message = format!("图片解码线程池不可用: {err}");
                 let mut state = self.state.lock();
-                let _ = state.complete_error(&uri_for_submit_error, generation, message.clone());
-                LoadError::Loading(message)
+                match err {
+                    ScheduleError::Full => {
+                        let _ = state.cancel_pending(&uri_for_submit_error, generation);
+                        LoadError::Loading("图片解码队列繁忙，稍后重试".to_string())
+                    }
+                    ScheduleError::Closed => {
+                        let message = "图片解码线程池已关闭".to_string();
+                        let _ = state.complete_error(
+                            &uri_for_submit_error,
+                            generation,
+                            message.clone(),
+                        );
+                        LoadError::Loading(message)
+                    }
+                }
             })
     }
 }
@@ -204,7 +221,7 @@ impl ImageLoader for TrackingImageLoader {
             return Err(LoadError::NotSupported);
         }
 
-        let generation = match self.state.lock().prepare_load(uri) {
+        let generation = match self.state.lock().prepare_load(uri, Instant::now()) {
             PrepareLoad::Ready(image) => {
                 debug!("image cache hit: uri={}", uri);
                 return Ok(ImagePoll::Ready { image });
