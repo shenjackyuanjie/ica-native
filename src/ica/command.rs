@@ -6,7 +6,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::ica::types::{
     RoomId,
-    message::{DeleteMessage, ReplyMessage, SendMessage},
+    message::{DeleteMessage, Mention, ReplyMessage, SendMessage},
 };
 
 /// icalingua 客户端的兼容版本号
@@ -28,6 +28,9 @@ pub enum IcaCommand {
     FetchOlderMessages {
         room_id: RoomId,
         offset: usize,
+    },
+    FetchGroupMembers {
+        room_id: RoomId,
     },
     GetSystemMsg,
     PinRoom {
@@ -71,6 +74,7 @@ pub enum IcaCommand {
         room_id: RoomId,
         content: String,
         reply_to: Option<ReplyMessage>,
+        mentions: Vec<Mention>,
         image_type: String,
         image_data: std::sync::Arc<[u8]>,
     },
@@ -79,6 +83,7 @@ pub enum IcaCommand {
         room_id: RoomId,
         content: String,
         reply_to: Option<ReplyMessage>,
+        mentions: Vec<Mention>,
         images: Vec<(String, std::sync::Arc<[u8]>)>,
     },
     SendRawMessage {
@@ -101,6 +106,7 @@ pub enum IcaCommand {
         room_id: RoomId,
         content: String,
         reply_to: Option<ReplyMessage>,
+        mentions: Vec<Mention>,
         file_name: String,
         file_type: String,
         file_data: std::sync::Arc<[u8]>,

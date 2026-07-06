@@ -103,6 +103,25 @@ pub struct ReplyMessage {
     pub sender_name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mention {
+    pub user_id: i64,
+    pub text: String,
+}
+
+impl Mention {
+    pub fn as_value(&self) -> JsonValue {
+        json!({
+            "id": if self.user_id == 1 {
+                json!("all")
+            } else {
+                json!(self.user_id)
+            },
+            "text": self.text,
+        })
+    }
+}
+
 /*
 export default interface Message {
     _id: string | number
@@ -459,6 +478,10 @@ impl SendMessage {
 
     pub fn has_b64img(&self) -> bool {
         self.file_data.is_some()
+    }
+
+    pub fn set_mentions(&mut self, mentions: &[Mention]) {
+        self.at = JsonValue::Array(mentions.iter().map(Mention::as_value).collect());
     }
 
     /// 设置消息的图片

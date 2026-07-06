@@ -7,12 +7,31 @@ use std::sync::{
 
 use crate::ica::types::{
     RoomId,
-    message::{Message, ReplyMessage},
+    message::{Mention, Message, ReplyMessage},
     online_data::OnlineData,
     room::{JoinRequestRoom, Room},
 };
 
 use super::{ChatGroups, SelectedChatGroup};
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct GroupMember {
+    pub user_id: i64,
+    #[serde(default)]
+    pub nickname: String,
+    #[serde(default)]
+    pub card: String,
+}
+
+impl GroupMember {
+    pub fn display_name(&self) -> &str {
+        if self.card.trim().is_empty() {
+            &self.nickname
+        } else {
+            &self.card
+        }
+    }
+}
 
 /// 图片查看器状态（通过 Arc<Mutex<>> 在主窗口和 viewport 间共享）
 #[derive(Debug)]
@@ -263,6 +282,9 @@ pub struct BridgeState {
     pub selected_chat_group: SelectedChatGroup,
     pub rooms: Vec<Room>,
     pub messages_by_room: HashMap<RoomId, Vec<Message>>,
+    /// 已按群聊缓存的成员列表，仅在打开 @ 选择器时懒加载。
+    pub group_members_by_room: HashMap<RoomId, Vec<GroupMember>>,
+    pub loading_group_members: HashSet<RoomId>,
     pub message_scroll_to_bottom: HashSet<RoomId>,
     pub pending_message_scroll_to_bottom: HashSet<RoomId>,
     pub pending_send_scroll_to_bottom: HashSet<RoomId>,
@@ -276,6 +298,7 @@ pub struct BridgeState {
     pub pending_file_by_room: HashMap<RoomId, PendingFile>,
     pub selected_room_id: Option<RoomId>,
     pub draft_by_room: HashMap<RoomId, String>,
+    pub mentions_by_room: HashMap<RoomId, Vec<Mention>>,
     pub forward_room_id: Option<RoomId>,
     pub forward_selected_message_ids: Vec<String>,
     pub forward_target_picker_open: bool,
@@ -327,6 +350,8 @@ impl BridgeState {
             selected_chat_group: SelectedChatGroup::All,
             rooms: Vec::new(),
             messages_by_room: HashMap::new(),
+            group_members_by_room: HashMap::new(),
+            loading_group_members: HashSet::new(),
             message_scroll_to_bottom: HashSet::new(),
             pending_message_scroll_to_bottom: HashSet::new(),
             pending_send_scroll_to_bottom: HashSet::new(),
@@ -338,6 +363,7 @@ impl BridgeState {
             pending_file_by_room: HashMap::new(),
             selected_room_id: None,
             draft_by_room: HashMap::new(),
+            mentions_by_room: HashMap::new(),
             forward_room_id: None,
             forward_selected_message_ids: Vec::new(),
             forward_target_picker_open: false,

@@ -5,6 +5,33 @@ use crate::ica::types::RoomId;
 use super::{IcaApp, SelectedChatGroup};
 
 impl IcaApp {
+    pub fn request_group_members(&mut self, bridge_idx: usize, room_id: RoomId, force: bool) {
+        if room_id >= 0 {
+            return;
+        }
+        let Some(state) = self.bridge_states.get_mut(bridge_idx) else {
+            return;
+        };
+        if state.loading_group_members.contains(&room_id)
+            || (!force && state.group_members_by_room.contains_key(&room_id))
+        {
+            return;
+        }
+        state.loading_group_members.insert(room_id);
+        if force {
+            state.group_members_by_room.remove(&room_id);
+        }
+        if let Err(e) = self.ica_clients[bridge_idx]
+            .command_tx
+            .send(IcaCommand::FetchGroupMembers { room_id })
+        {
+            self.bridge_states[bridge_idx]
+                .loading_group_members
+                .remove(&room_id);
+            self.bridge_states[bridge_idx].last_error = Some(format!("群成员列表请求失败: {e}"));
+        }
+    }
+
     pub fn request_room_messages(
         &mut self,
         bridge_idx: usize,

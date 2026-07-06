@@ -1,5 +1,7 @@
 mod central_panel;
 mod chat_list;
+mod composer;
+mod composer_drop;
 mod left_groups;
 mod message_card;
 mod top_panel;
@@ -89,6 +91,61 @@ pub(super) fn insert_text_at_saved_cursor(
         replace_text_char_range(text, range, replacement)
     } else {
         text.push_str(replacement);
+        text.chars().count()
+    };
+
+    if let Some(mut state) = edit_state.take() {
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(new_cursor),
+            )));
+        state.store(ctx, id);
+    }
+}
+
+pub(super) fn saved_cursor_preceded_by(
+    ctx: &egui::Context,
+    id: egui::Id,
+    text: &str,
+    expected: char,
+) -> bool {
+    let Some(cursor) = egui::widgets::text_edit::TextEditState::load(ctx, id)
+        .and_then(|state| state.cursor.char_range())
+    else {
+        return false;
+    };
+    let cursor = cursor.primary.index;
+    cursor > 0 && text.chars().nth(cursor - 1) == Some(expected)
+}
+
+pub(super) fn insert_mention_at_saved_cursor(
+    ctx: &egui::Context,
+    id: egui::Id,
+    text: &mut String,
+    mention: &str,
+    replace_at_trigger: bool,
+) {
+    let mut edit_state = egui::widgets::text_edit::TextEditState::load(ctx, id);
+    let selected_range = edit_state
+        .as_ref()
+        .and_then(|state| state.cursor.char_range())
+        .map(|range| range.as_sorted_char_range());
+    let range = selected_range.map(|range| {
+        if replace_at_trigger
+            && range.is_empty()
+            && range.start > 0
+            && text.chars().nth(range.start - 1) == Some('@')
+        {
+            range.start - 1..range.end
+        } else {
+            range
+        }
+    });
+    let new_cursor = if let Some(range) = range {
+        replace_text_char_range(text, range, mention)
+    } else {
+        text.push_str(mention);
         text.chars().count()
     };
 

@@ -23,6 +23,8 @@ impl IcaApp {
         let draft = state.draft_by_room.entry(room_id).or_default();
         let content = draft.trim().to_string();
         let reply_to = state.reply_to_by_room.remove(&room_id);
+        let mut mentions = state.mentions_by_room.remove(&room_id).unwrap_or_default();
+        mentions.retain(|mention| content.contains(&mention.text));
         let pending_images = state
             .pending_image_by_room
             .remove(&room_id)
@@ -43,6 +45,7 @@ impl IcaApp {
                 room_id,
                 content: content.clone(),
                 reply_to: reply_to.clone(),
+                mentions: mentions.clone(),
                 file_name: file.name.clone(),
                 file_type: file.file_type.clone(),
                 file_data: file.data.clone(),
@@ -52,11 +55,9 @@ impl IcaApp {
 
         if pending_images.is_empty() {
             if !content_attached {
-                outgoing_commands.push(IcaCommand::SendMessage(SendMessage::new(
-                    content.clone(),
-                    room_id,
-                    reply_to.clone(),
-                )));
+                let mut message = SendMessage::new(content.clone(), room_id, reply_to.clone());
+                message.set_mentions(&mentions);
+                outgoing_commands.push(IcaCommand::SendMessage(message));
             }
         } else {
             let image_content = if content_attached {
@@ -75,6 +76,7 @@ impl IcaApp {
                     room_id,
                     content: image_content,
                     reply_to: image_reply,
+                    mentions: mentions.clone(),
                     image_type: image.mime_type.clone(),
                     image_data: image.data.clone(),
                 });
@@ -83,6 +85,7 @@ impl IcaApp {
                     room_id,
                     content: image_content,
                     reply_to: image_reply,
+                    mentions: mentions.clone(),
                     images: pending_images
                         .iter()
                         .map(|image| (image.mime_type.clone(), image.data.clone()))
@@ -104,6 +107,9 @@ impl IcaApp {
             state.draft_by_room.insert(room_id, content);
             if let Some(reply_to) = reply_to {
                 state.reply_to_by_room.insert(room_id, reply_to);
+            }
+            if !mentions.is_empty() {
+                state.mentions_by_room.insert(room_id, mentions);
             }
             if !pending_images.is_empty() {
                 state.pending_image_by_room.insert(room_id, pending_images);

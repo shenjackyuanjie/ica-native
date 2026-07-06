@@ -106,6 +106,12 @@ pub struct IcaApp {
     pub ime_event_this_frame: bool,
     /// 是否显示表情选择器
     pub show_face_picker: bool,
+    /// 是否显示群成员 @ 选择器。
+    pub show_mention_picker: bool,
+    /// @ 选择器搜索词。
+    pub mention_search_query: String,
+    /// 是否由输入字符 @ 触发；选中成员时需替换该字符。
+    pub mention_replace_trigger: bool,
     /// 图片查看器状态（与独立窗口共享）
     pub image_viewer: Option<std::sync::Arc<std::sync::Mutex<state::ImageViewerState>>>,
     /// 高级 socket.io API 调用事件名
@@ -382,6 +388,9 @@ impl IcaApp {
             ime_composing: false,
             ime_event_this_frame: false,
             show_face_picker: false,
+            show_mention_picker: false,
+            mention_search_query: String::new(),
+            mention_replace_trigger: false,
             image_viewer: None,
             socket_api_event: String::new(),
             socket_api_args: "[]".to_string(),
@@ -424,6 +433,9 @@ impl IcaApp {
         self.ensure_selected_chat_group_valid();
         self.chat_list_scroll_target = ChatListScrollTarget::Top;
         self.show_face_picker = false;
+        self.show_mention_picker = false;
+        self.mention_search_query.clear();
+        self.mention_replace_trigger = false;
     }
 
     fn poll_socketio_events(&mut self, ctx: &egui::Context) {

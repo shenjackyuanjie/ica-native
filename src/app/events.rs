@@ -8,7 +8,7 @@ use crate::ica::types::{
 };
 
 use super::IcaApp;
-use super::state::{AuthState, BridgeState, SocketState};
+use super::state::{AuthState, BridgeState, GroupMember, SocketState};
 
 impl IcaApp {
     /// socket.io 的事件 payload 基本都是数组包装，真正的数据通常在第一个元素里。
@@ -501,7 +501,35 @@ impl IcaApp {
                 }
             }
             "commandFailed" => {
+                if payload.get("kind").and_then(JsonValue::as_str) == Some("fetchGroupMembers")
+                    && let Some(room_id) = payload.get("roomId").and_then(JsonValue::as_i64)
+                {
+                    state.loading_group_members.remove(&room_id);
+                }
                 state.last_error = Self::payload_message(payload);
+            }
+            "groupMembersResponse" => {
+                let room_id = payload
+                    .get("roomId")
+                    .and_then(JsonValue::as_i64)
+                    .unwrap_or_default();
+                state.loading_group_members.remove(&room_id);
+                match payload.get("members").map(Vec::<GroupMember>::deserialize) {
+                    Some(Ok(mut members)) => {
+                        members.sort_by(|left, right| {
+                            left.display_name()
+                                .cmp(right.display_name())
+                                .then(left.user_id.cmp(&right.user_id))
+                        });
+                        state.group_members_by_room.insert(room_id, members);
+                    }
+                    Some(Err(e)) => {
+                        state.last_error = Some(format!("群成员列表解析失败: {e}"));
+                    }
+                    None => {
+                        state.last_error = Some("群成员列表响应缺少 members".to_string());
+                    }
+                }
             }
             "socketApiResponse" | "fileManagerResponse" => {
                 let response = Self::json_preview(payload, 1024);
