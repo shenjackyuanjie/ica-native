@@ -1,9 +1,11 @@
-use crate::app::{IcaApp, MessageAction, MessageLayoutCacheKey, PendingFile, PendingImage};
+use crate::app::{
+    IcaApp, MessageAction, MessageLayoutCacheKey, MessageRowLayout, PendingFile, PendingImage,
+};
 use egui::{Button, Image, Label, RichText};
 
 use super::message_card::MessageRenderOptions;
 use super::{
-    MessageRowLayout, estimate_composer_rows, estimate_message_row_height, format_message_content,
+    estimate_composer_rows, estimate_message_row_height, format_message_content,
     format_pending_size, message_visible_range,
 };
 
@@ -168,6 +170,7 @@ impl IcaApp {
                     .is_none_or(|old_key| !old_key.matches(message_layout_key));
                 if layout_changed {
                     bridge_state.message_row_heights.remove(&room_id);
+                    bridge_state.message_row_layouts.remove(&room_id);
                     bridge_state.last_content_height.remove(&room_id);
                     bridge_state
                         .message_layout_cache_keys
@@ -191,23 +194,29 @@ impl IcaApp {
                 .show_viewport(ui, |ui, viewport| {
                     ui.set_min_width(ui.max_rect().width());
 
-                    match self.bridge_states[active_bridge_idx]
-                        .messages_by_room
-                        .get(&room_id)
-                    {
-                        Some(messages) if !messages.is_empty() => {
+                    let needs_row_layout = {
+                        let bridge_state = &self.bridge_states[active_bridge_idx];
+                        let message_count = bridge_state
+                            .messages_by_room
+                            .get(&room_id)
+                            .map_or(0, Vec::len);
+                        bridge_state
+                            .message_row_layouts
+                            .get(&room_id)
+                            .is_none_or(|rows| rows.len() != message_count)
+                    };
+                    if needs_row_layout {
+                        let rows = {
+                            let bridge_state = &self.bridge_states[active_bridge_idx];
+                            let messages = bridge_state.messages_by_room.get(&room_id);
+                            let cached_heights = bridge_state.message_row_heights.get(&room_id);
                             let row_width = ui.available_width().max(48.0);
                             let line_height = ui.text_style_height(&egui::TextStyle::Body);
-                            let cached_heights = self.bridge_states[active_bridge_idx]
-                                .message_row_heights
-                                .get(&room_id);
-
-                            let mut rows = Vec::with_capacity(messages.len());
+                            let mut rows = Vec::with_capacity(messages.map_or(0, Vec::len));
                             let mut total_height = 0.0;
                             let mut previous_sender_id = None;
-                            let mut target_index = None;
 
-                            for (idx, message) in messages.iter().enumerate() {
+                            for message in messages.into_iter().flatten() {
                                 let show_sender_name = !pure_text_mode
                                     || previous_sender_id != Some(message.sender_id);
                                 let show_separator_before = pure_text_mode
@@ -228,35 +237,50 @@ impl IcaApp {
                                         )
                                     });
 
-                                if scroll_to_target.as_deref() == Some(&message.msg_id) {
-                                    target_index = Some(idx);
-                                }
-
                                 rows.push(MessageRowLayout {
                                     top: total_height,
                                     height,
-                                    show_sender_name,
-                                    show_separator_before,
                                 });
                                 total_height += height;
                                 previous_sender_id = Some(message.sender_id);
                             }
+                            rows
+                        };
+                        self.bridge_states[active_bridge_idx]
+                            .message_row_layouts
+                            .insert(room_id, rows);
+                    }
+
+                    match self.bridge_states[active_bridge_idx]
+                        .messages_by_room
+                        .get(&room_id)
+                    {
+                        Some(messages) if !messages.is_empty() => {
+                            let row_width = ui.available_width().max(48.0);
+                            let rows = &self.bridge_states[active_bridge_idx].message_row_layouts
+                                [&room_id];
+                            let total_height = rows.last().map_or(0.0, |row| row.top + row.height);
+                            let target_index = scroll_to_target.as_deref().and_then(|target_id| {
+                                messages
+                                    .iter()
+                                    .position(|message| message.msg_id == target_id)
+                            });
 
                             let list_top = ui.cursor().min.y;
-                            if let Some(target_index) = target_index {
-                                if let Some(row) = rows.get(target_index) {
-                                    let target_rect = egui::Rect::from_min_size(
-                                        egui::pos2(ui.min_rect().left(), list_top + row.top),
-                                        egui::vec2(row_width, row.height),
-                                    );
-                                    ui.scroll_to_rect(target_rect, Some(egui::Align::Center));
-                                }
+                            if let Some(target_index) = target_index
+                                && let Some(row) = rows.get(target_index)
+                            {
+                                let target_rect = egui::Rect::from_min_size(
+                                    egui::pos2(ui.min_rect().left(), list_top + row.top),
+                                    egui::vec2(row_width, row.height),
+                                );
+                                ui.scroll_to_rect(target_rect, Some(egui::Align::Center));
                             }
 
                             let viewport_top = viewport.top().max(0.0);
                             let viewport_bottom = viewport.bottom().max(viewport_top);
                             let (start, end) =
-                                message_visible_range(&rows, viewport_top, viewport_bottom);
+                                message_visible_range(rows, viewport_top, viewport_bottom);
 
                             if start > 0 {
                                 let top_spacer =
@@ -267,6 +291,14 @@ impl IcaApp {
                             for idx in start..end {
                                 let message = &messages[idx];
                                 let row = rows[idx];
+                                let previous_sender_id = idx
+                                    .checked_sub(1)
+                                    .map(|previous_idx| messages[previous_idx].sender_id);
+                                let show_sender_name = !pure_text_mode
+                                    || previous_sender_id != Some(message.sender_id);
+                                let show_separator_before = pure_text_mode
+                                    && previous_sender_id.is_some()
+                                    && previous_sender_id != Some(message.sender_id);
                                 let forward_selected = forward_mode_active
                                     && forward_selected_ids
                                         .iter()
@@ -281,8 +313,8 @@ impl IcaApp {
                                         self_id,
                                         message,
                                         MessageRenderOptions {
-                                            show_sender_name: row.show_sender_name,
-                                            show_separator_before: row.show_separator_before,
+                                            show_sender_name,
+                                            show_separator_before,
                                             forward_mode_active,
                                             forward_selected,
                                         },
@@ -333,6 +365,7 @@ impl IcaApp {
                 for (msg_id, height) in measured_message_heights {
                     heights.insert(msg_id, height);
                 }
+                bridge_state.message_row_layouts.remove(&room_id);
                 ui.ctx().request_repaint();
             }
 

@@ -224,6 +224,7 @@ impl IcaApp {
                                 // 将旧消息放在前面
                                 new_msgs.append(existing);
                                 *existing = new_msgs;
+                                state.invalidate_message_rows(room_id);
                                 // 标记需要调整 scroll offset
                                 state.prepend_scroll_fix.insert(room_id);
                             }
@@ -337,6 +338,7 @@ impl IcaApp {
             "renewMessage" => {
                 if let Some(value) = Self::first_payload_value(payload) {
                     let room_id = value["roomId"].as_i64().unwrap_or_default();
+                    let mut changed_message_id = None;
                     if let Some(msg_id) = value["messageId"].as_str()
                         && let Some(messages) = state.messages_by_room.get_mut(&room_id)
                         && let Some(existing) = messages.iter_mut().find(|m| m.msg_id == msg_id)
@@ -354,6 +356,10 @@ impl IcaApp {
                         if let Some(reveal) = msg_update.get("reveal").and_then(|r| r.as_bool()) {
                             existing.reveal = reveal;
                         }
+                        changed_message_id = Some(msg_id.to_string());
+                    }
+                    if let Some(msg_id) = changed_message_id {
+                        state.invalidate_message_height(&msg_id);
                     }
                 }
             }

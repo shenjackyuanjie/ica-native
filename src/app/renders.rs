@@ -5,6 +5,8 @@ mod message_card;
 mod top_panel;
 mod windows;
 
+use crate::app::MessageRowLayout;
+
 pub(super) fn format_message_content(content: &str) -> String {
     let open_tag = "<IcalinguaAt qq=";
     let close_tag = "</IcalinguaAt>";
@@ -69,14 +71,6 @@ pub(super) fn format_pending_size(bytes: usize) -> String {
 }
 
 const MESSAGE_LIST_OVERSCAN: f32 = 720.0;
-
-#[derive(Clone, Copy)]
-pub(super) struct MessageRowLayout {
-    pub(super) top: f32,
-    pub(super) height: f32,
-    pub(super) show_sender_name: bool,
-    pub(super) show_separator_before: bool,
-}
 
 fn weighted_text_len(text: &str) -> usize {
     text.chars()

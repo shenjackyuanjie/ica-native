@@ -215,6 +215,12 @@ impl MessageLayoutCacheKey {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct MessageRowLayout {
+    pub top: f32,
+    pub height: f32,
+}
+
 #[derive(Debug, Clone)]
 /// 单个 bridge 在 GUI 侧维护的完整状态。
 ///
@@ -266,6 +272,8 @@ pub struct BridgeState {
     pub message_scroll_offsets: HashMap<RoomId, f32>,
     /// 每个房间内单条消息渲染后的高度缓存，用于消息列表虚拟化。
     pub message_row_heights: HashMap<RoomId, HashMap<String, f32>>,
+    /// 每个房间的消息行位置缓存，避免每次重绘都扫描全部历史消息。
+    pub message_row_layouts: HashMap<RoomId, Vec<MessageRowLayout>>,
     /// 消息高度缓存对应的布局参数。布局变化后需要重新测量。
     pub message_layout_cache_keys: HashMap<RoomId, MessageLayoutCacheKey>,
     /// 需要滚动到的目标消息 ID
@@ -309,6 +317,7 @@ impl BridgeState {
             last_content_height: HashMap::new(),
             message_scroll_offsets: HashMap::new(),
             message_row_heights: HashMap::new(),
+            message_row_layouts: HashMap::new(),
             message_layout_cache_keys: HashMap::new(),
             scroll_to_message_id: None,
         }
@@ -316,14 +325,20 @@ impl BridgeState {
 
     pub fn invalidate_message_layout(&mut self, room_id: RoomId) {
         self.message_row_heights.remove(&room_id);
+        self.message_row_layouts.remove(&room_id);
         self.message_layout_cache_keys.remove(&room_id);
         self.last_content_height.remove(&room_id);
+    }
+
+    pub(super) fn invalidate_message_rows(&mut self, room_id: RoomId) {
+        self.message_row_layouts.remove(&room_id);
     }
 
     pub(super) fn invalidate_message_height(&mut self, msg_id: &str) {
         for heights in self.message_row_heights.values_mut() {
             heights.remove(msg_id);
         }
+        self.message_row_layouts.clear();
     }
 
     fn preview_content(message: &Message) -> String {
@@ -366,6 +381,7 @@ impl BridgeState {
         if let Some(heights) = self.message_row_heights.get_mut(&room_id) {
             heights.remove(&msg_id);
         }
+        self.invalidate_message_rows(room_id);
     }
 
     pub fn mark_message_deleted(&mut self, msg_id: &str) {
