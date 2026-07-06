@@ -66,13 +66,20 @@ pub enum IcaCommand {
         message_id: String,
     },
     SendMessage(SendMessage),
-    /// 在后台编码图片后发送，避免在 GUI 线程生成大型 Base64 字符串。
+    /// 在后台编码单张图片后发送，避免在 GUI 线程生成大型 Base64 字符串。
     SendImageMessage {
         room_id: RoomId,
         content: String,
         reply_to: Option<ReplyMessage>,
         image_type: String,
         image_data: std::sync::Arc<[u8]>,
+    },
+    /// 在后台将多张图片编码为 raw 消息链后一次发送，避免阻塞 GUI 线程。
+    SendMultiImageMessage {
+        room_id: RoomId,
+        content: String,
+        reply_to: Option<ReplyMessage>,
+        images: Vec<(String, std::sync::Arc<[u8]>)>,
     },
     SendRawMessage {
         room_id: RoomId,

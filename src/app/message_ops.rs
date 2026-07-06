@@ -59,22 +59,34 @@ impl IcaApp {
                 )));
             }
         } else {
-            for (idx, image) in pending_images.iter().enumerate() {
-                let attach_metadata = !content_attached && idx == 0;
+            let image_content = if content_attached {
+                String::new()
+            } else {
+                content.clone()
+            };
+            let image_reply = if content_attached {
+                None
+            } else {
+                reply_to.clone()
+            };
+            if pending_images.len() == 1 {
+                let image = &pending_images[0];
                 outgoing_commands.push(IcaCommand::SendImageMessage {
                     room_id,
-                    content: if attach_metadata {
-                        content.clone()
-                    } else {
-                        String::new()
-                    },
-                    reply_to: if attach_metadata {
-                        reply_to.clone()
-                    } else {
-                        None
-                    },
+                    content: image_content,
+                    reply_to: image_reply,
                     image_type: image.mime_type.clone(),
                     image_data: image.data.clone(),
+                });
+            } else {
+                outgoing_commands.push(IcaCommand::SendMultiImageMessage {
+                    room_id,
+                    content: image_content,
+                    reply_to: image_reply,
+                    images: pending_images
+                        .iter()
+                        .map(|image| (image.mime_type.clone(), image.data.clone()))
+                        .collect(),
                 });
             }
         }

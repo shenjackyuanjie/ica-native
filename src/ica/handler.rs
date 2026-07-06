@@ -39,6 +39,81 @@ fn ack_payload_first(payload: &Payload) -> Option<JsonValue> {
     ack_payload_values(payload).into_iter().next()
 }
 
+fn push_raw_text_elements(chain: &mut Vec<JsonValue>, content: &str) {
+    let mut remaining = content;
+    while let Some(start) = remaining.find("[Face: ") {
+        if start > 0 {
+            chain.push(json!({
+                "type": "text",
+                "data": { "text": &remaining[..start] },
+            }));
+        }
+        let after = &remaining[start + 7..];
+        let Some(end) = after.find(']') else {
+            remaining = &remaining[start..];
+            break;
+        };
+        let Ok(face_id) = after[..end].parse::<u16>() else {
+            chain.push(json!({
+                "type": "text",
+                "data": { "text": &remaining[start..start + 8 + end] },
+            }));
+            remaining = &after[end + 1..];
+            continue;
+        };
+        chain.push(json!({
+            "type": "face",
+            "data": { "id": face_id },
+        }));
+        remaining = &after[end + 1..];
+    }
+    if !remaining.is_empty() {
+        chain.push(json!({
+            "type": "text",
+            "data": { "text": remaining },
+        }));
+    }
+}
+
+fn build_multi_image_raw_payload(
+    room_id: i64,
+    content: &str,
+    reply_to: Option<&crate::ica::types::message::ReplyMessage>,
+    images: &[(String, Arc<[u8]>)],
+) -> JsonValue {
+    use base64::{Engine as _, engine::general_purpose};
+
+    let mut chain = Vec::with_capacity(images.len() + 2);
+    if let Some(reply) = reply_to {
+        chain.push(json!({
+            "type": "reply",
+            "data": {
+                "id": reply.msg_id,
+                "text": reply.content,
+            },
+        }));
+    }
+    push_raw_text_elements(&mut chain, content);
+    for (_, bytes) in images {
+        chain.push(json!({
+            "type": "image",
+            "data": {
+                "file": format!("base64://{}", general_purpose::STANDARD.encode(bytes)),
+                "type": "image",
+                "sub_type": 0,
+            },
+        }));
+    }
+
+    json!({
+        "messageType": "raw",
+        "roomId": room_id,
+        "content": JsonValue::Array(chain).to_string(),
+        "at": [],
+        "sticker": false,
+    })
+}
+
 async fn send_message(
     message: SendMessage,
     client: &Client,
@@ -332,11 +407,60 @@ pub(super) async fn handle_command(
                 ),
             }
         }
+        IcaCommand::SendMultiImageMessage {
+            room_id,
+            content,
+            reply_to,
+            images,
+        } => {
+            let encoded_payload = tokio::task::spawn_blocking(move || {
+                build_multi_image_raw_payload(room_id, &content, reply_to.as_ref(), &images)
+            })
+            .await;
+            match encoded_payload {
+                Ok(payload) => match request_send_token(client).await {
+                    Ok(token) => {
+                        if let Err(e) = http_send_value(api_base_url, &token, &payload).await {
+                            emit_ui_event(
+                                event_tx,
+                                bridge_key,
+                                "commandFailed",
+                                json!({
+                                    "kind": "sendMultiImageMessage",
+                                    "roomId": room_id,
+                                    "message": e,
+                                }),
+                            );
+                        }
+                    }
+                    Err(e) => emit_ui_event(
+                        event_tx,
+                        bridge_key,
+                        "commandFailed",
+                        json!({
+                            "kind": "sendMultiImageMessage",
+                            "roomId": room_id,
+                            "message": e,
+                        }),
+                    ),
+                },
+                Err(e) => emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "commandFailed",
+                    json!({
+                        "kind": "sendMultiImageMessage",
+                        "roomId": room_id,
+                        "message": format!("图片编码任务失败: {e}"),
+                    }),
+                ),
+            }
+        }
         IcaCommand::SendRawMessage { room_id, content } => {
             let payload = json!({
                 "messageType": "raw",
                 "roomId": room_id,
-                "content": content,
+                "content": content.to_string(),
             });
             if !client::send_string_message(client, &payload).await {
                 emit_ui_event(
@@ -838,14 +962,17 @@ async fn http_send_message(
     token: &str,
     message: &SendMessage,
 ) -> Result<(), String> {
+    http_send_value(api_base_url, token, &message.as_value()).await
+}
+
+async fn http_send_value(api_base_url: &str, token: &str, value: &JsonValue) -> Result<(), String> {
     let api_base_url = api_base_url.trim_end_matches('/');
     let url = format!("{}/api/{}/sendMessage", api_base_url, token);
     let client = reqwest::Client::new();
-    let value = message.as_value();
 
     let response = client
         .post(&url)
-        .json(&value)
+        .json(value)
         .send()
         .await
         .map_err(|e| format!("HTTP POST 失败: {}", e))?;
@@ -1027,4 +1154,38 @@ async fn upload_and_send_file(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use serde_json::Value as JsonValue;
+
+    use super::build_multi_image_raw_payload;
+
+    #[test]
+    fn multi_image_payload_contains_one_raw_chain() {
+        let payload = build_multi_image_raw_payload(
+            -123,
+            "文字[Face: 14]",
+            None,
+            &[
+                ("image/png".to_string(), Arc::from([1_u8, 2, 3])),
+                ("image/jpeg".to_string(), Arc::from([4_u8, 5, 6])),
+            ],
+        );
+
+        assert_eq!(payload["messageType"], "raw");
+        assert_eq!(payload["roomId"], -123);
+        let chain: Vec<JsonValue> =
+            serde_json::from_str(payload["content"].as_str().unwrap()).unwrap();
+        assert_eq!(chain.len(), 4);
+        assert_eq!(chain[0]["type"], "text");
+        assert_eq!(chain[1]["type"], "face");
+        assert_eq!(chain[2]["type"], "image");
+        assert_eq!(chain[3]["type"], "image");
+        assert_eq!(chain[2]["data"]["file"], "base64://AQID");
+        assert_eq!(chain[3]["data"]["file"], "base64://BAUG");
+    }
 }
