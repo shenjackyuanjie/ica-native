@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use crate::ica::types::{
@@ -54,11 +55,10 @@ impl IcaApp {
     }
 
     fn parse_join_request(
-        value: JsonValue,
+        value: &JsonValue,
         fallback_flag: Option<&str>,
     ) -> Result<JoinRequestRoom, String> {
-        let mut request =
-            serde_json::from_value::<JoinRequestRoom>(value).map_err(|e| e.to_string())?;
+        let mut request = JoinRequestRoom::deserialize(value).map_err(|e| e.to_string())?;
         if request.flag.is_empty()
             && let Some(flag) = fallback_flag
         {
@@ -79,12 +79,11 @@ impl IcaApp {
         match value {
             JsonValue::Array(values) => values
                 .iter()
-                .cloned()
                 .map(|item| Self::parse_join_request(item, None))
                 .collect(),
             JsonValue::Object(items) => items
                 .iter()
-                .map(|(flag, item)| Self::parse_join_request(item.clone(), Some(flag)))
+                .map(|(flag, item)| Self::parse_join_request(item, Some(flag)))
                 .collect(),
             _ => Err("getSystemMsg 返回的不是数组或对象".to_string()),
         }
@@ -166,7 +165,7 @@ impl IcaApp {
             }
             "setAllRooms" => {
                 if let Some(value) = Self::first_payload_value(payload) {
-                    match serde_json::from_value::<Vec<Room>>(value.clone()) {
+                    match Vec::<Room>::deserialize(value) {
                         Ok(rooms) => state.rooms = rooms,
                         Err(e) => {
                             state.last_error = Some(format!("setAllRooms 解析失败: {}", e));
@@ -177,7 +176,7 @@ impl IcaApp {
             "setMessages" => {
                 if let Some(value) = Self::first_payload_value(payload) {
                     let room_id = value["roomId"].as_i64().unwrap_or_default();
-                    match serde_json::from_value::<Vec<Message>>(value["messages"].clone()) {
+                    match Vec::<Message>::deserialize(&value["messages"]) {
                         Ok(messages) => {
                             state.requested_rooms.insert(room_id);
                             if state.pending_message_scroll_to_bottom.remove(&room_id) {
@@ -207,7 +206,7 @@ impl IcaApp {
                     let room_id = value["roomId"].as_i64().unwrap_or_default();
                     // 不管解析成功与否都要重置加载状态
                     state.loading_older_messages.remove(&room_id);
-                    match serde_json::from_value::<Vec<Message>>(value["messages"].clone()) {
+                    match Vec::<Message>::deserialize(&value["messages"]) {
                         Ok(older_messages) => {
                             if older_messages.is_empty() {
                                 // 没有更多历史消息
@@ -242,7 +241,7 @@ impl IcaApp {
             }
             "addMessage" => {
                 if let Some(value) = Self::first_payload_value(payload) {
-                    match serde_json::from_value::<NewMessage>(value.clone()) {
+                    match NewMessage::deserialize(value) {
                         Ok(new_message) => {
                             let room_id = new_message.room_id;
                             let should_scroll_to_bottom = new_message.msg.sender_id
@@ -284,7 +283,7 @@ impl IcaApp {
             }
             "handleRequest" => {
                 if let Some(value) = Self::first_payload_value(payload) {
-                    match Self::parse_join_request(value.clone(), None) {
+                    match Self::parse_join_request(value, None) {
                         Ok(request) => {
                             state.upsert_join_request(request);
                         }
@@ -296,7 +295,7 @@ impl IcaApp {
             }
             "sendAddRequest" => {
                 if let Some(value) = Self::first_payload_value(payload) {
-                    match Self::parse_join_request(value.clone(), None) {
+                    match Self::parse_join_request(value, None) {
                         Ok(request) => {
                             state.upsert_join_request(request);
                             state.last_notice = Some("收到新的验证消息".to_string());
@@ -309,7 +308,7 @@ impl IcaApp {
             }
             "updateRoom" => {
                 if let Some(value) = Self::first_payload_value(payload) {
-                    match serde_json::from_value::<Room>(value.clone()) {
+                    match Room::deserialize(value) {
                         Ok(updated_room) => {
                             if let Some(existing) = state
                                 .rooms

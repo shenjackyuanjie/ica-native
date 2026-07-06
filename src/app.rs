@@ -396,8 +396,15 @@ impl IcaApp {
             .and_then(|idx| self.bridge_states.get_mut(idx))
     }
 
-    fn poll_socketio_events(&mut self) {
-        while let Ok(event) = self.ui_rx.try_recv() {
+    fn poll_socketio_events(&mut self, ctx: &egui::Context) {
+        const MAX_EVENTS_PER_FRAME: usize = 128;
+        let mut processed = 0;
+
+        while processed < MAX_EVENTS_PER_FRAME {
+            let Ok(event) = self.ui_rx.try_recv() else {
+                break;
+            };
+            processed += 1;
             let Some(event_name) = event.get("event").and_then(|value| value.as_str()) else {
                 continue;
             };
@@ -405,7 +412,8 @@ impl IcaApp {
                 continue;
             };
 
-            let payload = event.get("payload").cloned().unwrap_or(JsonValue::Null);
+            let null_payload = JsonValue::Null;
+            let payload = event.get("payload").unwrap_or(&null_payload);
             let Some(bridge_idx) = self
                 .bridge_states
                 .iter()
@@ -417,7 +425,7 @@ impl IcaApp {
             // setAllChatGroups 需要写入 IcaApp 而非 BridgeState
             if event_name == "setAllChatGroups" {
                 if let Some(value) = payload.as_array().and_then(|values| values.first()) {
-                    match serde_json::from_value::<Vec<chat_groups::ChatGroup>>(value.clone()) {
+                    match <Vec<chat_groups::ChatGroup> as serde::Deserialize>::deserialize(value) {
                         Ok(groups) => {
                             self.chat_groups.groups = groups;
                             // 确保 selected_chat_group 的索引仍然有效
@@ -444,7 +452,7 @@ impl IcaApp {
 
                 state.last_event = Some(event_name.to_string());
 
-                Self::apply_socketio_event(state, event_name, &payload);
+                Self::apply_socketio_event(state, event_name, payload);
 
                 prev_auth_state != AuthState::Succeeded && state.auth_state == AuthState::Succeeded
             };
@@ -452,6 +460,10 @@ impl IcaApp {
             if should_refresh_system_messages {
                 self.request_system_messages(bridge_idx);
             }
+        }
+
+        if processed == MAX_EVENTS_PER_FRAME {
+            ctx.request_repaint();
         }
     }
 }
@@ -487,7 +499,7 @@ impl eframe::App for IcaApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.poll_socketio_events();
+        self.poll_socketio_events(ui.ctx());
 
         // 检测 ESC 键取消选择
         if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape))
