@@ -11,23 +11,44 @@ use crate::ica::types::{
     online_data::OnlineData,
     room::{JoinRequestRoom, Room},
 };
+use serde::Deserialize;
+use serde_json::Value as JsonValue;
 
 use super::{ChatGroups, SelectedChatGroup};
+
+fn deserialize_string_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(value) = Option::<JsonValue>::deserialize(deserializer)? else {
+        return Ok(String::new());
+    };
+
+    Ok(match value {
+        JsonValue::Null => String::new(),
+        JsonValue::String(value) => value,
+        JsonValue::Bool(value) => value.to_string(),
+        JsonValue::Number(value) => value.to_string(),
+        JsonValue::Array(_) | JsonValue::Object(_) => {
+            serde_json::to_string(&value).unwrap_or_else(|_| String::new())
+        }
+    })
+}
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct GroupMember {
     pub user_id: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_default")]
     pub nickname: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_default")]
     pub card: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_default")]
     pub remark: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_default")]
     pub title: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_default")]
     pub level: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_default")]
     pub role: String,
 }
 
