@@ -100,6 +100,10 @@ pub struct IcaApp {
     pub socketio_stop_senders: Vec<oneshot::Sender<()>>,
     /// Ctrl+V 但文字粘贴失败（可能剪贴板是图片）
     pub clipboard_paste_failed: bool,
+    /// 输入法当前是否存在预编辑文本。
+    pub ime_composing: bool,
+    /// 当前输入帧是否包含输入法事件，避免提交候选词时误发送。
+    pub ime_event_this_frame: bool,
     /// 是否显示表情选择器
     pub show_face_picker: bool,
     /// 图片查看器状态（与独立窗口共享）
@@ -372,6 +376,8 @@ impl IcaApp {
             ui_tx,
             socketio_stop_senders,
             clipboard_paste_failed: false,
+            ime_composing: false,
+            ime_event_this_frame: false,
             show_face_picker: false,
             image_viewer: None,
             socket_api_event: String::new(),
@@ -470,6 +476,25 @@ impl IcaApp {
 
 impl eframe::App for IcaApp {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.ime_event_this_frame = false;
+        for event in &raw_input.events {
+            match event {
+                egui::Event::Ime(egui::ImeEvent::Preedit(text)) => {
+                    self.ime_event_this_frame = true;
+                    self.ime_composing = !text.is_empty();
+                }
+                egui::Event::Ime(egui::ImeEvent::Commit(_))
+                | egui::Event::Ime(egui::ImeEvent::Disabled) => {
+                    self.ime_event_this_frame = true;
+                    self.ime_composing = false;
+                }
+                egui::Event::Ime(egui::ImeEvent::Enabled) => {
+                    self.ime_event_this_frame = true;
+                }
+                _ => {}
+            }
+        }
+
         // 检测 Ctrl+V 但没有文字粘贴事件的情况（剪贴板可能是图片）。
         let has_paste = raw_input
             .events

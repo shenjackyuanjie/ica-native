@@ -863,6 +863,8 @@ impl IcaApp {
                                 response.request_focus();
                             }
                             let enter_no_mod = response.has_focus()
+                                && !self.ime_composing
+                                && !self.ime_event_this_frame
                                 && ui.input(|input| {
                                     input.key_pressed(egui::Key::Enter)
                                         && !input.modifiers.shift
