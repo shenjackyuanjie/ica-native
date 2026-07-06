@@ -21,7 +21,6 @@ impl IcaApp {
             let bridge_key = self.bridge_states[active_bridge_idx].bridge_key.clone();
             let socket_state = self.bridge_states[active_bridge_idx].socket_state;
             let auth_state = self.bridge_states[active_bridge_idx].auth_state;
-            let online_data = self.bridge_states[active_bridge_idx].online_data.clone();
             let last_error = self.bridge_states[active_bridge_idx].last_error.clone();
             let last_notice = self.bridge_states[active_bridge_idx].last_notice.clone();
             let is_shut_up = self.bridge_states[active_bridge_idx].is_shut_up;
@@ -71,6 +70,7 @@ impl IcaApp {
             ui.add_space(4.0);
 
             if selected_room_id.is_none() {
+                let online_data = &self.bridge_states[active_bridge_idx].online_data;
                 ui.label(format!("QQ: {}", online_data.qqid));
                 ui.label(format!("昵称: {}", online_data.nick));
                 ui.label(format!(
@@ -684,7 +684,8 @@ impl IcaApp {
                                     clear_reply = true;
                                 }
                             });
-                            ui.add(Label::new(format_message_content(&reply.content)).wrap());
+                            let content = format_message_content(&reply.content);
+                            ui.add(Label::new(content.as_ref()).wrap());
                         });
                         ui.add_space(6.0);
                     }

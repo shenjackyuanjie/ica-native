@@ -1,9 +1,8 @@
 use crate::app::{IcaApp, MessageAction};
 use crate::ica::types::RoomId;
-use crate::ica::types::files::MessageFile;
 use egui::{Hyperlink, Image, Label};
 
-use super::format_message_content;
+use super::{format_message_content, is_image_file_type};
 
 /// 解析消息内容中的 [Face: id] 标记，返回文本/表情片段
 enum ContentSegment<'a> {
@@ -45,6 +44,11 @@ fn parse_face_segments(content: &str) -> Vec<ContentSegment<'_>> {
 
 /// 渲染包含 [Face: id] 的消息内容，将表情替换为内联图片
 fn render_rich_content(ui: &mut egui::Ui, content: &str) {
+    if !content.contains("[Face: ") {
+        ui.add(Label::new(content).wrap());
+        return;
+    }
+
     let segments = parse_face_segments(content);
     let has_face = segments
         .iter()
@@ -76,11 +80,6 @@ fn render_rich_content(ui: &mut egui::Ui, content: &str) {
             }
         }
     });
-}
-
-fn is_image_file(file: &MessageFile) -> bool {
-    let file_type = file.file_type.to_ascii_lowercase();
-    file_type == "image" || file_type.starts_with("image/")
 }
 
 /// 渲染消息中的图片缩略图，返回点击的图片 URL（用于预览）
@@ -171,7 +170,7 @@ impl IcaApp {
                             ui.style_mut().override_font_id =
                                 Some(egui::FontId::proportional(12.0));
                             if !formatted_content.is_empty() {
-                                ui.colored_label(sys_text, &formatted_content);
+                                ui.colored_label(sys_text, formatted_content.as_ref());
                             } else {
                                 ui.colored_label(sys_text, "[系统消息]");
                             }
@@ -318,7 +317,10 @@ impl IcaApp {
                                                 egui::Frame::group(ui.style()).show(ui, |ui| {
                                                     ui.weak(format!("回复 {}", reply.sender_name));
                                                     ui.add(
-                                                        Label::new(formatted_reply_content).wrap(),
+                                                        Label::new(
+                                                            formatted_reply_content.as_ref(),
+                                                        )
+                                                        .wrap(),
                                                     );
                                                 });
                                             if reply_resp
@@ -338,7 +340,7 @@ impl IcaApp {
 
                                     if !formatted_content.is_empty() {
                                         has_body = true;
-                                        render_rich_content(ui, formatted_content.as_str());
+                                        render_rich_content(ui, formatted_content.as_ref());
                                     }
 
                                     if !message.files.is_empty() {
@@ -347,7 +349,8 @@ impl IcaApp {
                                             egui::Layout::top_down(content_align),
                                             |ui| {
                                                 for file in &message.files {
-                                                    let is_image = is_image_file(file);
+                                                    let is_image =
+                                                        is_image_file_type(&file.file_type);
 
                                                     if is_image && !file.url.is_empty() {
                                                         let image_max_width =

@@ -5,11 +5,17 @@ mod message_card;
 mod top_panel;
 mod windows;
 
+use std::borrow::Cow;
+
 use crate::app::MessageRowLayout;
 
-pub(super) fn format_message_content(content: &str) -> String {
+pub(super) fn format_message_content(content: &str) -> Cow<'_, str> {
     let open_tag = "<IcalinguaAt qq=";
     let close_tag = "</IcalinguaAt>";
+    if !content.contains(open_tag) {
+        return Cow::Borrowed(content);
+    }
+
     let mut result = String::with_capacity(content.len());
     let mut remaining = content;
 
@@ -19,12 +25,12 @@ pub(super) fn format_message_content(content: &str) -> String {
 
         let Some(tag_end_idx) = after_start.find('>') else {
             result.push_str(after_start);
-            return result;
+            return Cow::Owned(result);
         };
         let tag_body = &after_start[tag_end_idx + 1..];
         let Some(close_idx) = tag_body.find(close_tag) else {
             result.push_str(after_start);
-            return result;
+            return Cow::Owned(result);
         };
 
         let encoded_name = &tag_body[..close_idx];
@@ -37,7 +43,14 @@ pub(super) fn format_message_content(content: &str) -> String {
     }
 
     result.push_str(remaining);
-    result
+    Cow::Owned(result)
+}
+
+pub(super) fn is_image_file_type(file_type: &str) -> bool {
+    file_type.eq_ignore_ascii_case("image")
+        || file_type
+            .get(..6)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"))
 }
 
 pub(super) fn estimate_composer_rows(text: &str, input_width: f32) -> usize {
@@ -145,8 +158,7 @@ pub(super) fn estimate_message_row_height(
 
     if !message.files.is_empty() {
         for file in &message.files {
-            let file_type = file.file_type.to_ascii_lowercase();
-            let is_image = file_type == "image" || file_type.starts_with("image/");
+            let is_image = is_image_file_type(&file.file_type);
             height += if is_image && !file.url.is_empty() {
                 248.0
             } else {
@@ -178,4 +190,34 @@ pub(super) fn message_visible_range(
     let end = start + rows[start..].partition_point(|row| row.top < end_cutoff);
 
     (start, end.min(rows.len()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use super::format_message_content;
+
+    #[test]
+    fn plain_message_uses_borrowed_fast_path() {
+        let content = "普通消息 [Face: 1]";
+        let formatted = format_message_content(content);
+
+        assert!(matches!(formatted, Cow::Borrowed(_)));
+        assert_eq!(formatted, content);
+    }
+
+    #[test]
+    fn at_markup_is_decoded() {
+        let content = "你好 <IcalinguaAt qq=10001>Alice%20A</IcalinguaAt>";
+
+        assert_eq!(format_message_content(content), "你好 Alice A");
+    }
+
+    #[test]
+    fn malformed_at_markup_is_preserved() {
+        let content = "你好 <IcalinguaAt qq=10001>Alice";
+
+        assert_eq!(format_message_content(content), content);
+    }
 }

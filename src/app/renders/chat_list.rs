@@ -417,7 +417,7 @@ impl IcaApp {
             && !content.is_empty()
             && preview_x < preview_right
         {
-            let preview = format_message_content(content);
+            let preview = format_message_content(content).into_owned();
             let preview_clip = egui::Rect::from_min_max(
                 egui::pos2(preview_x, rect.top()),
                 egui::pos2(preview_right, rect.bottom()),
