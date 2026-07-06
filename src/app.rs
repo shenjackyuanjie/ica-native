@@ -505,17 +505,13 @@ impl eframe::App for IcaApp {
         self.ime_event_this_frame = false;
         for event in &raw_input.events {
             match event {
-                egui::Event::Ime(egui::ImeEvent::Preedit(text)) => {
+                egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => {
                     self.ime_event_this_frame = true;
                     self.ime_composing = !text.is_empty();
                 }
-                egui::Event::Ime(egui::ImeEvent::Commit(_))
-                | egui::Event::Ime(egui::ImeEvent::Disabled) => {
+                egui::Event::Ime(egui::ImeEvent::Commit(_)) => {
                     self.ime_event_this_frame = true;
                     self.ime_composing = false;
-                }
-                egui::Event::Ime(egui::ImeEvent::Enabled) => {
-                    self.ime_event_this_frame = true;
                 }
                 _ => {}
             }

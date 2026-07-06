@@ -3,7 +3,7 @@ use egui::Hyperlink;
 
 impl IcaApp {
     pub fn render_top_panel(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::top("顶栏").show_inside(ui, |ui| {
+        egui::Panel::top("顶栏").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 self.render_top_menus(ui);
             })

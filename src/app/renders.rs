@@ -13,6 +13,10 @@ use std::ops::Range;
 
 use crate::app::MessageRowLayout;
 
+fn char_index_to_usize(index: egui::text::CharIndex) -> usize {
+    index.into()
+}
+
 pub(super) fn format_message_content(content: &str) -> Cow<'_, str> {
     let open_tag = "<IcalinguaAt qq=";
     let close_tag = "</IcalinguaAt>";
@@ -87,7 +91,8 @@ pub(super) fn insert_text_at_saved_cursor(
     let selected_range = edit_state
         .as_ref()
         .and_then(|state| state.cursor.char_range())
-        .map(|range| range.as_sorted_char_range());
+        .map(|range| range.as_sorted_char_range())
+        .map(|range| char_index_to_usize(range.start)..char_index_to_usize(range.end));
     let new_cursor = if let Some(range) = selected_range {
         replace_text_char_range(text, range, replacement)
     } else {
@@ -116,7 +121,7 @@ pub(super) fn saved_cursor_preceded_by(
     else {
         return false;
     };
-    let cursor = cursor.primary.index;
+    let cursor = char_index_to_usize(cursor.primary.index);
     cursor > 0 && text.chars().nth(cursor - 1) == Some(expected)
 }
 
@@ -131,7 +136,8 @@ pub(super) fn insert_mention_at_saved_cursor(
     let selected_range = edit_state
         .as_ref()
         .and_then(|state| state.cursor.char_range())
-        .map(|range| range.as_sorted_char_range());
+        .map(|range| range.as_sorted_char_range())
+        .map(|range| char_index_to_usize(range.start)..char_index_to_usize(range.end));
     let range = selected_range.map(|range| {
         if replace_at_trigger
             && range.is_empty()

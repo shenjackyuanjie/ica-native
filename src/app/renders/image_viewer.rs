@@ -53,7 +53,7 @@ impl IcaApp {
                 let url = viewer_state.lock().unwrap().url.clone();
 
                 // 顶部工具栏
-                egui::Panel::top("image_viewer_toolbar").show_inside(ui, |ui| {
+                egui::Panel::top("image_viewer_toolbar").show(ui, |ui| {
                     ui.horizontal(|ui| {
                         let (image_index, image_count) = {
                             let state = viewer_state.lock().unwrap();
@@ -150,7 +150,7 @@ impl IcaApp {
                 });
 
                 // 图片内容区域
-                egui::CentralPanel::default().show_inside(ui, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     // 键盘缩放: Ctrl+↑/↓
                     let (ctrl_up, ctrl_down) = ui.input(|i| {
                         let ctrl = i.modifiers.ctrl;

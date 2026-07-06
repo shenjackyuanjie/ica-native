@@ -19,7 +19,7 @@ impl IcaApp {
         egui::Panel::left("聊天列表")
             .resizable(true)
             .size_range(300.0..=700.0)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 // 让聊天列表条目的背景能"铺满"左右分割线之间的整块区域：
                 // 关键点：用 `ui.max_rect()` 的宽度来分配条目 rect，而不是 `ui.available_width()`
                 // 因为 `available_width()` 会受当前 layout/indent/scroll 内容区影响而变窄，导致背景留白。

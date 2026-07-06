@@ -78,7 +78,17 @@ fn egui_main() -> anyhow::Result<()> {
             .with_inner_size([config.screen.width, config.screen.height])
             .with_drag_and_drop(true)
             .with_icon(icon),
-        vsync: config.screen.vsync,
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(
+            eframe::egui_wgpu::SurfaceConfig {
+                present_mode: if config.screen.vsync {
+                    eframe::wgpu::PresentMode::AutoVsync
+                } else {
+                    eframe::wgpu::PresentMode::AutoNoVsync
+                },
+                desired_maximum_frame_latency: eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY
+                    .desired_maximum_frame_latency,
+            },
+        ),
         centered: config.screen.centered,
         ..Default::default()
     };

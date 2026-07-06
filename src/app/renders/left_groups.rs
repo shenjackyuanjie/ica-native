@@ -9,7 +9,7 @@ impl IcaApp {
         egui::Panel::left("群聊组")
             .resizable(false)
             .exact_size(70.0)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 let img = Image::new(crate::assets::svg::CHAT_GROUP)
                     .fit_to_exact_size([24.0, 24.0].into())
                     .alt_text("chat_group_icon");

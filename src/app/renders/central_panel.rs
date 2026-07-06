@@ -7,7 +7,7 @@ use super::{
 
 impl IcaApp {
     pub fn render_central_panel(&mut self, ui: &mut egui::Ui) {
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             let Some(active_bridge_idx) = self.active_bridge_idx else {
                 ui.heading("未启用 bridge");
                 ui.weak("请先在配置里启用至少一个 bridge。");
