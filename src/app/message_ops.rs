@@ -57,31 +57,32 @@ impl IcaApp {
             return;
         }
 
-        let mut outgoing_messages = Vec::new();
+        let mut outgoing_commands = Vec::new();
         if pending_images.is_empty() {
-            outgoing_messages.push(SendMessage::new(content.clone(), room_id, reply_to.clone()));
+            outgoing_commands.push(IcaCommand::SendMessage(SendMessage::new(
+                content.clone(),
+                room_id,
+                reply_to.clone(),
+            )));
         } else {
             for (idx, image) in pending_images.iter().enumerate() {
-                let mut message = SendMessage::new(
-                    if idx == 0 {
+                outgoing_commands.push(IcaCommand::SendImageMessage {
+                    room_id,
+                    content: if idx == 0 {
                         content.clone()
                     } else {
                         String::new()
                     },
-                    room_id,
-                    if idx == 0 { reply_to.clone() } else { None },
-                );
-                message.set_img(&image.data, &image.mime_type, false);
-                outgoing_messages.push(message);
+                    reply_to: if idx == 0 { reply_to.clone() } else { None },
+                    image_type: image.mime_type.clone(),
+                    image_data: image.data.clone(),
+                });
             }
         }
 
         let mut send_failed = None;
-        for message in outgoing_messages {
-            if let Err(e) = self.ica_clients[bridge_idx]
-                .command_tx
-                .send(IcaCommand::SendMessage(message))
-            {
+        for command in outgoing_commands {
+            if let Err(e) = self.ica_clients[bridge_idx].command_tx.send(command) {
                 send_failed = Some(e);
                 break;
             }

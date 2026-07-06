@@ -39,6 +39,57 @@ fn ack_payload_first(payload: &Payload) -> Option<JsonValue> {
     ack_payload_values(payload).into_iter().next()
 }
 
+async fn send_message(
+    message: SendMessage,
+    client: &Client,
+    event_tx: &Option<UnboundedSender<JsonValue>>,
+    bridge_key: &str,
+    api_base_url: &str,
+) {
+    let room_id = message.room_id;
+    if message.has_b64img() {
+        match request_send_token(client).await {
+            Ok(token) => {
+                if let Err(e) = http_send_message(api_base_url, &token, &message).await {
+                    emit_ui_event(
+                        event_tx,
+                        bridge_key,
+                        "commandFailed",
+                        json!({
+                            "kind": "sendMessage",
+                            "roomId": room_id,
+                            "message": e,
+                        }),
+                    );
+                }
+            }
+            Err(e) => {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "commandFailed",
+                    json!({
+                        "kind": "sendMessage",
+                        "roomId": room_id,
+                        "message": e,
+                    }),
+                );
+            }
+        }
+    } else if !client::send_message(client, &message).await {
+        emit_ui_event(
+            event_tx,
+            bridge_key,
+            "commandFailed",
+            json!({
+                "kind": "sendMessage",
+                "roomId": room_id,
+                "message": "sendMessage failed",
+            }),
+        );
+    }
+}
+
 pub(super) async fn handle_command(
     command: IcaCommand,
     client: &Client,
@@ -250,47 +301,35 @@ pub(super) async fn handle_command(
             }
         }
         IcaCommand::SendMessage(message) => {
-            let room_id = message.room_id;
-            if message.has_b64img() {
-                match request_send_token(client).await {
-                    Ok(token) => {
-                        if let Err(e) = http_send_message(api_base_url, &token, &message).await {
-                            emit_ui_event(
-                                event_tx,
-                                bridge_key,
-                                "commandFailed",
-                                json!({
-                                    "kind": "sendMessage",
-                                    "roomId": room_id,
-                                    "message": e,
-                                }),
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        emit_ui_event(
-                            event_tx,
-                            bridge_key,
-                            "commandFailed",
-                            json!({
-                                "kind": "sendMessage",
-                                "roomId": room_id,
-                                "message": e,
-                            }),
-                        );
-                    }
+            send_message(message, client, event_tx, bridge_key, api_base_url).await;
+        }
+        IcaCommand::SendImageMessage {
+            room_id,
+            content,
+            reply_to,
+            image_type,
+            image_data,
+        } => {
+            let encoded_message = tokio::task::spawn_blocking(move || {
+                let mut message = SendMessage::new(content, room_id, reply_to);
+                message.set_img(image_data.as_ref(), &image_type, false);
+                message
+            })
+            .await;
+            match encoded_message {
+                Ok(message) => {
+                    send_message(message, client, event_tx, bridge_key, api_base_url).await;
                 }
-            } else if !client::send_message(client, &message).await {
-                emit_ui_event(
+                Err(e) => emit_ui_event(
                     event_tx,
                     bridge_key,
                     "commandFailed",
                     json!({
-                        "kind": "sendMessage",
+                        "kind": "sendImageMessage",
                         "roomId": room_id,
-                        "message": "sendMessage failed",
+                        "message": format!("图片编码任务失败: {e}"),
                     }),
-                );
+                ),
             }
         }
         IcaCommand::SendRawMessage { room_id, content } => {
