@@ -5,10 +5,10 @@ use crate::app::IcaApp;
 impl IcaApp {
     pub(super) fn render_image_viewer(&mut self, ctx: &egui::Context) {
         // 图片查看器关闭信号检测
-        if let Some(ref viewer) = self.image_viewer {
-            if viewer.lock().unwrap().closed.load(Ordering::Relaxed) {
-                self.image_viewer = None;
-            }
+        if let Some(ref viewer) = self.image_viewer
+            && viewer.lock().unwrap().closed.load(Ordering::Relaxed)
+        {
+            self.image_viewer = None;
         }
 
         // 图片查看器（独立系统窗口，带工具栏和缩放）
@@ -178,8 +178,8 @@ impl IcaApp {
                             let img_size = texture.size;
 
                             // 适应窗口的基础缩放
-                            let base_scale_x = available.x / img_size[0] as f32;
-                            let base_scale_y = available.y / img_size[1] as f32;
+                            let base_scale_x = available.x / img_size[0];
+                            let base_scale_y = available.y / img_size[1];
                             let base_scale = base_scale_x.min(base_scale_y).max(0.01);
 
                             // 更新 base_scale 并处理 1:1 请求
@@ -240,18 +240,14 @@ impl IcaApp {
                                     let old_zoom = zoom;
                                     let new_zoom = (zoom * zoom_factor).clamp(0.05, 20.0);
                                     if (new_zoom - old_zoom).abs() > f32::EPSILON {
-                                        let old_display_w =
-                                            img_size[0] as f32 * base_scale * old_zoom;
-                                        let old_display_h =
-                                            img_size[1] as f32 * base_scale * old_zoom;
+                                        let old_display_w = img_size[0] * base_scale * old_zoom;
+                                        let old_display_h = img_size[1] * base_scale * old_zoom;
                                         let old_center_offset = egui::Vec2::new(
                                             (available.x - old_display_w) / 2.0,
                                             (available.y - old_display_h) / 2.0,
                                         );
-                                        let new_display_w =
-                                            img_size[0] as f32 * base_scale * new_zoom;
-                                        let new_display_h =
-                                            img_size[1] as f32 * base_scale * new_zoom;
+                                        let new_display_w = img_size[0] * base_scale * new_zoom;
+                                        let new_display_h = img_size[1] * base_scale * new_zoom;
                                         let new_center_offset = egui::Vec2::new(
                                             (available.x - new_display_w) / 2.0,
                                             (available.y - new_display_h) / 2.0,
@@ -274,8 +270,8 @@ impl IcaApp {
                                 }
                             }
 
-                            let display_w = img_size[0] as f32 * base_scale * zoom;
-                            let display_h = img_size[1] as f32 * base_scale * zoom;
+                            let display_w = img_size[0] * base_scale * zoom;
+                            let display_h = img_size[1] * base_scale * zoom;
 
                             // 图片居中 + 偏移
                             let center_offset = egui::Vec2::new(

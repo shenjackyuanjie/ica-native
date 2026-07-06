@@ -424,12 +424,12 @@ impl IcaApp {
                     if ui.button("发送").clicked() {
                         send_socket_api = true;
                     }
-                    if let Some(active) = self.active_bridge_state() {
-                        if let Some(response) = &active.last_socket_api_response {
-                            ui.separator();
-                            ui.label("最近响应");
-                            ui.monospace(response);
-                        }
+                    if let Some(active) = self.active_bridge_state()
+                        && let Some(response) = &active.last_socket_api_response
+                    {
+                        ui.separator();
+                        ui.label("最近响应");
+                        ui.monospace(response);
                     }
                 });
             });
@@ -473,12 +473,12 @@ impl IcaApp {
             }
         }
         // 如果删除分组导致当前选中失效
-        if chat_group_editor_open && !self.open_page.chat_group_editor {
-            if let SelectedChatGroup::Custom(idx) = &self.selected_chat_group {
-                if *idx >= self.chat_groups.groups.len() {
-                    self.selected_chat_group = SelectedChatGroup::All;
-                }
-            }
+        if chat_group_editor_open
+            && !self.open_page.chat_group_editor
+            && let SelectedChatGroup::Custom(idx) = &self.selected_chat_group
+            && *idx >= self.chat_groups.groups.len()
+        {
+            self.selected_chat_group = SelectedChatGroup::All;
         }
 
         // 配置文件编辑

@@ -3,6 +3,7 @@ use egui::TextEdit;
 use crate::app::RoomId;
 use crate::ica::types::room::Room;
 
+#[derive(Default)]
 pub struct ChatGroupEditor {
     new_group_name: String,
     editing_index: Option<usize>,
@@ -10,18 +11,6 @@ pub struct ChatGroupEditor {
     error_msg: Option<String>,
     /// 每个分组的搜索文本
     search_texts: Vec<String>,
-}
-
-impl Default for ChatGroupEditor {
-    fn default() -> Self {
-        Self {
-            new_group_name: String::new(),
-            editing_index: None,
-            editing_name: String::new(),
-            error_msg: None,
-            search_texts: Vec::new(),
-        }
-    }
 }
 
 impl ChatGroupEditor {

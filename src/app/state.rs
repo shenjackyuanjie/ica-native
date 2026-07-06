@@ -513,11 +513,11 @@ impl BridgeState {
             self.join_requests.insert(0, request);
         }
         self.join_requests
-            .sort_by(|lhs, rhs| rhs.time.cmp(&lhs.time));
+            .sort_by_key(|request| std::cmp::Reverse(request.time));
     }
 
     pub fn replace_join_requests(&mut self, mut requests: Vec<JoinRequestRoom>) {
-        requests.sort_by(|lhs, rhs| rhs.time.cmp(&lhs.time));
+        requests.sort_by_key(|request| std::cmp::Reverse(request.time));
         self.join_requests = requests;
     }
 

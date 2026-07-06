@@ -60,14 +60,13 @@ impl IcaApp {
                         if !disable_groups
                             && !disable_dot
                             && self.selected_chat_group != SelectedChatGroup::Private
+                            && private_has_unread
                         {
-                            if private_has_unread {
-                                let dot_radius = 3.0;
-                                let dot_pos =
-                                    resp.rect.right_top() + egui::vec2(-dot_radius, dot_radius);
-                                ui.painter()
-                                    .circle_filled(dot_pos, dot_radius, egui::Color32::RED);
-                            }
+                            let dot_radius = 3.0;
+                            let dot_pos =
+                                resp.rect.right_top() + egui::vec2(-dot_radius, dot_radius);
+                            ui.painter()
+                                .circle_filled(dot_pos, dot_radius, egui::Color32::RED);
                         }
                         ui.add(Label::new(text).selectable(false));
                     }
@@ -111,15 +110,15 @@ impl IcaApp {
                                 if ui.button(label).clicked() {
                                     self.chat_groups.toggle_room_in_group(idx, room_id);
                                     self.save_chat_groups();
-                                    if let Some(bridge_idx) = self.active_bridge_idx {
-                                        if let Some(group) = self.chat_groups.groups.get(idx) {
-                                            self.send_update_chat_group(
-                                                bridge_idx,
-                                                &group.name,
-                                                &group.rooms,
-                                                group.include_all_personal,
-                                            );
-                                        }
+                                    if let Some(bridge_idx) = self.active_bridge_idx
+                                        && let Some(group) = self.chat_groups.groups.get(idx)
+                                    {
+                                        self.send_update_chat_group(
+                                            bridge_idx,
+                                            &group.name,
+                                            &group.rooms,
+                                            group.include_all_personal,
+                                        );
                                     }
                                     ui.close();
                                 }
