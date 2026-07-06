@@ -54,11 +54,11 @@ impl IcaApp {
             image::ExtendedColorType::Rgba8,
         )?;
 
-        Ok(PendingImage {
-            name: "clipboard.png".to_string(),
-            mime_type: "image/png".to_string(),
-            data: png_data,
-        })
+        Ok(PendingImage::new(
+            "clipboard.png".to_string(),
+            "image/png".to_string(),
+            png_data,
+        ))
     }
 
     #[cfg(windows)]
@@ -90,11 +90,11 @@ impl IcaApp {
             && let Some(data) = unsafe { Self::read_windows_clipboard_format(png_format)? }
         {
             tracing::debug!("从 Windows 剪贴板读取 PNG 图片: {} bytes", data.len());
-            return Ok(PendingImage {
-                name: "clipboard.png".to_string(),
-                mime_type: "image/png".to_string(),
+            return Ok(PendingImage::new(
+                "clipboard.png".to_string(),
+                "image/png".to_string(),
                 data,
-            });
+            ));
         }
 
         for (format, name) in [(CF_DIBV5 as u32, "CF_DIBV5"), (CF_DIB as u32, "CF_DIB")] {
@@ -161,11 +161,7 @@ impl IcaApp {
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| "image".to_string());
 
-        Ok(PendingImage {
-            name,
-            mime_type: mime_type.to_string(),
-            data,
-        })
+        Ok(PendingImage::new(name, mime_type.to_string(), data))
     }
 
     pub(super) fn guess_mime_type(path: &Path) -> String {
@@ -200,11 +196,7 @@ impl IcaApp {
             .unwrap_or_else(|| "file".to_string());
         let file_type = Self::guess_mime_type(path);
 
-        Ok(PendingFile {
-            name,
-            file_type,
-            data,
-        })
+        Ok(PendingFile::new(name, file_type, data))
     }
 }
 

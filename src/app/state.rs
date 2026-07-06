@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
-use std::sync::atomic::AtomicBool;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU64, Ordering},
+};
 
 use crate::ica::types::{
     RoomId,
@@ -121,16 +124,40 @@ pub enum MessageAction {
 
 #[derive(Debug, Clone)]
 pub struct PendingImage {
+    pub preview_id: u64,
     pub name: String,
     pub mime_type: String,
-    pub data: Vec<u8>,
+    pub data: Arc<[u8]>,
+}
+
+impl PendingImage {
+    pub fn new(name: String, mime_type: String, data: Vec<u8>) -> Self {
+        static NEXT_PREVIEW_ID: AtomicU64 = AtomicU64::new(1);
+
+        Self {
+            preview_id: NEXT_PREVIEW_ID.fetch_add(1, Ordering::Relaxed),
+            name,
+            mime_type,
+            data: data.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct PendingFile {
     pub name: String,
     pub file_type: String,
-    pub data: Vec<u8>,
+    pub data: Arc<[u8]>,
+}
+
+impl PendingFile {
+    pub fn new(name: String, file_type: String, data: Vec<u8>) -> Self {
+        Self {
+            name,
+            file_type,
+            data: data.into(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

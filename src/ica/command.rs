@@ -88,7 +88,7 @@ pub enum IcaCommand {
         reply_to: Option<ReplyMessage>,
         file_name: String,
         file_type: String,
-        file_data: Vec<u8>,
+        file_data: std::sync::Arc<[u8]>,
     },
     DeleteMessage(DeleteMessage),
     RenewMessage {

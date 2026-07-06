@@ -517,7 +517,7 @@ impl IcaApp {
             let mut choose_file = false;
             let mut paste_images = Vec::new();
             let mut remove_pending_image_idx = None;
-            let mut open_pending_image = None::<(String, Vec<u8>)>;
+            let mut open_pending_image = None::<(String, std::sync::Arc<[u8]>)>;
             ui.allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), composer_reserved_height),
                 egui::Layout::top_down(egui::Align::Min),
@@ -561,7 +561,7 @@ impl IcaApp {
                                                     "bytes://pending_image/{}/{}/{}-{}-{}",
                                                     active_bridge_idx,
                                                     room_id,
-                                                    idx,
+                                                    image.preview_id,
                                                     image.data.len(),
                                                     image.name
                                                 );
@@ -904,18 +904,10 @@ impl IcaApp {
                     let image_exts = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
                     if image_exts.contains(&ext.as_str()) {
                         let mime = IcaApp::guess_mime_type(std::path::Path::new(&file_name));
-                        dropped_images.push(PendingImage {
-                            name: file_name,
-                            mime_type: mime,
-                            data,
-                        });
+                        dropped_images.push(PendingImage::new(file_name, mime, data));
                     } else if dropped_file.is_none() {
                         let ft = IcaApp::guess_mime_type(std::path::Path::new(&file_name));
-                        dropped_file = Some(PendingFile {
-                            name: file_name,
-                            file_type: ft,
-                            data,
-                        });
+                        dropped_file = Some(PendingFile::new(file_name, ft, data));
                     } else {
                         dropped_errors
                             .push(format!("暂不支持同时拖放多份非图片文件: {}", file_name));

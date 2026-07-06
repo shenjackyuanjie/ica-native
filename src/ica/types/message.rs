@@ -466,7 +466,7 @@ impl SendMessage {
     /// as_sticker: 是否当作表情发送
     /// file: 图片数据
     /// file_type: 图片类型(MIME) (image/png; image/jpeg)
-    pub fn set_img(&mut self, file: &Vec<u8>, file_type: &str, as_sticker: bool) {
+    pub fn set_img(&mut self, file: &[u8], file_type: &str, as_sticker: bool) {
         self.sticker = as_sticker;
         use base64::{Engine as _, engine::general_purpose};
         let base64_data = general_purpose::STANDARD.encode(file);
