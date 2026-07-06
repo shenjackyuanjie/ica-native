@@ -278,6 +278,8 @@ pub struct BridgeState {
     pub message_layout_cache_keys: HashMap<RoomId, MessageLayoutCacheKey>,
     /// 需要滚动到的目标消息 ID
     pub scroll_to_message_id: Option<String>,
+    /// 为定位引用消息自动补拉历史的次数。
+    pub scroll_to_message_attempts: u8,
 }
 
 impl BridgeState {
@@ -320,6 +322,7 @@ impl BridgeState {
             message_row_layouts: HashMap::new(),
             message_layout_cache_keys: HashMap::new(),
             scroll_to_message_id: None,
+            scroll_to_message_attempts: 0,
         }
     }
 

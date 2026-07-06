@@ -365,13 +365,31 @@ impl IcaApp {
                     }
                 });
 
-            if scroll_to_target.is_some() && (scroll_target_rendered || !scroll_target_found) {
+            let mut load_history_for_scroll_target = false;
+            if scroll_to_target.is_some() && scroll_target_rendered {
                 let bridge_state = &mut self.bridge_states[active_bridge_idx];
                 bridge_state.scroll_to_message_id = None;
-                if !scroll_target_found {
-                    bridge_state.last_notice =
-                        Some("引用消息尚未加载，请向上滚动加载更多历史消息".to_string());
+                bridge_state.scroll_to_message_attempts = 0;
+            } else if scroll_to_target.is_some() && !scroll_target_found {
+                const MAX_SCROLL_TARGET_ATTEMPTS: u8 = 10;
+                let bridge_state = &mut self.bridge_states[active_bridge_idx];
+                if bridge_state.no_more_history.contains(&room_id)
+                    || bridge_state.scroll_to_message_attempts >= MAX_SCROLL_TARGET_ATTEMPTS
+                {
+                    bridge_state.scroll_to_message_id = None;
+                    bridge_state.scroll_to_message_attempts = 0;
+                    bridge_state.last_notice = Some("被引用的消息太远或已不存在".to_string());
+                } else if !bridge_state.loading_older_messages.contains(&room_id) {
+                    bridge_state.scroll_to_message_attempts += 1;
+                    bridge_state.last_notice = Some(format!(
+                        "正在加载引用消息所在的历史记录（{}/{}）",
+                        bridge_state.scroll_to_message_attempts, MAX_SCROLL_TARGET_ATTEMPTS
+                    ));
+                    load_history_for_scroll_target = true;
                 }
+            }
+            if load_history_for_scroll_target {
+                self.request_older_messages(active_bridge_idx, room_id);
             }
 
             if !measured_message_heights.is_empty() {
@@ -542,7 +560,9 @@ impl IcaApp {
                         )));
                     }
                     MessageAction::ScrollToMessage { msg_id } => {
-                        self.bridge_states[active_bridge_idx].scroll_to_message_id = Some(msg_id);
+                        let bridge_state = &mut self.bridge_states[active_bridge_idx];
+                        bridge_state.scroll_to_message_id = Some(msg_id);
+                        bridge_state.scroll_to_message_attempts = 0;
                     }
                     MessageAction::RenewMessage {
                         room_id,

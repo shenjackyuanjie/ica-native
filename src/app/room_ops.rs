@@ -30,6 +30,9 @@ impl IcaApp {
     }
 
     pub fn request_older_messages(&mut self, bridge_idx: usize, room_id: RoomId) {
+        let Some(client) = self.ica_clients.get(bridge_idx) else {
+            return;
+        };
         let Some(state) = self.bridge_states.get_mut(bridge_idx) else {
             return;
         };
@@ -41,9 +44,6 @@ impl IcaApp {
         let offset = state.messages_by_room.get(&room_id).map_or(0, |m| m.len());
         state.loading_older_messages.insert(room_id);
 
-        let Some(client) = self.ica_clients.get(bridge_idx) else {
-            return;
-        };
         if let Err(e) = client
             .command_tx
             .send(IcaCommand::FetchOlderMessages { room_id, offset })
@@ -138,6 +138,7 @@ impl IcaApp {
         if let Some(state) = self.active_bridge_state_mut() {
             state.selected_room_id = Some(room_id);
             state.scroll_to_message_id = None;
+            state.scroll_to_message_attempts = 0;
             if clear_search_on_room_select {
                 state.room_search_query.clear();
             }
