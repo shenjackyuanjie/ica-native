@@ -10,6 +10,7 @@ mod windows;
 
 use std::borrow::Cow;
 use std::ops::Range;
+use std::time::Duration;
 
 use crate::app::MessageRowLayout;
 
@@ -59,6 +60,75 @@ pub(super) fn is_image_file_type(file_type: &str) -> bool {
         || file_type
             .get(..6)
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"))
+}
+
+pub(super) fn image_url_looks_like_gif(url: &str) -> bool {
+    let url = url.to_ascii_lowercase();
+    url.split(['?', '#'])
+        .next()
+        .is_some_and(|path| path.ends_with(".gif") || path.contains(".gif/"))
+}
+
+pub(super) fn should_probe_gif_after_static_error(err: &egui::load::LoadError) -> bool {
+    matches!(
+        err,
+        egui::load::LoadError::NoMatchingImageLoader { .. }
+            | egui::load::LoadError::FormatNotSupported { .. }
+    )
+}
+
+pub(super) fn try_load_gif_texture(
+    ctx: &egui::Context,
+    url: &str,
+    texture_options: egui::TextureOptions,
+    size_hint: egui::load::SizeHint,
+) -> Option<egui::load::TextureLoadResult> {
+    match ctx.try_load_bytes(url) {
+        Ok(egui::load::BytesPoll::Pending { size }) => {
+            Some(Ok(egui::load::TexturePoll::Pending { size }))
+        }
+        Ok(egui::load::BytesPoll::Ready { bytes, mime, .. }) => {
+            let is_gif_mime = mime
+                .as_deref()
+                .is_some_and(|mime| mime.to_ascii_lowercase().contains("image/gif"));
+            if !is_gif_mime && !egui::has_gif_magic_header(&bytes) {
+                return None;
+            }
+            if !egui::has_gif_magic_header(&bytes) {
+                return None;
+            }
+
+            let frame_uri = gif_frame_uri(ctx, url);
+            Some(ctx.try_load_texture(&frame_uri, texture_options, size_hint))
+        }
+        Err(err) => Some(Err(err)),
+    }
+}
+
+fn gif_frame_uri(ctx: &egui::Context, url: &str) -> String {
+    let frame_index = ctx
+        .data(|data| data.get_temp::<egui::FrameDurations>(egui::Id::new(url)))
+        .map(|durations| gif_frame_index(ctx, &durations))
+        .unwrap_or(0);
+    format!("{url}#{frame_index}")
+}
+
+fn gif_frame_index(ctx: &egui::Context, durations: &egui::FrameDurations) -> usize {
+    let now = ctx.input(|input| Duration::from_secs_f64(input.time));
+    let total: Duration = durations.all().sum();
+    let pos_ms = now.as_millis() % total.as_millis().max(1);
+    let mut cumulative_ms = 0;
+
+    for (index, duration) in durations.all().enumerate() {
+        cumulative_ms += duration.as_millis();
+        if pos_ms < cumulative_ms {
+            let ms_until_next_frame = cumulative_ms - pos_ms;
+            ctx.request_repaint_after(Duration::from_millis(ms_until_next_frame as u64));
+            return index;
+        }
+    }
+
+    0
 }
 
 pub(super) fn replace_text_char_range(

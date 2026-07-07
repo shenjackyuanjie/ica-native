@@ -2,6 +2,8 @@ use std::sync::atomic::Ordering;
 
 use crate::app::IcaApp;
 
+use super::{should_probe_gif_after_static_error, try_load_gif_texture};
+
 impl IcaApp {
     pub(super) fn render_image_viewer(&mut self, ctx: &egui::Context) {
         // 图片查看器关闭信号检测
@@ -169,11 +171,7 @@ impl IcaApp {
                     if ctrl_down {
                         viewer_state.lock().unwrap().zoom_out();
                     }
-                    match ui.ctx().try_load_texture(
-                        &url,
-                        egui::TextureOptions::default(),
-                        egui::load::SizeHint::default(),
-                    ) {
+                    match load_viewer_texture(ui.ctx(), &url) {
                         Ok(egui::load::TexturePoll::Ready { texture }) => {
                             let content_rect = ui.available_rect_before_wrap();
                             let response =
@@ -322,5 +320,22 @@ impl IcaApp {
                 });
             });
         }
+    }
+}
+
+fn load_viewer_texture(ctx: &egui::Context, url: &str) -> egui::load::TextureLoadResult {
+    match ctx.try_load_texture(
+        url,
+        egui::TextureOptions::default(),
+        egui::load::SizeHint::default(),
+    ) {
+        Err(err) if should_probe_gif_after_static_error(&err) => try_load_gif_texture(
+            ctx,
+            url,
+            egui::TextureOptions::default(),
+            egui::load::SizeHint::default(),
+        )
+        .unwrap_or(Err(err)),
+        result => result,
     }
 }

@@ -1,10 +1,12 @@
 use crate::app::{IcaApp, MessageAction};
 use crate::ica::types::RoomId;
-use std::time::Duration;
 
 use egui::{Hyperlink, Image, Label};
 
-use super::{format_message_content, is_image_file_type};
+use super::{
+    format_message_content, image_url_looks_like_gif, is_image_file_type,
+    should_probe_gif_after_static_error, try_load_gif_texture,
+};
 
 /// 解析消息内容中的 [Face: id] 标记，返回文本/表情片段
 enum ContentSegment<'a> {
@@ -121,14 +123,12 @@ fn render_message_image(
             ui.weak("图片加载中...");
         }
         Err(err) => {
-            let err_text = err.to_string();
-            if err_text.contains("图片链接已过期") {
-                ui.colored_label(egui::Color32::LIGHT_RED, "图片链接已过期");
-                ui.weak("需要重新获取该图片 URL");
-            } else {
-                ui.colored_label(egui::Color32::LIGHT_RED, "图片加载失败");
-                ui.weak(err_text);
+            if should_probe_gif_after_static_error(&err)
+                && let Some(clicked_url) = render_gif_message_image(ui, url, max_width)
+            {
+                return clicked_url;
             }
+            show_image_load_error(ui, &err);
         }
     }
     None
@@ -140,10 +140,7 @@ fn should_try_gif_preview(url: &str, file_type: &str) -> bool {
         return true;
     }
 
-    let url = url.to_ascii_lowercase();
-    url.split(['?', '#'])
-        .next()
-        .is_some_and(|path| path.ends_with(".gif") || path.contains(".gif/"))
+    image_url_looks_like_gif(url)
 }
 
 fn render_gif_message_image(
@@ -151,66 +148,45 @@ fn render_gif_message_image(
     url: &str,
     max_width: f32,
 ) -> Option<Option<String>> {
-    let bytes_poll = ui.ctx().try_load_bytes(url);
-    let bytes = match bytes_poll {
-        Ok(egui::load::BytesPoll::Ready { bytes, mime, .. }) => {
-            let is_gif_mime = mime
-                .as_deref()
-                .is_some_and(|mime| mime.to_ascii_lowercase().contains("image/gif"));
-            if !is_gif_mime && !egui::has_gif_magic_header(&bytes) {
-                return None;
-            }
-            bytes
-        }
-        Ok(egui::load::BytesPoll::Pending { .. }) => {
+    match try_load_gif_texture(
+        ui.ctx(),
+        url,
+        egui::TextureOptions::default(),
+        egui::load::SizeHint::default(),
+    )? {
+        Ok(egui::load::TexturePoll::Pending { .. }) => {
             ui.add(egui::Spinner::new());
             ui.weak("图片加载中...");
-            return Some(None);
+            Some(None)
         }
-        Err(_) => return None,
-    };
-
-    if !egui::has_gif_magic_header(&bytes) {
-        return None;
-    }
-
-    let frame_uri = gif_frame_uri(ui.ctx(), url);
-    let response = ui.add(
-        Image::from_uri(frame_uri)
-            .max_width(max_width)
-            .max_height(240.0)
-            .maintain_aspect_ratio(true)
-            .sense(egui::Sense::click()),
-    );
-    let clicked = response.clicked();
-    response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    Some(clicked.then(|| url.to_string()))
-}
-
-fn gif_frame_uri(ctx: &egui::Context, url: &str) -> String {
-    let frame_index = ctx
-        .data(|data| data.get_temp::<egui::FrameDurations>(egui::Id::new(url)))
-        .map(|durations| gif_frame_index(ctx, &durations))
-        .unwrap_or(0);
-    format!("{url}#{frame_index}")
-}
-
-fn gif_frame_index(ctx: &egui::Context, durations: &egui::FrameDurations) -> usize {
-    let now = ctx.input(|input| Duration::from_secs_f64(input.time));
-    let total: Duration = durations.all().sum();
-    let pos_ms = now.as_millis() % total.as_millis().max(1);
-    let mut cumulative_ms = 0;
-
-    for (index, duration) in durations.all().enumerate() {
-        cumulative_ms += duration.as_millis();
-        if pos_ms < cumulative_ms {
-            let ms_until_next_frame = cumulative_ms - pos_ms;
-            ctx.request_repaint_after(Duration::from_millis(ms_until_next_frame as u64));
-            return index;
+        Ok(egui::load::TexturePoll::Ready { texture }) => {
+            let response = ui.add(
+                Image::from_texture(texture)
+                    .max_width(max_width)
+                    .max_height(240.0)
+                    .maintain_aspect_ratio(true)
+                    .sense(egui::Sense::click()),
+            );
+            let clicked = response.clicked();
+            response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            Some(clicked.then(|| url.to_string()))
+        }
+        Err(err) => {
+            show_image_load_error(ui, &err);
+            Some(None)
         }
     }
+}
 
-    0
+fn show_image_load_error(ui: &mut egui::Ui, err: &egui::load::LoadError) {
+    let err_text = err.to_string();
+    if err_text.contains("图片链接已过期") {
+        ui.colored_label(egui::Color32::LIGHT_RED, "图片链接已过期");
+        ui.weak("需要重新获取该图片 URL");
+    } else {
+        ui.colored_label(egui::Color32::LIGHT_RED, "图片加载失败");
+        ui.weak(err_text);
+    }
 }
 
 pub(in crate::app::renders) struct MessageRenderOptions {
