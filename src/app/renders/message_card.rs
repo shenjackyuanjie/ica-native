@@ -1,5 +1,7 @@
 use crate::app::{IcaApp, MessageAction};
 use crate::ica::types::RoomId;
+use std::time::Duration;
+
 use egui::{Hyperlink, Image, Label};
 
 use super::{format_message_content, is_image_file_type};
@@ -83,7 +85,18 @@ fn render_rich_content(ui: &mut egui::Ui, content: &str) {
 }
 
 /// 渲染消息中的图片缩略图，返回点击的图片 URL（用于预览）
-fn render_message_image(ui: &mut egui::Ui, url: &str, max_width: f32) -> Option<String> {
+fn render_message_image(
+    ui: &mut egui::Ui,
+    url: &str,
+    file_type: &str,
+    max_width: f32,
+) -> Option<String> {
+    if should_try_gif_preview(url, file_type)
+        && let Some(clicked_url) = render_gif_message_image(ui, url, max_width)
+    {
+        return clicked_url;
+    }
+
     match ui.ctx().try_load_texture(
         url,
         egui::TextureOptions::default(),
@@ -119,6 +132,85 @@ fn render_message_image(ui: &mut egui::Ui, url: &str, max_width: f32) -> Option<
         }
     }
     None
+}
+
+fn should_try_gif_preview(url: &str, file_type: &str) -> bool {
+    let file_type = file_type.to_ascii_lowercase();
+    if file_type.contains("gif") {
+        return true;
+    }
+
+    let url = url.to_ascii_lowercase();
+    url.split(['?', '#'])
+        .next()
+        .is_some_and(|path| path.ends_with(".gif") || path.contains(".gif/"))
+}
+
+fn render_gif_message_image(
+    ui: &mut egui::Ui,
+    url: &str,
+    max_width: f32,
+) -> Option<Option<String>> {
+    let bytes_poll = ui.ctx().try_load_bytes(url);
+    let bytes = match bytes_poll {
+        Ok(egui::load::BytesPoll::Ready { bytes, mime, .. }) => {
+            let is_gif_mime = mime
+                .as_deref()
+                .is_some_and(|mime| mime.to_ascii_lowercase().contains("image/gif"));
+            if !is_gif_mime && !egui::has_gif_magic_header(&bytes) {
+                return None;
+            }
+            bytes
+        }
+        Ok(egui::load::BytesPoll::Pending { .. }) => {
+            ui.add(egui::Spinner::new());
+            ui.weak("图片加载中...");
+            return Some(None);
+        }
+        Err(_) => return None,
+    };
+
+    if !egui::has_gif_magic_header(&bytes) {
+        return None;
+    }
+
+    let frame_uri = gif_frame_uri(ui.ctx(), url);
+    let response = ui.add(
+        Image::from_uri(frame_uri)
+            .max_width(max_width)
+            .max_height(240.0)
+            .maintain_aspect_ratio(true)
+            .sense(egui::Sense::click()),
+    );
+    let clicked = response.clicked();
+    response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    Some(clicked.then(|| url.to_string()))
+}
+
+fn gif_frame_uri(ctx: &egui::Context, url: &str) -> String {
+    let frame_index = ctx
+        .data(|data| data.get_temp::<egui::FrameDurations>(egui::Id::new(url)))
+        .map(|durations| gif_frame_index(ctx, &durations))
+        .unwrap_or(0);
+    format!("{url}#{frame_index}")
+}
+
+fn gif_frame_index(ctx: &egui::Context, durations: &egui::FrameDurations) -> usize {
+    let now = ctx.input(|input| Duration::from_secs_f64(input.time));
+    let total: Duration = durations.all().sum();
+    let pos_ms = now.as_millis() % total.as_millis().max(1);
+    let mut cumulative_ms = 0;
+
+    for (index, duration) in durations.all().enumerate() {
+        cumulative_ms += duration.as_millis();
+        if pos_ms < cumulative_ms {
+            let ms_until_next_frame = cumulative_ms - pos_ms;
+            ctx.request_repaint_after(Duration::from_millis(ms_until_next_frame as u64));
+            return index;
+        }
+    }
+
+    0
 }
 
 pub(in crate::app::renders) struct MessageRenderOptions {
@@ -358,6 +450,7 @@ impl IcaApp {
                                                         if let Some(url) = render_message_image(
                                                             ui,
                                                             &file.url,
+                                                            &file.file_type,
                                                             image_max_width,
                                                         ) {
                                                             action =
