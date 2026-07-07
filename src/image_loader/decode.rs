@@ -14,7 +14,7 @@ pub fn normalize_uri(uri: &str) -> &str {
 }
 
 /// 对 `file://` URI 做一个非常保守的快速过滤：
-/// 仅把我们明确不想处理的格式提前让出去。
+/// 仅把 SVG/GIF 提前让出去。
 ///
 /// 这样不会因为扩展名奇怪/缺失而误伤本来能通过字节探测解码的图片。
 pub fn should_handle_file_uri(uri: &str) -> bool {
@@ -22,13 +22,13 @@ pub fn should_handle_file_uri(uri: &str) -> bool {
         return true;
     };
 
-    !matches!(ext.as_str(), "svg" | "gif" | "webp")
+    !matches!(ext.as_str(), "svg" | "gif")
 }
 
 /// MIME 过滤：明确不想自己处理的格式直接放给别的 loader。
 pub fn is_supported_mime(mime: &str) -> bool {
     let mime = mime.to_ascii_lowercase();
-    if mime.contains("image/svg") || mime.contains("image/gif") || mime.contains("image/webp") {
+    if mime.contains("image/svg") || mime.contains("image/gif") {
         return false;
     }
 
@@ -45,7 +45,7 @@ pub fn is_supported_mime(mime: &str) -> bool {
         return true;
     }
 
-    ImageFormat::from_mime_type(&mime).is_some_and(|format| format.reading_enabled())
+    ImageFormat::from_mime_type(&mime).is_some_and(can_decode_format)
 }
 
 /// 有些响应没有 MIME，只能从内容本身判断是不是 SVG。
@@ -61,9 +61,9 @@ pub fn is_svg_bytes(bytes: &Bytes) -> bool {
 /// 判断一份已拿到的字节是否应该继续由我们这个 loader 处理。
 ///
 /// 这里会同时参考 MIME 和字节头：
-/// - MIME 已明确声明为 svg/gif/webp 时，直接放弃；
+/// - MIME 已明确声明为 svg/gif 时，直接放弃；
 /// - MIME 不可靠或缺失时，再用字节头做兜底；
-/// - 对于 `gif/webp`，优先交给别的 loader 处理，避免我们把动图错误地解成单帧。
+/// - GIF 交给 egui_extras 的动图 loader，保证聊天里能预览动图。
 pub fn should_handle_loaded_bytes(mime: Option<&str>, bytes: &Bytes) -> bool {
     if let Some(mime) = mime
         && !is_supported_mime(mime)
@@ -76,11 +76,15 @@ pub fn should_handle_loaded_bytes(mime: Option<&str>, bytes: &Bytes) -> bool {
     }
 
     match image::guess_format(bytes.as_ref()) {
-        Ok(ImageFormat::Gif | ImageFormat::WebP) => false,
-        Ok(format) => format.reading_enabled(),
+        Ok(ImageFormat::Gif) => false,
+        Ok(format) => can_decode_format(format),
         // 猜不出来时不要过早拒绝，交给真正的解码流程报错会更准确。
         Err(_) => true,
     }
+}
+
+fn can_decode_format(format: ImageFormat) -> bool {
+    format.reading_enabled()
 }
 
 /// 在后台线程里把原始字节解码成 `egui::ColorImage`。
