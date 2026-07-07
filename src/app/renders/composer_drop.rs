@@ -59,7 +59,7 @@ impl IcaApp {
                 }
 
                 let ext = file_name.rsplit('.').next().unwrap_or("").to_lowercase();
-                let image_exts = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+                let image_exts = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
                 if image_exts.contains(&ext.as_str()) {
                     let mime = IcaApp::guess_mime_type(std::path::Path::new(&file_name));
                     dropped_images.push(PendingImage::new(file_name, mime, data));

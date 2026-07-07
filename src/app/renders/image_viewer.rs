@@ -115,6 +115,10 @@ impl IcaApp {
                                         && &data[8..12] == b"WEBP"
                                     {
                                         "webp"
+                                    } else if data.starts_with(b"MM\0*")
+                                        || data.starts_with(b"II*\0")
+                                    {
+                                        "tiff"
                                     } else {
                                         "png"
                                     };

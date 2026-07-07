@@ -291,7 +291,10 @@ impl IcaApp {
         };
 
         let Some(paths) = rfd::FileDialog::new()
-            .add_filter("image", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
+            .add_filter(
+                "image",
+                &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"],
+            )
             .pick_files()
         else {
             return;

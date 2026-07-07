@@ -11,6 +11,7 @@ impl IcaApp {
             "gif" => Some("image/gif"),
             "webp" => Some("image/webp"),
             "bmp" => Some("image/bmp"),
+            "tif" | "tiff" => Some("image/tiff"),
             _ => None,
         }
     }
@@ -175,6 +176,7 @@ impl IcaApp {
             "gif" => "image/gif",
             "webp" => "image/webp",
             "bmp" => "image/bmp",
+            "tif" | "tiff" => "image/tiff",
             "mp3" => "audio/mpeg",
             "wav" => "audio/wav",
             "ogg" => "audio/ogg",
