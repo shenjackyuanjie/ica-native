@@ -78,25 +78,21 @@ fn egui_main() -> anyhow::Result<()> {
             .with_inner_size([config.screen.width, config.screen.height])
             .with_drag_and_drop(true)
             .with_icon(icon),
-        wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(
-            eframe::egui_wgpu::SurfaceConfig {
-                present_mode: if config.screen.vsync {
-                    eframe::wgpu::PresentMode::AutoVsync
-                } else {
-                    eframe::wgpu::PresentMode::AutoNoVsync
-                },
-                desired_maximum_frame_latency: eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY
-                    .desired_maximum_frame_latency,
-            },
-        ),
+        renderer: eframe::Renderer::Glow,
+        glow_options: eframe::egui_glow::GlowConfiguration {
+            vsync: config.screen.vsync,
+            ..Default::default()
+        },
         centered: config.screen.centered,
         ..Default::default()
     };
+    memory_probe::log("egui:before_run_native");
 
     eframe::run_native(
         "ica native",
         options,
         Box::new(|cc| {
+            memory_probe::log("egui:creation_context");
             // 安装 egui extra
             egui_extras::install_image_loaders(&cc.egui_ctx);
             memory_probe::log("egui:image_loaders");

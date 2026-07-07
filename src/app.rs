@@ -539,7 +539,7 @@ impl eframe::App for IcaApp {
             !has_paste && (paste_shortcut || Self::system_paste_shortcut_pressed());
     }
 
-    fn on_exit(&mut self) {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         for sender in self.socketio_stop_senders.drain(..) {
             let _ = sender.send(());
         }
