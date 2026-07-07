@@ -11,6 +11,7 @@
 
 mod decode;
 mod disk;
+mod gif;
 mod state;
 mod texture;
 mod util;
@@ -325,6 +326,7 @@ pub fn install_tracking_image_loader(ctx: &Context) {
 
     let cfg = cfg::get_cfg_snapshot();
     ctx.add_image_loader(Arc::new(TrackingImageLoader::new()));
+    gif::install(ctx, cfg.image_cache_max_bytes);
     texture::install(ctx, cfg.image_cache_max_bytes);
     info!("installed TrackingImageLoader (state-machine + worker-pool)");
 }

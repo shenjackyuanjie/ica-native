@@ -10,7 +10,7 @@ eframe = { version = "0.35.0", default-features = false, features = [
     "glow",
 ] }
 egui = "0.35.0"
-egui_extras = { version = "0.35.0", features = ["file", "http", "svg", "gif"] }
+egui_extras = { version = "0.35.0", features = ["file", "http", "svg"] }
 
 anyhow = "1.0"
 

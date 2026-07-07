@@ -1103,7 +1103,6 @@ dependencies = [
  "egui",
  "ehttp",
  "enum-map",
- "image",
  "itertools",
  "log",
  "mime_guess2",
