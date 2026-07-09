@@ -33,4 +33,6 @@ pub struct AppOpenPage {
     pub room_tools: bool,
     /// 全群自动签到
     pub auto_sign: bool,
+    /// QQ 关系网分析
+    pub relation_network: bool,
 }

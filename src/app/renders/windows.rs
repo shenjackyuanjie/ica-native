@@ -445,6 +445,7 @@ impl IcaApp {
         self.render_message_search_window(&ctx);
         self.render_room_tools_window(&ctx);
         self.render_auto_sign_window(&ctx);
+        self.render_relation_network_window(&ctx);
 
         // 聊天分组编辑器
         let chat_group_editor_open = self.open_page.chat_group_editor;
