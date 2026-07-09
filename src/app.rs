@@ -45,6 +45,7 @@ use group_tools::GroupToolsState;
 use message_tools::MessageToolsState;
 use online_mode::OnlineMode;
 use open_page::AppOpenPage;
+use relation_network::RelationNetworkState;
 use room_tools::RoomToolsState;
 pub use state::*;
 
@@ -140,6 +141,8 @@ pub struct IcaApp {
     pub room_tools: RoomToolsState,
     /// 全群自动签到状态
     pub auto_sign: AutoSignState,
+    /// QQ 关系网分析状态
+    pub relation_network: RelationNetworkState,
 }
 
 impl IcaApp {
@@ -389,6 +392,7 @@ impl IcaApp {
             message_tools: MessageToolsState::default(),
             room_tools: RoomToolsState::default(),
             auto_sign: AutoSignState::default(),
+            relation_network: RelationNetworkState::default(),
         }
     }
 
@@ -491,6 +495,13 @@ impl IcaApp {
 
                 prev_auth_state != AuthState::Succeeded && state.auth_state == AuthState::Succeeded
             };
+
+            if matches!(
+                event_name,
+                "onlineData" | "setAllRooms" | "groupMembersResponse"
+            ) {
+                self.refresh_relation_network_after_bridge_update(bridge_idx);
+            }
 
             if should_refresh_system_messages {
                 self.request_system_messages(bridge_idx);

@@ -1,10 +1,10 @@
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet};
 
+use crate::ica::IcaCommand;
 use crate::ica::types::{RoomId, room::Room};
 
-use super::state::GroupMember;
+use super::IcaApp;
+use super::state::{BridgeState, GroupMember};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RelationNodeKind {
@@ -228,6 +228,95 @@ impl Default for RelationNetworkState {
             graph: RelationGraph::default(),
         }
     }
+}
+
+impl IcaApp {
+    pub fn rebuild_relation_network(&mut self) {
+        let Some(state) = self.active_bridge_state() else {
+            self.relation_network.graph = RelationGraph::default();
+            return;
+        };
+
+        let login_user_id = relation_login_user_id(state);
+        let rooms = state.rooms.clone();
+        let group_members_by_room = state.group_members_by_room.clone();
+        self.relation_network.graph = RelationGraphBuilder::build(
+            login_user_id,
+            &rooms,
+            &group_members_by_room,
+            self.relation_network.include_unloaded_groups,
+        );
+        self.apply_relation_network_auto_degrade();
+    }
+
+    pub fn request_relation_network_members(&mut self, limit: Option<usize>) {
+        let Some(bridge_idx) = self.active_bridge_idx else {
+            return;
+        };
+        let Some(state) = self.bridge_states.get_mut(bridge_idx) else {
+            return;
+        };
+
+        let mut queued = 0usize;
+        let group_room_ids: Vec<_> = state
+            .rooms
+            .iter()
+            .filter(|room| room.room_id < 0)
+            .map(|room| room.room_id)
+            .collect();
+
+        for room_id in group_room_ids {
+            if state.group_members_by_room.contains_key(&room_id)
+                || state.loading_group_members.contains(&room_id)
+            {
+                continue;
+            }
+            state.loading_group_members.insert(room_id);
+            if let Err(e) = self.ica_clients[bridge_idx]
+                .command_tx
+                .send(IcaCommand::FetchGroupMembers { room_id })
+            {
+                state.loading_group_members.remove(&room_id);
+                state.last_error = Some(format!("关系网群成员请求失败: {e}"));
+                break;
+            }
+
+            queued += 1;
+            if limit.is_some_and(|limit| queued >= limit) {
+                break;
+            }
+        }
+
+        if queued > 0 {
+            state.last_notice = Some(format!("关系网已开始加载 {queued} 个群的成员列表"));
+        } else {
+            state.last_notice = Some("关系网没有需要加载的群成员列表".to_string());
+        }
+    }
+
+    pub fn refresh_relation_network_after_bridge_update(&mut self, bridge_idx: usize) {
+        if Some(bridge_idx) != self.active_bridge_idx {
+            return;
+        }
+        self.rebuild_relation_network();
+    }
+
+    fn apply_relation_network_auto_degrade(&mut self) {
+        let node_count = self.relation_network.graph.nodes.len();
+        if node_count > 2_000 {
+            self.relation_network.show_labels = false;
+        }
+        if node_count > 10_000 {
+            self.relation_network.options.show_acquaintances = false;
+        }
+        if node_count > 50_000 {
+            self.relation_network.options.show_strangers = false;
+        }
+    }
+}
+
+fn relation_login_user_id(state: &BridgeState) -> Option<i64> {
+    (state.online_data.qqid > 0).then_some(state.online_data.qqid)
 }
 
 #[derive(Debug, Default)]
