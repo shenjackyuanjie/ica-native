@@ -28,6 +28,7 @@ mod message_search;
 mod message_tools;
 pub mod online_mode;
 pub mod open_page;
+mod relation_network;
 pub mod renders;
 mod room_ops;
 mod room_tools;
