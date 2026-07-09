@@ -206,6 +206,15 @@ impl RelationGraphOptions {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum RelationViewMode {
+    #[default]
+    Default,
+    Focused(String),
+    MultiSelect,
+    MultiSelectRelationship,
+}
+
 #[derive(Debug, Clone)]
 pub struct RelationNetworkState {
     pub include_unloaded_groups: bool,
@@ -215,6 +224,9 @@ pub struct RelationNetworkState {
     pub search_query: String,
     pub focused_node_id: Option<String>,
     pub selected_node_id: Option<String>,
+    pub hovered_node_id: Option<String>,
+    pub selected_node_ids: HashSet<String>,
+    pub view_mode: RelationViewMode,
     pub graph: RelationGraph,
     pub closed: bool,
     pub pending_load_limit: Option<Option<usize>>,
@@ -232,6 +244,9 @@ impl Default for RelationNetworkState {
             search_query: String::new(),
             focused_node_id: None,
             selected_node_id: None,
+            hovered_node_id: None,
+            selected_node_ids: HashSet::new(),
+            view_mode: RelationViewMode::Default,
             graph: RelationGraph::default(),
             closed: false,
             pending_load_limit: None,
@@ -430,28 +445,64 @@ fn render_relation_network_ui(
     let mut relation_network = relation_network.lock().unwrap();
 
     ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width(250.0);
-            ui.heading("关系网");
-            ui.label(format!("会话: {}", bridge_snapshot.rooms_len));
-            ui.label(format!(
-                "群成员: {}/{} 已加载，{} 加载中",
-                relation_network.graph.loaded_group_count,
-                relation_network.graph.total_group_count,
-                bridge_snapshot.loading_groups
-            ));
+        render_relation_network_sidebar(ui, &mut relation_network, bridge_snapshot, command_tx);
+        ui.separator();
+        render_relation_network_canvas(ui, &mut relation_network);
+    });
+}
+
+fn render_relation_network_sidebar(
+    ui: &mut egui::Ui,
+    relation_network: &mut RelationNetworkState,
+    bridge_snapshot: &RelationBridgeSnapshot,
+    command_tx: Option<&UnboundedSender<IcaCommand>>,
+) {
+    egui::ScrollArea::vertical()
+        .id_salt("relation_network_sidebar")
+        .max_width(292.0)
+        .show(ui, |ui| {
+            ui.set_width(268.0);
+            ui.heading("QQ 关系网");
+            ui.horizontal_wrapped(|ui| {
+                ui.label(format!("会话: {}", bridge_snapshot.rooms_len));
+                ui.separator();
+                ui.label(format!(
+                    "群成员: {}/{}",
+                    relation_network.graph.loaded_group_count,
+                    relation_network.graph.total_group_count
+                ));
+                if bridge_snapshot.loading_groups > 0 {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(230, 126, 34),
+                        format!("{} 加载中", bridge_snapshot.loading_groups),
+                    );
+                }
+            });
             if relation_network.graph.loaded_group_count != bridge_snapshot.loaded_groups {
                 ui.weak("图数据等待下一次刷新");
             }
+
+            ui.add_space(6.0);
+            render_relation_stats(ui, relation_network);
             ui.separator();
 
-            if ui.button("重建关系网").clicked() {
-                relation_network.pending_rebuild = true;
-            }
+            ui.horizontal(|ui| {
+                if ui.button("刷新").clicked() {
+                    relation_network.pending_rebuild = true;
+                }
+                let multi_label = match relation_network.view_mode {
+                    RelationViewMode::MultiSelectRelationship => "退出",
+                    RelationViewMode::MultiSelect => "查看关系",
+                    _ => "多选模式",
+                };
+                if ui.button(multi_label).clicked() {
+                    toggle_relation_multi_select(relation_network);
+                }
+            });
             ui.horizontal(|ui| {
                 if ui.button("加载 10 个群").clicked() {
                     queue_relation_member_requests(
-                        &mut relation_network,
+                        relation_network,
                         bridge_snapshot,
                         command_tx,
                         Some(10),
@@ -459,7 +510,7 @@ fn render_relation_network_ui(
                 }
                 if ui.button("加载全部群").clicked() {
                     queue_relation_member_requests(
-                        &mut relation_network,
+                        relation_network,
                         bridge_snapshot,
                         command_tx,
                         None,
@@ -475,50 +526,22 @@ fn render_relation_network_ui(
                 relation_network.pending_rebuild = true;
             }
             ui.checkbox(&mut relation_network.show_labels, "显示标签");
-            ui.separator();
 
-            let counts = relation_network.graph.node_counts();
-            ui.checkbox(
-                &mut relation_network.options.show_self_user,
-                format!(
-                    "{} ({})",
-                    RelationNodeKind::SelfUser.label(),
-                    counts.self_user
-                ),
-            );
-            ui.checkbox(
-                &mut relation_network.options.show_friends,
-                format!("{} ({})", RelationNodeKind::Friend.label(), counts.friend),
-            );
-            ui.checkbox(
-                &mut relation_network.options.show_acquaintances,
-                format!(
-                    "{} ({})",
-                    RelationNodeKind::Acquaintance.label(),
-                    counts.acquaintance
-                ),
-            );
-            ui.checkbox(
-                &mut relation_network.options.show_strangers,
-                format!(
-                    "{} ({})",
-                    RelationNodeKind::Stranger.label(),
-                    counts.stranger
-                ),
-            );
-            ui.checkbox(
-                &mut relation_network.options.show_groups,
-                format!("{} ({})", RelationNodeKind::Group.label(), counts.group),
-            );
+            ui.separator();
+            render_relation_filter_options(ui, relation_network);
 
             ui.separator();
             ui.add(
                 egui::TextEdit::singleline(&mut relation_network.search_query)
                     .hint_text("搜索昵称 / QQ / 群号"),
             );
-            if ui.button("清除聚焦").clicked() {
+
+            render_relation_view_hint(ui, relation_network);
+            if ui.button("清除聚焦 / 多选").clicked() {
                 relation_network.focused_node_id = None;
                 relation_network.selected_node_id = None;
+                relation_network.selected_node_ids.clear();
+                relation_network.view_mode = RelationViewMode::Default;
             }
 
             if let Some(node_id) = &relation_network.selected_node_id
@@ -529,38 +552,179 @@ fn render_relation_network_ui(
                     .find(|node| &node.id == node_id)
             {
                 ui.separator();
-                ui.strong(&node.name);
-                ui.label(node.kind.label());
-                if let Some(qq) = node.qq {
-                    ui.label(format!("QQ: {qq}"));
-                }
-                if let Some(group_id) = node.group_id {
-                    ui.label(format!("群号: {group_id}"));
-                }
-                if let Some(member_count) = node.member_count {
-                    ui.label(format!("成员数: {member_count}"));
-                }
-                if node.common_group_count > 0 {
-                    ui.label(format!("共同群: {}", node.common_group_count));
-                }
-                ui.label(format!("关联数: {}", node.value));
-                if !node.role.trim().is_empty() {
-                    ui.label(format!("角色: {}", node.role));
-                }
+                render_relation_node_detail(ui, node);
             }
-        });
 
-        ui.separator();
-        render_relation_network_canvas(ui, &mut relation_network);
+            ui.separator();
+            render_relation_size_legend(ui);
+        });
+}
+
+fn render_relation_stats(ui: &mut egui::Ui, relation_network: &RelationNetworkState) {
+    let counts = relation_network.graph.node_counts();
+    egui::Grid::new("relation_stats_grid")
+        .num_columns(2)
+        .spacing([8.0, 6.0])
+        .show(ui, |ui| {
+            relation_stat_card(ui, "节点", relation_network.graph.nodes.len());
+            relation_stat_card(ui, "连线", relation_network.graph.links.len());
+            ui.end_row();
+            relation_stat_card(ui, "好友", counts.friend);
+            relation_stat_card(ui, "群", counts.group);
+            ui.end_row();
+        });
+}
+
+fn relation_stat_card(ui: &mut egui::Ui, label: &str, value: usize) {
+    egui::Frame::NONE
+        .fill(egui::Color32::from_rgb(248, 249, 250))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.weak(label);
+                ui.strong(value.to_string());
+            });
+        });
+}
+
+fn render_relation_filter_options(ui: &mut egui::Ui, relation_network: &mut RelationNetworkState) {
+    let counts = relation_network.graph.node_counts();
+    relation_option_row(
+        ui,
+        RelationNodeKind::SelfUser,
+        &mut relation_network.options.show_self_user,
+        counts.self_user,
+    );
+    relation_option_row(
+        ui,
+        RelationNodeKind::Friend,
+        &mut relation_network.options.show_friends,
+        counts.friend,
+    );
+    relation_option_row(
+        ui,
+        RelationNodeKind::Acquaintance,
+        &mut relation_network.options.show_acquaintances,
+        counts.acquaintance,
+    );
+    relation_option_row(
+        ui,
+        RelationNodeKind::Stranger,
+        &mut relation_network.options.show_strangers,
+        counts.stranger,
+    );
+    relation_option_row(
+        ui,
+        RelationNodeKind::Group,
+        &mut relation_network.options.show_groups,
+        counts.group,
+    );
+}
+
+fn relation_option_row(
+    ui: &mut egui::Ui,
+    kind: RelationNodeKind,
+    enabled: &mut bool,
+    count: usize,
+) {
+    ui.horizontal(|ui| {
+        ui.checkbox(enabled, "");
+        let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+        ui.painter()
+            .circle_filled(dot_rect.center(), 6.0, kind.color());
+        ui.label(kind.label());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.weak(format!("({count})"));
+        });
     });
+}
+
+fn render_relation_view_hint(ui: &mut egui::Ui, relation_network: &RelationNetworkState) {
+    match &relation_network.view_mode {
+        RelationViewMode::Focused(node_id) => {
+            if let Some(node) = relation_network
+                .graph
+                .nodes
+                .iter()
+                .find(|node| &node.id == node_id)
+            {
+                ui.colored_label(
+                    egui::Color32::from_rgb(74, 144, 217),
+                    format!("一级关系网: {}", node.name),
+                );
+            }
+        }
+        RelationViewMode::MultiSelect => {
+            ui.colored_label(
+                egui::Color32::from_rgb(74, 144, 217),
+                format!("已选择 {} 个节点", relation_network.selected_node_ids.len()),
+            );
+        }
+        RelationViewMode::MultiSelectRelationship => {
+            ui.colored_label(
+                egui::Color32::from_rgb(74, 144, 217),
+                format!(
+                    "关系视图: {} 个节点",
+                    relation_network.selected_node_ids.len()
+                ),
+            );
+        }
+        RelationViewMode::Default => {}
+    }
+}
+
+fn render_relation_node_detail(ui: &mut egui::Ui, node: &RelationNode) {
+    ui.strong(&node.name);
+    ui.label(node.kind.label());
+    if let Some(qq) = node.qq {
+        ui.label(format!("QQ: {qq}"));
+    }
+    if let Some(group_id) = node.group_id {
+        ui.label(format!("群号: {group_id}"));
+    }
+    if let Some(member_count) = node.member_count {
+        ui.label(format!("成员数: {member_count}"));
+    }
+    if node.common_group_count > 0 {
+        ui.label(format!("共同群: {}", node.common_group_count));
+    }
+    ui.label(format!("关联数: {}", node.value));
+    if !node.role.trim().is_empty() {
+        ui.label(format!("角色: {}", node.role));
+    }
+}
+
+fn render_relation_size_legend(ui: &mut egui::Ui) {
+    ui.label("大小说明");
+    for (label, radius, border) in [
+        ("少量关联", 5.0, 0.0),
+        ("数十人 / 百人群", 8.0, 2.0),
+        ("千人群", 11.0, 3.0),
+        ("万人群", 14.0, 4.0),
+    ] {
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(34.0, 24.0), egui::Sense::hover());
+            ui.painter()
+                .circle_filled(rect.center(), radius, RelationNodeKind::Group.color());
+            if border > 0.0 {
+                ui.painter().circle_stroke(
+                    rect.center(),
+                    radius,
+                    egui::Stroke::new(border, egui::Color32::WHITE),
+                );
+            }
+            ui.weak(label);
+        });
+    }
 }
 
 fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut RelationNetworkState) {
     let available = ui.available_size_before_wrap();
     let size = egui::vec2(available.x.max(360.0), available.y.max(320.0));
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 6.0, ui.visuals().extreme_bg_color);
+    painter.rect_filled(rect, 6.0, egui::Color32::from_rgb(245, 247, 250));
 
     let query = relation_network.search_query.trim().to_lowercase();
     let visible = visible_relation_node_ids(relation_network, &query);
@@ -577,18 +741,22 @@ fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut Rela
 
     let positions = relation_node_positions(&relation_network.graph, &visible, rect);
     let visible_set: HashSet<&str> = visible.iter().map(String::as_str).collect();
-    let focused = relation_network.focused_node_id.as_deref();
+    let focused = relation_focused_node_id(relation_network);
     let focus_neighbors = focused.map(|focused| {
         relation_neighbors(&relation_network.graph, focused)
             .into_iter()
             .collect::<HashSet<_>>()
     });
-
-    let max_links = if focused.is_some() {
-        relation_network.render_setting.max_drawn_links_focused
-    } else {
-        relation_network.render_setting.max_drawn_links
+    let performance = relation_performance_level(visible.len());
+    let line_opacity = match performance.index {
+        0 => 0.30,
+        1 => 0.20,
+        2 => 0.10,
+        3 => 0.05,
+        _ => 0.03,
     };
+
+    let max_links = relation_drawn_link_limit(relation_network);
     let mut drawn_links = 0usize;
     for link in &relation_network.graph.links {
         if drawn_links >= max_links {
@@ -603,7 +771,7 @@ fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut Rela
             && link.source != focused
             && link.target != focused
             && !focus_neighbors.as_ref().is_some_and(|neighbors| {
-                neighbors.contains(link.source.as_str()) && neighbors.contains(link.target.as_str())
+                relation_link_visible_for_focus(&relation_network.graph, link, focused, neighbors)
             })
         {
             continue;
@@ -616,16 +784,28 @@ fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut Rela
         };
         painter.line_segment(
             [*source, *target],
-            egui::Stroke::new(1.0, ui.visuals().weak_text_color().linear_multiply(0.28)),
+            egui::Stroke::new(
+                if performance.index <= 1 { 1.0 } else { 0.8 },
+                egui::Color32::from_gray(150).linear_multiply(line_opacity),
+            ),
         );
         drawn_links += 1;
     }
+
+    render_relation_network_overlay(
+        ui,
+        relation_network,
+        rect,
+        &visible,
+        drawn_links,
+        performance,
+    );
 
     if visible.len() < relation_network.graph.nodes.len()
         || drawn_links < relation_network.graph.links.len()
     {
         painter.text(
-            rect.left_top() + egui::vec2(10.0, 10.0),
+            rect.left_top() + egui::vec2(12.0, 12.0),
             egui::Align2::LEFT_TOP,
             format!(
                 "显示 {} / {} 节点，{} / {} 连线",
@@ -657,25 +837,46 @@ fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut Rela
             continue;
         };
         let is_selected = relation_network.selected_node_id.as_deref() == Some(node.id.as_str());
-        let radius = node.radius.max(6.0);
+        let is_multi_selected = relation_network.selected_node_ids.contains(&node.id);
+        let radius =
+            if is_multi_selected && relation_network.view_mode == RelationViewMode::MultiSelect {
+                node.radius.max(6.0) * 1.18
+            } else {
+                node.radius.max(6.0)
+            };
         let color = node.kind.color();
-        let stroke = if is_selected {
+        let fill =
+            if relation_network.view_mode == RelationViewMode::MultiSelect && !is_multi_selected {
+                color.linear_multiply(0.30)
+            } else {
+                color
+            };
+        let stroke = if is_selected || is_multi_selected {
             egui::Stroke::new(3.0, egui::Color32::WHITE)
         } else if node.kind == RelationNodeKind::Group {
             egui::Stroke::new(1.0 + node.size_level as f32, egui::Color32::WHITE)
+        } else if node.kind == RelationNodeKind::Friend {
+            egui::Stroke::new(1.0, egui::Color32::WHITE)
         } else {
             egui::Stroke::new(1.0, ui.visuals().panel_fill)
         };
-        painter.circle_filled(*pos, radius, color);
+        painter.circle_filled(*pos, radius, fill);
         painter.circle_stroke(*pos, radius, stroke);
 
         if relation_network.show_labels
             && visible.len() <= relation_network.render_setting.max_labels
         {
+            let label = if relation_network.view_mode == RelationViewMode::MultiSelect
+                && !is_multi_selected
+            {
+                ""
+            } else {
+                &node.name
+            };
             painter.text(
                 *pos + egui::vec2(radius + 3.0, 0.0),
                 egui::Align2::LEFT_CENTER,
-                &node.name,
+                label,
                 egui::TextStyle::Small.resolve(ui.style()),
                 ui.visuals().text_color(),
             );
@@ -685,51 +886,452 @@ fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut Rela
             hovered_node_id = Some(node.id.clone());
         }
     }
+    relation_network.hovered_node_id = hovered_node_id.clone();
 
     if response.clicked() {
         if let Some(node_id) = hovered_node_id {
-            relation_network.selected_node_id = Some(node_id.clone());
-            relation_network.focused_node_id = Some(node_id);
+            handle_relation_node_click(relation_network, node_id);
         } else {
+            exit_relation_focus_or_multiselect(relation_network);
+        }
+    }
+
+    if let Some(node_id) = relation_network.hovered_node_id.clone()
+        && let Some(node) = relation_network
+            .graph
+            .nodes
+            .iter()
+            .find(|node| node.id == node_id)
+    {
+        render_relation_node_popup(ui, rect, pointer_pos.unwrap_or(rect.center()), node);
+    }
+}
+
+fn visible_relation_node_ids(relation_network: &RelationNetworkState, query: &str) -> Vec<String> {
+    let mut ids = match &relation_network.view_mode {
+        RelationViewMode::Focused(focused) => {
+            relation_visible_ids_from_focus(relation_network, focused, query)
+        }
+        RelationViewMode::MultiSelectRelationship => {
+            let mut ids: HashSet<_> = relation_multi_select_relationship_ids(relation_network)
+                .into_iter()
+                .collect();
+            ids.retain(|id| {
+                relation_node_by_id(&relation_network.graph, id).is_some_and(|node| {
+                    relation_network.options.allows(node.kind) && node.matches_query(query)
+                })
+            });
+            relation_node_kind_ordered_ids(&relation_network.graph, ids)
+        }
+        RelationViewMode::Default | RelationViewMode::MultiSelect => {
+            relation_visible_ids_default(relation_network, query)
+        }
+    };
+    ids.truncate(relation_view_limit(relation_network));
+    ids
+}
+
+fn render_relation_network_overlay(
+    ui: &mut egui::Ui,
+    relation_network: &RelationNetworkState,
+    rect: egui::Rect,
+    visible: &[String],
+    drawn_links: usize,
+    performance: RelationPerformanceLevel,
+) {
+    let painter = ui.painter_at(rect);
+    let badge = format!("性能: {} ({}节点)", performance.label, visible.len());
+    let galley = painter.layout_no_wrap(
+        badge,
+        egui::TextStyle::Small.resolve(ui.style()),
+        egui::Color32::from_rgb(46, 125, 50),
+    );
+    let badge_rect = egui::Rect::from_min_size(
+        rect.right_top() - egui::vec2(galley.size().x + 32.0, -12.0),
+        galley.size() + egui::vec2(24.0, 8.0),
+    );
+    painter.rect_filled(badge_rect, 16.0, egui::Color32::from_rgb(232, 245, 233));
+    painter.circle_filled(
+        egui::pos2(badge_rect.left() + 10.0, badge_rect.center().y),
+        4.0,
+        egui::Color32::from_rgb(76, 175, 80),
+    );
+    painter.galley(
+        badge_rect.min + egui::vec2(18.0, 4.0),
+        galley,
+        egui::Color32::from_rgb(46, 125, 50),
+    );
+
+    match &relation_network.view_mode {
+        RelationViewMode::Focused(node_id) => {
+            if let Some(node) = relation_node_by_id(&relation_network.graph, node_id) {
+                render_relation_indicator(
+                    ui,
+                    rect,
+                    &format!("一级关系网: {}（点击空白处返回）", node.name),
+                );
+            }
+        }
+        RelationViewMode::MultiSelectRelationship => {
+            render_relation_indicator(ui, rect, "多选关系网（点击空白处返回选择）");
+        }
+        RelationViewMode::Default | RelationViewMode::MultiSelect => {}
+    }
+
+    if drawn_links == 0 && visible.len() > 1 {
+        painter.text(
+            rect.center_top() + egui::vec2(0.0, 48.0),
+            egui::Align2::CENTER_TOP,
+            "当前筛选下没有可见连线",
+            egui::TextStyle::Small.resolve(ui.style()),
+            ui.visuals().weak_text_color(),
+        );
+    }
+}
+
+fn render_relation_indicator(ui: &mut egui::Ui, rect: egui::Rect, text: &str) {
+    let painter = ui.painter_at(rect);
+    let galley = painter.layout_no_wrap(
+        text.to_string(),
+        egui::TextStyle::Small.resolve(ui.style()),
+        egui::Color32::WHITE,
+    );
+    let indicator_rect = egui::Rect::from_center_size(
+        rect.center_top() + egui::vec2(0.0, 28.0),
+        galley.size() + egui::vec2(28.0, 10.0),
+    );
+    painter.rect_filled(
+        indicator_rect,
+        16.0,
+        egui::Color32::from_rgba_premultiplied(74, 144, 217, 230),
+    );
+    painter.galley(
+        indicator_rect.min + egui::vec2(14.0, 5.0),
+        galley,
+        egui::Color32::WHITE,
+    );
+}
+
+fn render_relation_node_popup(
+    ui: &mut egui::Ui,
+    canvas_rect: egui::Rect,
+    pointer: egui::Pos2,
+    node: &RelationNode,
+) {
+    let popup_size = egui::vec2(280.0, 188.0);
+    let mut pos = pointer + egui::vec2(18.0, -18.0);
+    if pos.x + popup_size.x > canvas_rect.right() - 10.0 {
+        pos.x = pointer.x - popup_size.x - 18.0;
+    }
+    if pos.y + popup_size.y > canvas_rect.bottom() - 10.0 {
+        pos.y = canvas_rect.bottom() - popup_size.y - 10.0;
+    }
+    pos.x = pos.x.max(canvas_rect.left() + 10.0);
+    pos.y = pos.y.max(canvas_rect.top() + 10.0);
+
+    egui::Area::new(egui::Id::new(("relation_node_popup", &node.id)))
+        .order(egui::Order::Tooltip)
+        .fixed_pos(pos)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style())
+                .corner_radius(egui::CornerRadius::same(12))
+                .inner_margin(egui::Margin::same(14))
+                .show(ui, |ui| {
+                    ui.set_width(250.0);
+                    ui.horizontal(|ui| {
+                        let (avatar_rect, _) =
+                            ui.allocate_exact_size(egui::vec2(48.0, 48.0), egui::Sense::hover());
+                        let avatar_radius = if node.kind == RelationNodeKind::Group {
+                            10.0
+                        } else {
+                            24.0
+                        };
+                        ui.painter()
+                            .rect_filled(avatar_rect, avatar_radius, node.kind.color());
+                        ui.painter().text(
+                            avatar_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            if node.kind == RelationNodeKind::Group {
+                                "群"
+                            } else {
+                                "QQ"
+                            },
+                            egui::TextStyle::Button.resolve(ui.style()),
+                            egui::Color32::WHITE,
+                        );
+                        ui.vertical(|ui| {
+                            ui.strong(&node.name);
+                            ui.weak(node.kind.label());
+                        });
+                    });
+                    ui.separator();
+                    render_relation_node_detail(ui, node);
+                });
+        });
+}
+
+fn handle_relation_node_click(relation_network: &mut RelationNetworkState, node_id: String) {
+    relation_network.selected_node_id = Some(node_id.clone());
+    match relation_network.view_mode {
+        RelationViewMode::MultiSelect | RelationViewMode::MultiSelectRelationship => {
+            if relation_network.selected_node_ids.contains(&node_id) {
+                relation_network.selected_node_ids.remove(&node_id);
+            } else {
+                relation_network.selected_node_ids.insert(node_id);
+            }
+            relation_network.view_mode = RelationViewMode::MultiSelect;
+        }
+        RelationViewMode::Default | RelationViewMode::Focused(_) => {
+            relation_network.focused_node_id = Some(node_id.clone());
+            relation_network.view_mode = RelationViewMode::Focused(node_id);
+        }
+    }
+}
+
+fn exit_relation_focus_or_multiselect(relation_network: &mut RelationNetworkState) {
+    match relation_network.view_mode {
+        RelationViewMode::MultiSelectRelationship => {
+            relation_network.view_mode = RelationViewMode::MultiSelect;
+        }
+        RelationViewMode::MultiSelect => {}
+        RelationViewMode::Focused(_) => {
+            relation_network.focused_node_id = None;
+            relation_network.selected_node_id = None;
+            relation_network.view_mode = RelationViewMode::Default;
+        }
+        RelationViewMode::Default => {
             relation_network.focused_node_id = None;
             relation_network.selected_node_id = None;
         }
     }
 }
 
-fn visible_relation_node_ids(relation_network: &RelationNetworkState, query: &str) -> Vec<String> {
-    let mut ids = Vec::new();
-    let focused = relation_network.focused_node_id.as_deref();
-    let focus_neighbors = focused.map(|focused| {
-        relation_neighbors(&relation_network.graph, focused)
-            .into_iter()
-            .collect::<HashSet<_>>()
-    });
+fn toggle_relation_multi_select(relation_network: &mut RelationNetworkState) {
+    match relation_network.view_mode {
+        RelationViewMode::MultiSelectRelationship => {
+            relation_network.view_mode = RelationViewMode::Default;
+            relation_network.selected_node_ids.clear();
+        }
+        RelationViewMode::MultiSelect => {
+            if relation_network.selected_node_ids.len() >= 2 {
+                relation_network.view_mode = RelationViewMode::MultiSelectRelationship;
+            }
+        }
+        RelationViewMode::Default | RelationViewMode::Focused(_) => {
+            relation_network.focused_node_id = None;
+            relation_network.selected_node_id = None;
+            relation_network.selected_node_ids.clear();
+            relation_network.view_mode = RelationViewMode::MultiSelect;
+        }
+    }
+}
 
-    let limit = if focused.is_some() {
+fn relation_focused_node_id(relation_network: &RelationNetworkState) -> Option<&str> {
+    match &relation_network.view_mode {
+        RelationViewMode::Focused(node_id) => Some(node_id.as_str()),
+        _ => relation_network.focused_node_id.as_deref(),
+    }
+}
+
+fn relation_multi_select_relationship_ids(relation_network: &RelationNetworkState) -> Vec<String> {
+    if relation_network.selected_node_ids.is_empty() {
+        return Vec::new();
+    }
+
+    let mut visible_ids = relation_network.selected_node_ids.clone();
+    let selected_groups: HashSet<_> = relation_network
+        .selected_node_ids
+        .iter()
+        .filter(|id| {
+            relation_node_by_id(&relation_network.graph, id)
+                .is_some_and(|node| node.kind == RelationNodeKind::Group)
+        })
+        .cloned()
+        .collect();
+    let selected_non_groups: HashSet<_> = relation_network
+        .selected_node_ids
+        .iter()
+        .filter(|id| !selected_groups.contains(*id))
+        .cloned()
+        .collect();
+
+    if selected_non_groups.len() >= 2 {
+        for link in &relation_network.graph.links {
+            let source_node = relation_node_by_id(&relation_network.graph, &link.source);
+            let target_node = relation_node_by_id(&relation_network.graph, &link.target);
+            if source_node.is_some_and(|node| node.kind == RelationNodeKind::Group)
+                && selected_non_groups.contains(&link.target)
+            {
+                visible_ids.insert(link.source.clone());
+            } else if target_node.is_some_and(|node| node.kind == RelationNodeKind::Group)
+                && selected_non_groups.contains(&link.source)
+            {
+                visible_ids.insert(link.target.clone());
+            }
+        }
+    }
+
+    if selected_groups.len() >= 2 {
+        let mut member_group_counts: HashMap<String, usize> = HashMap::new();
+        for link in &relation_network.graph.links {
+            let member_id = if selected_groups.contains(&link.source) {
+                &link.target
+            } else if selected_groups.contains(&link.target) {
+                &link.source
+            } else {
+                continue;
+            };
+            let Some(member_node) = relation_node_by_id(&relation_network.graph, member_id) else {
+                continue;
+            };
+            if member_node.kind == RelationNodeKind::Group
+                || !relation_network.options.allows(member_node.kind)
+            {
+                continue;
+            }
+            *member_group_counts.entry(member_id.clone()).or_default() += 1;
+        }
+        for (member_id, group_count) in member_group_counts {
+            if group_count >= 2 {
+                visible_ids.insert(member_id);
+            }
+        }
+    }
+
+    if relation_network.selected_node_ids.len() > 1
+        && let Some(self_node) = relation_network
+            .graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == RelationNodeKind::SelfUser)
+    {
+        visible_ids.insert(self_node.id.clone());
+    }
+
+    relation_node_kind_ordered_ids(&relation_network.graph, visible_ids)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RelationPerformanceLevel {
+    index: usize,
+    label: &'static str,
+}
+
+fn relation_performance_level(node_count: usize) -> RelationPerformanceLevel {
+    match node_count {
+        0..=100 => RelationPerformanceLevel {
+            index: 0,
+            label: "流畅",
+        },
+        101..=500 => RelationPerformanceLevel {
+            index: 1,
+            label: "良好",
+        },
+        501..=2_000 => RelationPerformanceLevel {
+            index: 2,
+            label: "标准",
+        },
+        2_001..=10_000 => RelationPerformanceLevel {
+            index: 3,
+            label: "性能",
+        },
+        _ => RelationPerformanceLevel {
+            index: 4,
+            label: "极速",
+        },
+    }
+}
+
+fn relation_node_by_id<'a>(graph: &'a RelationGraph, id: &str) -> Option<&'a RelationNode> {
+    graph.nodes.iter().find(|node| node.id == id)
+}
+
+fn relation_link_visible_for_focus(
+    graph: &RelationGraph,
+    link: &RelationLink,
+    focused: &str,
+    focus_neighbors: &HashSet<&str>,
+) -> bool {
+    link.source == focused
+        || link.target == focused
+        || (focus_neighbors.contains(link.source.as_str())
+            && focus_neighbors.contains(link.target.as_str())
+            && relation_node_by_id(graph, &link.source)
+                .zip(relation_node_by_id(graph, &link.target))
+                .is_some_and(|(source, target)| {
+                    source.kind == RelationNodeKind::Group || target.kind == RelationNodeKind::Group
+                }))
+}
+
+fn relation_node_kind_ordered_ids(graph: &RelationGraph, ids: HashSet<String>) -> Vec<String> {
+    let mut ids: Vec<_> = ids.into_iter().collect();
+    ids.sort_by(|left, right| {
+        match (
+            relation_node_by_id(graph, left),
+            relation_node_by_id(graph, right),
+        ) {
+            (Some(left_node), Some(right_node)) => node_kind_order(left_node.kind)
+                .cmp(&node_kind_order(right_node.kind))
+                .then_with(|| right_node.value.cmp(&left_node.value))
+                .then_with(|| left_node.name.cmp(&right_node.name)),
+            _ => left.cmp(right),
+        }
+    });
+    ids
+}
+
+fn relation_node_ids_matching_options(
+    relation_network: &RelationNetworkState,
+    query: &str,
+) -> HashSet<String> {
+    relation_network
+        .graph
+        .nodes
+        .iter()
+        .filter(|node| relation_network.options.allows(node.kind) && node.matches_query(query))
+        .map(|node| node.id.clone())
+        .collect()
+}
+
+fn relation_visible_ids_default(
+    relation_network: &RelationNetworkState,
+    query: &str,
+) -> Vec<String> {
+    relation_node_kind_ordered_ids(
+        &relation_network.graph,
+        relation_node_ids_matching_options(relation_network, query),
+    )
+}
+
+fn relation_visible_ids_from_focus(
+    relation_network: &RelationNetworkState,
+    focused: &str,
+    query: &str,
+) -> Vec<String> {
+    let mut allowed = relation_node_ids_matching_options(relation_network, query);
+    allowed.insert(focused.to_string());
+    let neighbors: HashSet<_> = relation_neighbors(&relation_network.graph, focused)
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect();
+    allowed.retain(|id| id == focused || neighbors.contains(id));
+    relation_node_kind_ordered_ids(&relation_network.graph, allowed)
+}
+
+fn relation_view_limit(relation_network: &RelationNetworkState) -> usize {
+    if matches!(relation_network.view_mode, RelationViewMode::Focused(_)) {
         relation_network.render_setting.max_visible_nodes_focused
     } else {
         relation_network.render_setting.max_visible_nodes
-    };
-
-    for node in &relation_network.graph.nodes {
-        if !relation_network.options.allows(node.kind) || !node.matches_query(query) {
-            continue;
-        }
-        if let Some(focused) = focused
-            && node.id != focused
-            && !focus_neighbors
-                .as_ref()
-                .is_some_and(|neighbors| neighbors.contains(node.id.as_str()))
-        {
-            continue;
-        }
-        ids.push(node.id.clone());
-        if ids.len() >= limit {
-            break;
-        }
     }
-    ids
+}
+
+fn relation_drawn_link_limit(relation_network: &RelationNetworkState) -> usize {
+    if matches!(relation_network.view_mode, RelationViewMode::Focused(_)) {
+        relation_network.render_setting.max_drawn_links_focused
+    } else {
+        relation_network.render_setting.max_drawn_links
+    }
 }
 
 #[derive(Debug, Clone)]
