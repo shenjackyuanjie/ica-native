@@ -393,7 +393,8 @@ impl IcaApp {
             room_tools: RoomToolsState::default(),
             auto_sign: AutoSignState::default(),
             relation_network: std::sync::Arc::new(std::sync::Mutex::new(
-                RelationNetworkState::default(),
+                RelationNetworkState::default()
+                    .with_render_setting(config.ui_setting.relation_network.clone()),
             )),
         }
     }

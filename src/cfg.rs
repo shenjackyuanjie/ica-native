@@ -269,6 +269,9 @@ pub struct UiSetting {
     /// 已撤回消息重新编辑时，遇到已有草稿如何处理
     #[serde(default = "reedit_draft_conflict_mode_default")]
     pub reedit_draft_conflict_mode: ReEditDraftConflictMode,
+    /// QQ 关系网渲染设置
+    #[serde(default)]
+    pub relation_network: RelationNetworkSetting,
 }
 
 fn clear_search_on_room_select_default() -> bool {
@@ -279,12 +282,91 @@ fn scroll_to_bottom_after_send_default() -> bool {
     true
 }
 
+fn relation_network_max_visible_nodes_default() -> usize {
+    2_500
+}
+
+fn relation_network_max_visible_nodes_focused_default() -> usize {
+    6_000
+}
+
+fn relation_network_max_drawn_links_default() -> usize {
+    2_500
+}
+
+fn relation_network_max_drawn_links_focused_default() -> usize {
+    6_000
+}
+
+fn relation_network_max_labels_default() -> usize {
+    350
+}
+
+fn relation_network_auto_hide_labels_node_threshold_default() -> usize {
+    2_000
+}
+
+fn relation_network_auto_hide_acquaintance_node_threshold_default() -> usize {
+    10_000
+}
+
+fn relation_network_auto_hide_stranger_node_threshold_default() -> usize {
+    50_000
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RelationNetworkSetting {
+    /// 普通视图最多参与渲染的节点数
+    #[serde(default = "relation_network_max_visible_nodes_default")]
+    pub max_visible_nodes: usize,
+    /// 聚焦节点后一跳视图最多参与渲染的节点数
+    #[serde(default = "relation_network_max_visible_nodes_focused_default")]
+    pub max_visible_nodes_focused: usize,
+    /// 普通视图最多绘制的连线数
+    #[serde(default = "relation_network_max_drawn_links_default")]
+    pub max_drawn_links: usize,
+    /// 聚焦节点后一跳视图最多绘制的连线数
+    #[serde(default = "relation_network_max_drawn_links_focused_default")]
+    pub max_drawn_links_focused: usize,
+    /// 节点数超过该值时不绘制标签
+    #[serde(default = "relation_network_max_labels_default")]
+    pub max_labels: usize,
+    /// 图节点数超过该值时自动关闭标签
+    #[serde(default = "relation_network_auto_hide_labels_node_threshold_default")]
+    pub auto_hide_labels_node_threshold: usize,
+    /// 图节点数超过该值时自动隐藏共同群好友
+    #[serde(default = "relation_network_auto_hide_acquaintance_node_threshold_default")]
+    pub auto_hide_acquaintance_node_threshold: usize,
+    /// 图节点数超过该值时自动隐藏仅同群节点
+    #[serde(default = "relation_network_auto_hide_stranger_node_threshold_default")]
+    pub auto_hide_stranger_node_threshold: usize,
+}
+
+impl Default for RelationNetworkSetting {
+    fn default() -> Self {
+        Self {
+            max_visible_nodes: relation_network_max_visible_nodes_default(),
+            max_visible_nodes_focused: relation_network_max_visible_nodes_focused_default(),
+            max_drawn_links: relation_network_max_drawn_links_default(),
+            max_drawn_links_focused: relation_network_max_drawn_links_focused_default(),
+            max_labels: relation_network_max_labels_default(),
+            auto_hide_labels_node_threshold:
+                relation_network_auto_hide_labels_node_threshold_default(),
+            auto_hide_acquaintance_node_threshold:
+                relation_network_auto_hide_acquaintance_node_threshold_default(),
+            auto_hide_stranger_node_threshold:
+                relation_network_auto_hide_stranger_node_threshold_default(),
+        }
+    }
+}
+
 impl Default for UiSetting {
     fn default() -> Self {
         Self {
             clear_search_on_room_select: clear_search_on_room_select_default(),
             scroll_to_bottom_after_send: scroll_to_bottom_after_send_default(),
             reedit_draft_conflict_mode: reedit_draft_conflict_mode_default(),
+            relation_network: RelationNetworkSetting::default(),
         }
     }
 }

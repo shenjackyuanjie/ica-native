@@ -1,18 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use crate::cfg::{self, RelationNetworkSetting};
 use crate::ica::IcaCommand;
 use crate::ica::types::{RoomId, room::Room};
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::IcaApp;
 use super::state::{BridgeState, GroupMember};
-
-const MAX_VISIBLE_RELATION_NODES: usize = 2_500;
-const MAX_VISIBLE_RELATION_NODES_FOCUSED: usize = 6_000;
-const MAX_DRAWN_RELATION_LINKS: usize = 2_500;
-const MAX_DRAWN_RELATION_LINKS_FOCUSED: usize = 6_000;
-const MAX_RELATION_LABELS: usize = 350;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RelationNodeKind {
@@ -224,6 +219,7 @@ pub struct RelationNetworkState {
     pub closed: bool,
     pub pending_load_limit: Option<Option<usize>>,
     pub pending_rebuild: bool,
+    pub render_setting: RelationNetworkSetting,
 }
 
 impl Default for RelationNetworkState {
@@ -240,7 +236,15 @@ impl Default for RelationNetworkState {
             closed: false,
             pending_load_limit: None,
             pending_rebuild: false,
+            render_setting: RelationNetworkSetting::default(),
         }
+    }
+}
+
+impl RelationNetworkState {
+    pub fn with_render_setting(mut self, render_setting: RelationNetworkSetting) -> Self {
+        self.render_setting = render_setting;
+        self
     }
 }
 
@@ -249,6 +253,7 @@ impl IcaApp {
         if !self.open_page.relation_network {
             return;
         }
+        self.sync_relation_network_render_setting();
 
         let relation_network = self.relation_network.clone();
         let command_tx = self
@@ -319,6 +324,8 @@ impl IcaApp {
     }
 
     pub fn rebuild_relation_network(&mut self) {
+        self.sync_relation_network_render_setting();
+
         let Some(state) = self.active_bridge_state() else {
             self.relation_network.lock().unwrap().graph = RelationGraph::default();
             return;
@@ -367,15 +374,21 @@ impl IcaApp {
     fn apply_relation_network_auto_degrade(&mut self) {
         let mut relation_network = self.relation_network.lock().unwrap();
         let node_count = relation_network.graph.nodes.len();
-        if node_count > 2_000 {
+        let render_setting = relation_network.render_setting.clone();
+        if node_count > render_setting.auto_hide_labels_node_threshold {
             relation_network.show_labels = false;
         }
-        if node_count > 10_000 {
+        if node_count > render_setting.auto_hide_acquaintance_node_threshold {
             relation_network.options.show_acquaintances = false;
         }
-        if node_count > 50_000 {
+        if node_count > render_setting.auto_hide_stranger_node_threshold {
             relation_network.options.show_strangers = false;
         }
+    }
+
+    fn sync_relation_network_render_setting(&mut self) {
+        let render_setting = cfg::get_cfg_snapshot().ui_setting.relation_network;
+        self.relation_network.lock().unwrap().render_setting = render_setting;
     }
 
     fn apply_relation_network_viewport_actions(&mut self) {
@@ -572,9 +585,9 @@ fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut Rela
     });
 
     let max_links = if focused.is_some() {
-        MAX_DRAWN_RELATION_LINKS_FOCUSED
+        relation_network.render_setting.max_drawn_links_focused
     } else {
-        MAX_DRAWN_RELATION_LINKS
+        relation_network.render_setting.max_drawn_links
     };
     let mut drawn_links = 0usize;
     for link in &relation_network.graph.links {
@@ -656,7 +669,9 @@ fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut Rela
         painter.circle_filled(*pos, radius, color);
         painter.circle_stroke(*pos, radius, stroke);
 
-        if relation_network.show_labels && visible.len() <= MAX_RELATION_LABELS {
+        if relation_network.show_labels
+            && visible.len() <= relation_network.render_setting.max_labels
+        {
             painter.text(
                 *pos + egui::vec2(radius + 3.0, 0.0),
                 egui::Align2::LEFT_CENTER,
@@ -692,9 +707,9 @@ fn visible_relation_node_ids(relation_network: &RelationNetworkState, query: &st
     });
 
     let limit = if focused.is_some() {
-        MAX_VISIBLE_RELATION_NODES_FOCUSED
+        relation_network.render_setting.max_visible_nodes_focused
     } else {
-        MAX_VISIBLE_RELATION_NODES
+        relation_network.render_setting.max_visible_nodes
     };
 
     for node in &relation_network.graph.nodes {

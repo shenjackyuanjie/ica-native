@@ -2,6 +2,11 @@
 
 本文件记录 ica-native 的变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格。
 
+## [0.1.4]
+
+### Added
+- 支持通过配置调整 QQ 关系网渲染节点数、连线数、标签数和自动降级阈值。
+
 ## [0.1.3]
 
 ### Added
