@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use crate::ica::IcaCommand;
 use crate::ica::types::{RoomId, room::Room};
+use tokio::sync::mpsc::UnboundedSender;
 
 use super::IcaApp;
 use super::state::{BridgeState, GroupMember};
@@ -213,6 +215,9 @@ pub struct RelationNetworkState {
     pub focused_node_id: Option<String>,
     pub selected_node_id: Option<String>,
     pub graph: RelationGraph,
+    pub closed: bool,
+    pub pending_load_limit: Option<Option<usize>>,
+    pub pending_rebuild: bool,
 }
 
 impl Default for RelationNetworkState {
@@ -226,330 +231,108 @@ impl Default for RelationNetworkState {
             focused_node_id: None,
             selected_node_id: None,
             graph: RelationGraph::default(),
+            closed: false,
+            pending_load_limit: None,
+            pending_rebuild: false,
         }
     }
 }
 
 impl IcaApp {
     pub fn render_relation_network_window(&mut self, ctx: &egui::Context) {
-        let mut open = self.open_page.relation_network;
-        egui::Window::new("QQ 关系网")
-            .open(&mut open)
-            .default_size(egui::vec2(980.0, 680.0))
-            .min_size(egui::vec2(620.0, 420.0))
-            .resizable(true)
-            .show(ctx, |ui| {
-                self.render_relation_network_ui(ui);
-            });
-        self.open_page.relation_network = open;
-    }
-
-    fn render_relation_network_ui(&mut self, ui: &mut egui::Ui) {
-        let Some(bridge_idx) = self.active_bridge_idx else {
-            ui.weak("当前没有启用的 bridge");
+        if !self.open_page.relation_network {
             return;
-        };
+        }
 
-        let (rooms_len, loaded_groups, loading_groups) = self
-            .bridge_states
-            .get(bridge_idx)
-            .map(|state| {
-                (
-                    state.rooms.len(),
-                    state
+        let relation_network = self.relation_network.clone();
+        let command_tx = self
+            .active_bridge_idx
+            .and_then(|idx| self.ica_clients.get(idx))
+            .map(|client| client.command_tx.clone());
+        let bridge_snapshot = self.active_bridge_idx.and_then(|idx| {
+            self.bridge_states
+                .get(idx)
+                .map(|state| RelationBridgeSnapshot {
+                    rooms_len: state.rooms.len(),
+                    loaded_groups: state
                         .group_members_by_room
                         .keys()
                         .filter(|room_id| **room_id < 0)
                         .count(),
-                    state
+                    loading_groups: state
                         .loading_group_members
                         .iter()
                         .filter(|room_id| **room_id < 0)
                         .count(),
-                )
-            })
-            .unwrap_or_default();
-
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.set_width(250.0);
-                ui.heading("关系网");
-                ui.label(format!("会话: {rooms_len}"));
-                ui.label(format!(
-                    "群成员: {}/{} 已加载，{} 加载中",
-                    self.relation_network.graph.loaded_group_count,
-                    self.relation_network.graph.total_group_count,
-                    loading_groups
-                ));
-                if self.relation_network.graph.loaded_group_count != loaded_groups {
-                    ui.weak("图数据等待下一次刷新");
-                }
-                ui.separator();
-
-                if ui.button("重建关系网").clicked() {
-                    self.rebuild_relation_network();
-                }
-                ui.horizontal(|ui| {
-                    if ui.button("加载 10 个群").clicked() {
-                        self.request_relation_network_members(Some(10));
-                    }
-                    if ui.button("加载全部群").clicked() {
-                        self.request_relation_network_members(None);
-                    }
-                });
-
-                ui.checkbox(
-                    &mut self.relation_network.include_unloaded_groups,
-                    "显示未加载群",
-                );
-                if ui.button("应用显示范围").clicked() {
-                    self.rebuild_relation_network();
-                }
-                ui.checkbox(&mut self.relation_network.show_labels, "显示标签");
-                ui.separator();
-
-                let counts = self.relation_network.graph.node_counts();
-                ui.checkbox(
-                    &mut self.relation_network.options.show_self_user,
-                    format!(
-                        "{} ({})",
-                        RelationNodeKind::SelfUser.label(),
-                        counts.self_user
-                    ),
-                );
-                ui.checkbox(
-                    &mut self.relation_network.options.show_friends,
-                    format!("{} ({})", RelationNodeKind::Friend.label(), counts.friend),
-                );
-                ui.checkbox(
-                    &mut self.relation_network.options.show_acquaintances,
-                    format!(
-                        "{} ({})",
-                        RelationNodeKind::Acquaintance.label(),
-                        counts.acquaintance
-                    ),
-                );
-                ui.checkbox(
-                    &mut self.relation_network.options.show_strangers,
-                    format!(
-                        "{} ({})",
-                        RelationNodeKind::Stranger.label(),
-                        counts.stranger
-                    ),
-                );
-                ui.checkbox(
-                    &mut self.relation_network.options.show_groups,
-                    format!("{} ({})", RelationNodeKind::Group.label(), counts.group),
-                );
-
-                ui.separator();
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.relation_network.search_query)
-                        .hint_text("搜索昵称 / QQ / 群号"),
-                );
-                if ui.button("清除聚焦").clicked() {
-                    self.relation_network.focused_node_id = None;
-                    self.relation_network.selected_node_id = None;
-                }
-
-                if let Some(node_id) = &self.relation_network.selected_node_id
-                    && let Some(node) = self
-                        .relation_network
-                        .graph
-                        .nodes
+                    pending_group_room_ids: state
+                        .rooms
                         .iter()
-                        .find(|node| &node.id == node_id)
-                {
-                    ui.separator();
-                    ui.strong(&node.name);
-                    ui.label(node.kind.label());
-                    if let Some(qq) = node.qq {
-                        ui.label(format!("QQ: {qq}"));
-                    }
-                    if let Some(group_id) = node.group_id {
-                        ui.label(format!("群号: {group_id}"));
-                    }
-                    if let Some(member_count) = node.member_count {
-                        ui.label(format!("成员数: {member_count}"));
-                    }
-                    if node.common_group_count > 0 {
-                        ui.label(format!("共同群: {}", node.common_group_count));
-                    }
-                    ui.label(format!("关联数: {}", node.value));
-                    if !node.role.trim().is_empty() {
-                        ui.label(format!("角色: {}", node.role));
-                    }
-                }
-            });
-
-            ui.separator();
-            self.render_relation_network_canvas(ui);
-        });
-    }
-
-    fn render_relation_network_canvas(&mut self, ui: &mut egui::Ui) {
-        let available = ui.available_size_before_wrap();
-        let size = egui::vec2(available.x.max(360.0), available.y.max(320.0));
-        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-        let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 6.0, ui.visuals().extreme_bg_color);
-
-        let query = self.relation_network.search_query.trim().to_lowercase();
-        let visible = self.visible_relation_node_ids(&query);
-        if visible.is_empty() {
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "暂无关系数据。先加载群成员或等待会话数据同步。",
-                egui::TextStyle::Body.resolve(ui.style()),
-                ui.visuals().weak_text_color(),
-            );
-            return;
-        }
-
-        let positions = relation_node_positions(&self.relation_network.graph, &visible, rect);
-        let visible_set: HashSet<&str> = visible.iter().map(String::as_str).collect();
-        let focused = self.relation_network.focused_node_id.as_deref();
-        let focus_neighbors = focused.map(|focused| {
-            relation_neighbors(&self.relation_network.graph, focused)
-                .into_iter()
-                .collect::<HashSet<_>>()
-        });
-
-        let mut drawn_links = 0usize;
-        for link in &self.relation_network.graph.links {
-            if drawn_links >= 4_000 {
-                break;
-            }
-            if !visible_set.contains(link.source.as_str())
-                || !visible_set.contains(link.target.as_str())
-            {
-                continue;
-            }
-            if let Some(focused) = focused
-                && link.source != focused
-                && link.target != focused
-                && !focus_neighbors.as_ref().is_some_and(|neighbors| {
-                    neighbors.contains(link.source.as_str())
-                        && neighbors.contains(link.target.as_str())
+                        .filter(|room| room.room_id < 0)
+                        .map(|room| room.room_id)
+                        .filter(|room_id| {
+                            !state.group_members_by_room.contains_key(room_id)
+                                && !state.loading_group_members.contains(room_id)
+                        })
+                        .collect(),
                 })
-            {
-                continue;
-            }
-            let Some(source) = positions.get(&link.source) else {
-                continue;
-            };
-            let Some(target) = positions.get(&link.target) else {
-                continue;
-            };
-            painter.line_segment(
-                [*source, *target],
-                egui::Stroke::new(1.0, ui.visuals().weak_text_color().linear_multiply(0.28)),
-            );
-            drawn_links += 1;
-        }
-
-        let pointer_pos = response.hover_pos();
-        let mut hovered_node_id = None;
-        for node in &self.relation_network.graph.nodes {
-            if !visible_set.contains(node.id.as_str()) {
-                continue;
-            }
-            if let Some(focused) = focused
-                && node.id != focused
-                && !focus_neighbors
-                    .as_ref()
-                    .is_some_and(|neighbors| neighbors.contains(node.id.as_str()))
-            {
-                continue;
-            }
-            let Some(pos) = positions.get(&node.id) else {
-                continue;
-            };
-            let is_selected =
-                self.relation_network.selected_node_id.as_deref() == Some(node.id.as_str());
-            let radius = node.radius.max(6.0);
-            let color = node.kind.color();
-            let stroke = if is_selected {
-                egui::Stroke::new(3.0, egui::Color32::WHITE)
-            } else if node.kind == RelationNodeKind::Group {
-                egui::Stroke::new(1.0 + node.size_level as f32, egui::Color32::WHITE)
-            } else {
-                egui::Stroke::new(1.0, ui.visuals().panel_fill)
-            };
-            painter.circle_filled(*pos, radius, color);
-            painter.circle_stroke(*pos, radius, stroke);
-
-            if self.relation_network.show_labels && visible.len() <= 700 {
-                painter.text(
-                    *pos + egui::vec2(radius + 3.0, 0.0),
-                    egui::Align2::LEFT_CENTER,
-                    &node.name,
-                    egui::TextStyle::Small.resolve(ui.style()),
-                    ui.visuals().text_color(),
-                );
-            }
-
-            if pointer_pos.is_some_and(|pointer| pointer.distance(*pos) <= radius + 3.0) {
-                hovered_node_id = Some(node.id.clone());
-            }
-        }
-
-        if response.clicked() {
-            if let Some(node_id) = hovered_node_id {
-                self.relation_network.selected_node_id = Some(node_id.clone());
-                self.relation_network.focused_node_id = Some(node_id);
-            } else {
-                self.relation_network.focused_node_id = None;
-                self.relation_network.selected_node_id = None;
-            }
-        }
-    }
-
-    fn visible_relation_node_ids(&self, query: &str) -> Vec<String> {
-        let mut ids = Vec::new();
-        let focused = self.relation_network.focused_node_id.as_deref();
-        let focus_neighbors = focused.map(|focused| {
-            relation_neighbors(&self.relation_network.graph, focused)
-                .into_iter()
-                .collect::<HashSet<_>>()
         });
 
-        for node in &self.relation_network.graph.nodes {
-            if !self.relation_network.options.allows(node.kind) || !node.matches_query(query) {
-                continue;
-            }
-            if let Some(focused) = focused
-                && node.id != focused
-                && !focus_neighbors
-                    .as_ref()
-                    .is_some_and(|neighbors| neighbors.contains(node.id.as_str()))
-            {
-                continue;
-            }
-            ids.push(node.id.clone());
-            if ids.len() >= 6_000 {
-                break;
-            }
-        }
-        ids
+        let viewport_id = egui::ViewportId::from_hash_of("relation_network");
+        let viewport_builder = egui::ViewportBuilder::default()
+            .with_title("QQ 关系网")
+            .with_inner_size([1120.0, 760.0])
+            .with_min_inner_size([760.0, 480.0]);
+
+        ctx.show_viewport_deferred(
+            viewport_id,
+            viewport_builder,
+            move |viewport_ctx, _class| {
+                if viewport_ctx.input(|input| input.viewport().close_requested()) {
+                    relation_network.lock().unwrap().closed = true;
+                    return;
+                }
+
+                if viewport_ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+                    relation_network.lock().unwrap().closed = true;
+                    viewport_ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    return;
+                }
+
+                egui::CentralPanel::default().show(viewport_ctx, |ui| {
+                    render_relation_network_ui(
+                        ui,
+                        &relation_network,
+                        bridge_snapshot.as_ref(),
+                        command_tx.as_ref(),
+                    );
+                });
+            },
+        );
+
+        self.apply_relation_network_viewport_actions();
     }
 
     pub fn rebuild_relation_network(&mut self) {
         let Some(state) = self.active_bridge_state() else {
-            self.relation_network.graph = RelationGraph::default();
+            self.relation_network.lock().unwrap().graph = RelationGraph::default();
             return;
         };
 
         let login_user_id = relation_login_user_id(state);
         let rooms = state.rooms.clone();
         let group_members_by_room = state.group_members_by_room.clone();
-        self.relation_network.graph = RelationGraphBuilder::build(
+        let include_unloaded_groups = self
+            .relation_network
+            .lock()
+            .unwrap()
+            .include_unloaded_groups;
+        let graph = RelationGraphBuilder::build(
             login_user_id,
             &rooms,
             &group_members_by_room,
-            self.relation_network.include_unloaded_groups,
+            include_unloaded_groups,
         );
+        self.relation_network.lock().unwrap().graph = graph;
         self.apply_relation_network_auto_degrade();
     }
 
@@ -561,41 +344,11 @@ impl IcaApp {
             return;
         };
 
-        let mut queued = 0usize;
-        let group_room_ids: Vec<_> = state
-            .rooms
-            .iter()
-            .filter(|room| room.room_id < 0)
-            .map(|room| room.room_id)
-            .collect();
-
-        for room_id in group_room_ids {
-            if state.group_members_by_room.contains_key(&room_id)
-                || state.loading_group_members.contains(&room_id)
-            {
-                continue;
-            }
-            state.loading_group_members.insert(room_id);
-            if let Err(e) = self.ica_clients[bridge_idx]
-                .command_tx
-                .send(IcaCommand::FetchGroupMembers { room_id })
-            {
-                state.loading_group_members.remove(&room_id);
-                state.last_error = Some(format!("关系网群成员请求失败: {e}"));
-                break;
-            }
-
-            queued += 1;
-            if limit.is_some_and(|limit| queued >= limit) {
-                break;
-            }
-        }
-
-        if queued > 0 {
-            state.last_notice = Some(format!("关系网已开始加载 {queued} 个群的成员列表"));
-        } else {
-            state.last_notice = Some("关系网没有需要加载的群成员列表".to_string());
-        }
+        request_relation_network_members_with_tx(
+            state,
+            &self.ica_clients[bridge_idx].command_tx,
+            limit,
+        );
     }
 
     pub fn refresh_relation_network_after_bridge_update(&mut self, bridge_idx: usize) {
@@ -606,16 +359,401 @@ impl IcaApp {
     }
 
     fn apply_relation_network_auto_degrade(&mut self) {
-        let node_count = self.relation_network.graph.nodes.len();
+        let mut relation_network = self.relation_network.lock().unwrap();
+        let node_count = relation_network.graph.nodes.len();
         if node_count > 2_000 {
-            self.relation_network.show_labels = false;
+            relation_network.show_labels = false;
         }
         if node_count > 10_000 {
-            self.relation_network.options.show_acquaintances = false;
+            relation_network.options.show_acquaintances = false;
         }
         if node_count > 50_000 {
-            self.relation_network.options.show_strangers = false;
+            relation_network.options.show_strangers = false;
         }
+    }
+
+    fn apply_relation_network_viewport_actions(&mut self) {
+        let (closed, pending_rebuild, pending_load_limit) = {
+            let mut relation_network = self.relation_network.lock().unwrap();
+            let actions = (
+                relation_network.closed,
+                relation_network.pending_rebuild,
+                relation_network.pending_load_limit.take(),
+            );
+            relation_network.pending_rebuild = false;
+            relation_network.closed = false;
+            actions
+        };
+
+        if closed {
+            self.open_page.relation_network = false;
+        }
+        if pending_rebuild {
+            self.rebuild_relation_network();
+        }
+        if let Some(limit) = pending_load_limit {
+            self.request_relation_network_members(limit);
+        }
+    }
+}
+
+fn render_relation_network_ui(
+    ui: &mut egui::Ui,
+    relation_network: &Arc<Mutex<RelationNetworkState>>,
+    bridge_snapshot: Option<&RelationBridgeSnapshot>,
+    command_tx: Option<&UnboundedSender<IcaCommand>>,
+) {
+    let Some(bridge_snapshot) = bridge_snapshot else {
+        ui.weak("当前没有启用的 bridge");
+        return;
+    };
+
+    let mut relation_network = relation_network.lock().unwrap();
+
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(250.0);
+            ui.heading("关系网");
+            ui.label(format!("会话: {}", bridge_snapshot.rooms_len));
+            ui.label(format!(
+                "群成员: {}/{} 已加载，{} 加载中",
+                relation_network.graph.loaded_group_count,
+                relation_network.graph.total_group_count,
+                bridge_snapshot.loading_groups
+            ));
+            if relation_network.graph.loaded_group_count != bridge_snapshot.loaded_groups {
+                ui.weak("图数据等待下一次刷新");
+            }
+            ui.separator();
+
+            if ui.button("重建关系网").clicked() {
+                relation_network.pending_rebuild = true;
+            }
+            ui.horizontal(|ui| {
+                if ui.button("加载 10 个群").clicked() {
+                    queue_relation_member_requests(
+                        &mut relation_network,
+                        bridge_snapshot,
+                        command_tx,
+                        Some(10),
+                    );
+                }
+                if ui.button("加载全部群").clicked() {
+                    queue_relation_member_requests(
+                        &mut relation_network,
+                        bridge_snapshot,
+                        command_tx,
+                        None,
+                    );
+                }
+            });
+
+            ui.checkbox(
+                &mut relation_network.include_unloaded_groups,
+                "显示未加载群",
+            );
+            if ui.button("应用显示范围").clicked() {
+                relation_network.pending_rebuild = true;
+            }
+            ui.checkbox(&mut relation_network.show_labels, "显示标签");
+            ui.separator();
+
+            let counts = relation_network.graph.node_counts();
+            ui.checkbox(
+                &mut relation_network.options.show_self_user,
+                format!(
+                    "{} ({})",
+                    RelationNodeKind::SelfUser.label(),
+                    counts.self_user
+                ),
+            );
+            ui.checkbox(
+                &mut relation_network.options.show_friends,
+                format!("{} ({})", RelationNodeKind::Friend.label(), counts.friend),
+            );
+            ui.checkbox(
+                &mut relation_network.options.show_acquaintances,
+                format!(
+                    "{} ({})",
+                    RelationNodeKind::Acquaintance.label(),
+                    counts.acquaintance
+                ),
+            );
+            ui.checkbox(
+                &mut relation_network.options.show_strangers,
+                format!(
+                    "{} ({})",
+                    RelationNodeKind::Stranger.label(),
+                    counts.stranger
+                ),
+            );
+            ui.checkbox(
+                &mut relation_network.options.show_groups,
+                format!("{} ({})", RelationNodeKind::Group.label(), counts.group),
+            );
+
+            ui.separator();
+            ui.add(
+                egui::TextEdit::singleline(&mut relation_network.search_query)
+                    .hint_text("搜索昵称 / QQ / 群号"),
+            );
+            if ui.button("清除聚焦").clicked() {
+                relation_network.focused_node_id = None;
+                relation_network.selected_node_id = None;
+            }
+
+            if let Some(node_id) = &relation_network.selected_node_id
+                && let Some(node) = relation_network
+                    .graph
+                    .nodes
+                    .iter()
+                    .find(|node| &node.id == node_id)
+            {
+                ui.separator();
+                ui.strong(&node.name);
+                ui.label(node.kind.label());
+                if let Some(qq) = node.qq {
+                    ui.label(format!("QQ: {qq}"));
+                }
+                if let Some(group_id) = node.group_id {
+                    ui.label(format!("群号: {group_id}"));
+                }
+                if let Some(member_count) = node.member_count {
+                    ui.label(format!("成员数: {member_count}"));
+                }
+                if node.common_group_count > 0 {
+                    ui.label(format!("共同群: {}", node.common_group_count));
+                }
+                ui.label(format!("关联数: {}", node.value));
+                if !node.role.trim().is_empty() {
+                    ui.label(format!("角色: {}", node.role));
+                }
+            }
+        });
+
+        ui.separator();
+        render_relation_network_canvas(ui, &mut relation_network);
+    });
+}
+
+fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut RelationNetworkState) {
+    let available = ui.available_size_before_wrap();
+    let size = egui::vec2(available.x.max(360.0), available.y.max(320.0));
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 6.0, ui.visuals().extreme_bg_color);
+
+    let query = relation_network.search_query.trim().to_lowercase();
+    let visible = visible_relation_node_ids(relation_network, &query);
+    if visible.is_empty() {
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "暂无关系数据。先加载群成员或等待会话数据同步。",
+            egui::TextStyle::Body.resolve(ui.style()),
+            ui.visuals().weak_text_color(),
+        );
+        return;
+    }
+
+    let positions = relation_node_positions(&relation_network.graph, &visible, rect);
+    let visible_set: HashSet<&str> = visible.iter().map(String::as_str).collect();
+    let focused = relation_network.focused_node_id.as_deref();
+    let focus_neighbors = focused.map(|focused| {
+        relation_neighbors(&relation_network.graph, focused)
+            .into_iter()
+            .collect::<HashSet<_>>()
+    });
+
+    let mut drawn_links = 0usize;
+    for link in &relation_network.graph.links {
+        if drawn_links >= 4_000 {
+            break;
+        }
+        if !visible_set.contains(link.source.as_str())
+            || !visible_set.contains(link.target.as_str())
+        {
+            continue;
+        }
+        if let Some(focused) = focused
+            && link.source != focused
+            && link.target != focused
+            && !focus_neighbors.as_ref().is_some_and(|neighbors| {
+                neighbors.contains(link.source.as_str()) && neighbors.contains(link.target.as_str())
+            })
+        {
+            continue;
+        }
+        let Some(source) = positions.get(&link.source) else {
+            continue;
+        };
+        let Some(target) = positions.get(&link.target) else {
+            continue;
+        };
+        painter.line_segment(
+            [*source, *target],
+            egui::Stroke::new(1.0, ui.visuals().weak_text_color().linear_multiply(0.28)),
+        );
+        drawn_links += 1;
+    }
+
+    let pointer_pos = response.hover_pos();
+    let mut hovered_node_id = None;
+    for node in &relation_network.graph.nodes {
+        if !visible_set.contains(node.id.as_str()) {
+            continue;
+        }
+        if let Some(focused) = focused
+            && node.id != focused
+            && !focus_neighbors
+                .as_ref()
+                .is_some_and(|neighbors| neighbors.contains(node.id.as_str()))
+        {
+            continue;
+        }
+        let Some(pos) = positions.get(&node.id) else {
+            continue;
+        };
+        let is_selected = relation_network.selected_node_id.as_deref() == Some(node.id.as_str());
+        let radius = node.radius.max(6.0);
+        let color = node.kind.color();
+        let stroke = if is_selected {
+            egui::Stroke::new(3.0, egui::Color32::WHITE)
+        } else if node.kind == RelationNodeKind::Group {
+            egui::Stroke::new(1.0 + node.size_level as f32, egui::Color32::WHITE)
+        } else {
+            egui::Stroke::new(1.0, ui.visuals().panel_fill)
+        };
+        painter.circle_filled(*pos, radius, color);
+        painter.circle_stroke(*pos, radius, stroke);
+
+        if relation_network.show_labels && visible.len() <= 700 {
+            painter.text(
+                *pos + egui::vec2(radius + 3.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                &node.name,
+                egui::TextStyle::Small.resolve(ui.style()),
+                ui.visuals().text_color(),
+            );
+        }
+
+        if pointer_pos.is_some_and(|pointer| pointer.distance(*pos) <= radius + 3.0) {
+            hovered_node_id = Some(node.id.clone());
+        }
+    }
+
+    if response.clicked() {
+        if let Some(node_id) = hovered_node_id {
+            relation_network.selected_node_id = Some(node_id.clone());
+            relation_network.focused_node_id = Some(node_id);
+        } else {
+            relation_network.focused_node_id = None;
+            relation_network.selected_node_id = None;
+        }
+    }
+}
+
+fn visible_relation_node_ids(relation_network: &RelationNetworkState, query: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let focused = relation_network.focused_node_id.as_deref();
+    let focus_neighbors = focused.map(|focused| {
+        relation_neighbors(&relation_network.graph, focused)
+            .into_iter()
+            .collect::<HashSet<_>>()
+    });
+
+    for node in &relation_network.graph.nodes {
+        if !relation_network.options.allows(node.kind) || !node.matches_query(query) {
+            continue;
+        }
+        if let Some(focused) = focused
+            && node.id != focused
+            && !focus_neighbors
+                .as_ref()
+                .is_some_and(|neighbors| neighbors.contains(node.id.as_str()))
+        {
+            continue;
+        }
+        ids.push(node.id.clone());
+        if ids.len() >= 6_000 {
+            break;
+        }
+    }
+    ids
+}
+
+#[derive(Debug, Clone)]
+struct RelationBridgeSnapshot {
+    rooms_len: usize,
+    loaded_groups: usize,
+    loading_groups: usize,
+    pending_group_room_ids: Vec<RoomId>,
+}
+
+fn queue_relation_member_requests(
+    relation_network: &mut RelationNetworkState,
+    snapshot: &RelationBridgeSnapshot,
+    command_tx: Option<&UnboundedSender<IcaCommand>>,
+    limit: Option<usize>,
+) {
+    let Some(command_tx) = command_tx else {
+        relation_network.pending_load_limit = Some(limit);
+        return;
+    };
+
+    let mut queued = 0usize;
+    for &room_id in &snapshot.pending_group_room_ids {
+        if let Err(e) = command_tx.send(IcaCommand::FetchGroupMembers { room_id }) {
+            tracing::warn!("send relation network fetchGroupMembers failed: {}", e);
+            break;
+        }
+        queued += 1;
+        if limit.is_some_and(|limit| queued >= limit) {
+            break;
+        }
+    }
+
+    if queued == 0 {
+        relation_network.pending_load_limit = Some(limit);
+    }
+}
+
+fn request_relation_network_members_with_tx(
+    state: &mut BridgeState,
+    command_tx: &UnboundedSender<IcaCommand>,
+    limit: Option<usize>,
+) {
+    let mut queued = 0usize;
+    let group_room_ids: Vec<_> = state
+        .rooms
+        .iter()
+        .filter(|room| room.room_id < 0)
+        .map(|room| room.room_id)
+        .collect();
+
+    for room_id in group_room_ids {
+        if state.group_members_by_room.contains_key(&room_id)
+            || state.loading_group_members.contains(&room_id)
+        {
+            continue;
+        }
+        state.loading_group_members.insert(room_id);
+        if let Err(e) = command_tx.send(IcaCommand::FetchGroupMembers { room_id }) {
+            state.loading_group_members.remove(&room_id);
+            state.last_error = Some(format!("关系网群成员请求失败: {e}"));
+            break;
+        }
+
+        queued += 1;
+        if limit.is_some_and(|limit| queued >= limit) {
+            break;
+        }
+    }
+
+    if queued > 0 {
+        state.last_notice = Some(format!("关系网已开始加载 {queued} 个群的成员列表"));
+    } else {
+        state.last_notice = Some("关系网没有需要加载的群成员列表".to_string());
     }
 }
 

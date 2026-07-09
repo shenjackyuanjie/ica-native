@@ -142,7 +142,7 @@ pub struct IcaApp {
     /// 全群自动签到状态
     pub auto_sign: AutoSignState,
     /// QQ 关系网分析状态
-    pub relation_network: RelationNetworkState,
+    pub relation_network: std::sync::Arc<std::sync::Mutex<RelationNetworkState>>,
 }
 
 impl IcaApp {
@@ -392,7 +392,9 @@ impl IcaApp {
             message_tools: MessageToolsState::default(),
             room_tools: RoomToolsState::default(),
             auto_sign: AutoSignState::default(),
-            relation_network: RelationNetworkState::default(),
+            relation_network: std::sync::Arc::new(std::sync::Mutex::new(
+                RelationNetworkState::default(),
+            )),
         }
     }
 
