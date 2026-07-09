@@ -2,6 +2,18 @@
 
 本文件记录 ica-native 的变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格。
 
+## [0.1.3]
+
+### Added
+- 新增「QQ 关系网」原生窗口，可从顶部「选项」菜单打开。
+- 支持基于现有好友会话、群会话和群成员缓存构建关系网节点与边。
+- 支持按节点类型筛选自己、好友、共同群好友、仅同群和群节点，并显示节点数量统计。
+- 支持批量加载群成员、重建关系网、搜索昵称/QQ/群号，以及点击节点查看一跳关系和节点详情。
+
+### Changed
+- 关系网随 `onlineData`、`setAllRooms` 和 `groupMembersResponse` 自动重建，并在大图场景下自动关闭部分高成本显示项。
+- 使用轻量原生径向布局渲染关系图，避免引入 Flask/ECharts/NapCat 侧服务依赖。
+
 ## [0.1.2]
 
 ### Changed
