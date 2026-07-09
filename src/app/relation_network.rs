@@ -8,6 +8,12 @@ use tokio::sync::mpsc::UnboundedSender;
 use super::IcaApp;
 use super::state::{BridgeState, GroupMember};
 
+const MAX_VISIBLE_RELATION_NODES: usize = 2_500;
+const MAX_VISIBLE_RELATION_NODES_FOCUSED: usize = 6_000;
+const MAX_DRAWN_RELATION_LINKS: usize = 2_500;
+const MAX_DRAWN_RELATION_LINKS_FOCUSED: usize = 6_000;
+const MAX_RELATION_LABELS: usize = 350;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RelationNodeKind {
     SelfUser,
@@ -565,9 +571,14 @@ fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut Rela
             .collect::<HashSet<_>>()
     });
 
+    let max_links = if focused.is_some() {
+        MAX_DRAWN_RELATION_LINKS_FOCUSED
+    } else {
+        MAX_DRAWN_RELATION_LINKS
+    };
     let mut drawn_links = 0usize;
     for link in &relation_network.graph.links {
-        if drawn_links >= 4_000 {
+        if drawn_links >= max_links {
             break;
         }
         if !visible_set.contains(link.source.as_str())
@@ -595,6 +606,24 @@ fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut Rela
             egui::Stroke::new(1.0, ui.visuals().weak_text_color().linear_multiply(0.28)),
         );
         drawn_links += 1;
+    }
+
+    if visible.len() < relation_network.graph.nodes.len()
+        || drawn_links < relation_network.graph.links.len()
+    {
+        painter.text(
+            rect.left_top() + egui::vec2(10.0, 10.0),
+            egui::Align2::LEFT_TOP,
+            format!(
+                "显示 {} / {} 节点，{} / {} 连线",
+                visible.len(),
+                relation_network.graph.nodes.len(),
+                drawn_links,
+                relation_network.graph.links.len()
+            ),
+            egui::TextStyle::Small.resolve(ui.style()),
+            ui.visuals().weak_text_color(),
+        );
     }
 
     let pointer_pos = response.hover_pos();
@@ -627,7 +656,7 @@ fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut Rela
         painter.circle_filled(*pos, radius, color);
         painter.circle_stroke(*pos, radius, stroke);
 
-        if relation_network.show_labels && visible.len() <= 700 {
+        if relation_network.show_labels && visible.len() <= MAX_RELATION_LABELS {
             painter.text(
                 *pos + egui::vec2(radius + 3.0, 0.0),
                 egui::Align2::LEFT_CENTER,
@@ -662,6 +691,12 @@ fn visible_relation_node_ids(relation_network: &RelationNetworkState, query: &st
             .collect::<HashSet<_>>()
     });
 
+    let limit = if focused.is_some() {
+        MAX_VISIBLE_RELATION_NODES_FOCUSED
+    } else {
+        MAX_VISIBLE_RELATION_NODES
+    };
+
     for node in &relation_network.graph.nodes {
         if !relation_network.options.allows(node.kind) || !node.matches_query(query) {
             continue;
@@ -675,7 +710,7 @@ fn visible_relation_node_ids(relation_network: &RelationNetworkState, query: &st
             continue;
         }
         ids.push(node.id.clone());
-        if ids.len() >= 6_000 {
+        if ids.len() >= limit {
             break;
         }
     }
@@ -789,7 +824,9 @@ fn relation_node_positions(
         return positions;
     }
 
-    let max_radius = rect.width().min(rect.height()) * 0.43;
+    let usable_rect = rect.shrink2(egui::vec2(24.0, 24.0));
+    let center = usable_rect.center();
+    let max_radius = usable_rect.width().min(usable_rect.height()) * 0.24;
     let mut rings: [Vec<&RelationNode>; 5] = std::array::from_fn(|_| Vec::new());
     let visible_set: HashSet<&str> = visible_ids.iter().map(String::as_str).collect();
     for node in &graph.nodes {
@@ -798,32 +835,72 @@ fn relation_node_positions(
         }
     }
 
-    let ring_count = rings.iter().filter(|ring| !ring.is_empty()).count().max(1);
-    let mut ring_idx = 0usize;
-    for ring in rings {
-        if ring.is_empty() {
-            continue;
-        }
-        let radius = if ring_count == 1 {
-            max_radius * 0.65
-        } else {
-            max_radius * ((ring_idx + 1) as f32 / ring_count as f32)
-        };
-        let angle_step = std::f32::consts::TAU / ring.len().max(1) as f32;
-        for (idx, node) in ring.iter().enumerate() {
-            let angle = idx as f32 * angle_step + ring_idx as f32 * 0.37;
-            positions.insert(
-                node.id.clone(),
-                egui::pos2(
-                    center.x + angle.cos() * radius,
-                    center.y + angle.sin() * radius,
-                ),
-            );
-        }
-        ring_idx += 1;
+    place_radial_ring(&mut positions, &rings[0], center, 0.0, 0.0);
+    place_radial_ring(&mut positions, &rings[1], center, max_radius * 0.70, 0.21);
+    place_radial_ring(&mut positions, &rings[2], center, max_radius * 1.10, 0.53);
+    place_radial_ring(&mut positions, &rings[3], center, max_radius * 1.45, 0.89);
+
+    if !rings[4].is_empty() {
+        place_group_grid(&mut positions, &rings[4], usable_rect);
     }
 
     positions
+}
+
+fn place_radial_ring(
+    positions: &mut HashMap<String, egui::Pos2>,
+    nodes: &[&RelationNode],
+    center: egui::Pos2,
+    radius: f32,
+    phase: f32,
+) {
+    match nodes.len() {
+        0 => {}
+        1 => {
+            positions.insert(nodes[0].id.clone(), center);
+        }
+        len => {
+            let angle_step = std::f32::consts::TAU / len as f32;
+            for (idx, node) in nodes.iter().enumerate() {
+                let angle = idx as f32 * angle_step + phase;
+                positions.insert(
+                    node.id.clone(),
+                    egui::pos2(
+                        center.x + angle.cos() * radius,
+                        center.y + angle.sin() * radius,
+                    ),
+                );
+            }
+        }
+    }
+}
+
+fn place_group_grid(
+    positions: &mut HashMap<String, egui::Pos2>,
+    nodes: &[&RelationNode],
+    rect: egui::Rect,
+) {
+    let count = nodes.len().max(1);
+    let aspect = (rect.width() / rect.height().max(1.0)).max(0.25);
+    let cols = ((count as f32 * aspect).sqrt().ceil() as usize).max(1);
+    let rows = count.div_ceil(cols).max(1);
+    let x_step = rect.width() / cols as f32;
+    let y_step = rect.height() / rows as f32;
+
+    for (idx, node) in nodes.iter().enumerate() {
+        let col = idx % cols;
+        let row = idx / cols;
+        let stagger = if row % 2 == 0 { 0.0 } else { x_step * 0.35 };
+        let x = rect.left() + (col as f32 + 0.5) * x_step + stagger;
+        let y = rect.top() + (row as f32 + 0.5) * y_step;
+        positions.insert(
+            node.id.clone(),
+            egui::pos2(
+                x.clamp(rect.left() + 6.0, rect.right() - 6.0),
+                y.clamp(rect.top() + 6.0, rect.bottom() - 6.0),
+            ),
+        );
+    }
 }
 
 #[derive(Debug, Default)]
