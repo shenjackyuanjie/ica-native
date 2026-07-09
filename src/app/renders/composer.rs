@@ -369,9 +369,11 @@ impl IcaApp {
                                                     else {
                                                         continue;
                                                     };
-                                                    let bytes =
+                                                    let Some(bytes) =
                                                         crate::face_data::get_face(face_id)
-                                                            .unwrap();
+                                                    else {
+                                                        continue;
+                                                    };
                                                     let uri = format!("bytes://face_{face_id}");
                                                     let img = Image::from_bytes(uri, bytes)
                                                         .fit_to_exact_size(egui::vec2(

@@ -19,8 +19,10 @@ use tracing::{debug, warn};
 use super::util::format_bytes;
 
 const ACTIVE_GIF_GRACE: Duration = Duration::from_millis(750);
-const DEFAULT_GIF_CACHE_CAP: u64 = 128 * 1024 * 1024;
+const DEFAULT_GIF_CACHE_CAP: u64 = 64 * 1024 * 1024;
 const MIN_GIF_CACHE_CAP: u64 = 16 * 1024 * 1024;
+const MAX_GIF_FRAMES: usize = 180;
+const MAX_GIF_DECODED_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug)]
 struct AnimatedImage {
@@ -46,8 +48,21 @@ impl AnimatedImage {
                 [img.width() as usize, img.height() as usize],
                 pixels.as_slice(),
             );
+            let frame_bytes = (image.pixels.len() * size_of::<egui::Color32>()) as u64;
+            if frames.len() >= MAX_GIF_FRAMES
+                || byte_size.saturating_add(frame_bytes) > MAX_GIF_DECODED_BYTES
+            {
+                if frames.is_empty() {
+                    byte_size = byte_size
+                        .saturating_add(frame_bytes)
+                        .saturating_add(size_of::<Duration>() as u64);
+                    frames.push(Arc::new(image));
+                    durations.push(frame.delay().into());
+                }
+                break;
+            }
             byte_size = byte_size
-                .saturating_add((image.pixels.len() * size_of::<egui::Color32>()) as u64)
+                .saturating_add(frame_bytes)
                 .saturating_add(size_of::<Duration>() as u64);
             frames.push(Arc::new(image));
             durations.push(frame.delay().into());

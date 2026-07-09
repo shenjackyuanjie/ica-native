@@ -21,7 +21,7 @@ fn tokio_rt_work_thread_default() -> u32 {
 }
 
 fn image_cache_max_bytes_default() -> u64 {
-    256 * 1024 * 1024
+    128 * 1024 * 1024
 }
 
 fn disk_image_cache_max_bytes_default() -> u64 {

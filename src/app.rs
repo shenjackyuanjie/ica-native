@@ -458,6 +458,7 @@ impl IcaApp {
                         Ok(groups) => {
                             let state = &mut self.bridge_states[bridge_idx];
                             state.chat_groups.groups = groups;
+                            state.invalidate_visible_room_indices();
                             if let SelectedChatGroup::Custom(idx) = &state.selected_chat_group
                                 && *idx >= state.chat_groups.groups.len()
                             {

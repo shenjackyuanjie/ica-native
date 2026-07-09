@@ -406,6 +406,15 @@ pub struct MessageRowLayout {
 }
 
 #[derive(Debug, Clone)]
+pub struct VisibleRoomIndicesCache {
+    pub revision: u64,
+    pub query: String,
+    pub selected_chat_group: SelectedChatGroup,
+    pub disable_chat_group: bool,
+    pub indices: Vec<usize>,
+}
+
+#[derive(Debug, Clone)]
 /// 单个 bridge 在 GUI 侧维护的完整状态。
 ///
 /// 这里既存连接状态，也存房间列表、消息缓存、验证消息和草稿，
@@ -417,6 +426,8 @@ pub struct BridgeState {
     /// 每个 bridge 独立保存当前选中的聊天分组。
     pub selected_chat_group: SelectedChatGroup,
     pub rooms: Vec<Room>,
+    pub rooms_revision: u64,
+    pub visible_room_indices_cache: Option<VisibleRoomIndicesCache>,
     pub messages_by_room: HashMap<RoomId, Vec<Message>>,
     /// 已按群聊缓存的成员列表，仅在打开 @ 选择器时懒加载。
     pub group_members_by_room: HashMap<RoomId, Vec<GroupMember>>,
@@ -481,12 +492,18 @@ pub struct BridgeState {
 }
 
 impl BridgeState {
+    const ACTIVE_ROOM_MESSAGE_LIMIT: usize = 5_000;
+    const BACKGROUND_ROOM_MESSAGE_LIMIT: usize = 300;
+    const SEARCH_MESSAGE_LIMIT: usize = 200;
+
     pub fn new(bridge_key: String, chat_groups: ChatGroups) -> Self {
         Self {
             bridge_key,
             chat_groups,
             selected_chat_group: SelectedChatGroup::All,
             rooms: Vec::new(),
+            rooms_revision: 1,
+            visible_room_indices_cache: None,
             messages_by_room: HashMap::new(),
             group_members_by_room: HashMap::new(),
             loading_group_members: HashSet::new(),
@@ -532,11 +549,91 @@ impl BridgeState {
         }
     }
 
+    pub fn bump_rooms_revision(&mut self) {
+        self.rooms_revision = self.rooms_revision.wrapping_add(1);
+        if self.rooms_revision == 0 {
+            self.rooms_revision = 1;
+        }
+        self.visible_room_indices_cache = None;
+    }
+
+    pub fn invalidate_visible_room_indices(&mut self) {
+        self.visible_room_indices_cache = None;
+    }
+
     pub fn invalidate_message_layout(&mut self, room_id: RoomId) {
         self.message_row_heights.remove(&room_id);
         self.message_row_layouts.remove(&room_id);
         self.message_layout_cache_keys.remove(&room_id);
         self.last_content_height.remove(&room_id);
+    }
+
+    fn trim_room_messages_to_limit(&mut self, room_id: RoomId, limit: usize) -> bool {
+        let Some(messages) = self.messages_by_room.get_mut(&room_id) else {
+            return false;
+        };
+        if messages.len() <= limit {
+            return false;
+        }
+
+        let remove_count = messages.len() - limit;
+        messages.drain(..remove_count);
+        self.invalidate_message_layout(room_id);
+        self.no_more_history.remove(&room_id);
+        true
+    }
+
+    fn trim_room_messages_to_limit_keep_oldest(&mut self, room_id: RoomId, limit: usize) -> bool {
+        let Some(messages) = self.messages_by_room.get_mut(&room_id) else {
+            return false;
+        };
+        if messages.len() <= limit {
+            return false;
+        }
+
+        messages.truncate(limit);
+        self.invalidate_message_layout(room_id);
+        self.no_more_history.remove(&room_id);
+        true
+    }
+
+    pub fn trim_after_history_prepend(&mut self, room_id: RoomId) {
+        self.trim_room_messages_to_limit_keep_oldest(room_id, Self::ACTIVE_ROOM_MESSAGE_LIMIT);
+        self.trim_layout_caches_to_active_room(self.selected_room_id);
+        self.trim_message_search_results();
+    }
+
+    pub fn trim_message_caches(&mut self, active_room_id: Option<RoomId>) {
+        let room_ids = self.messages_by_room.keys().copied().collect::<Vec<_>>();
+        for room_id in room_ids {
+            let limit = if Some(room_id) == active_room_id {
+                Self::ACTIVE_ROOM_MESSAGE_LIMIT
+            } else {
+                Self::BACKGROUND_ROOM_MESSAGE_LIMIT
+            };
+            self.trim_room_messages_to_limit(room_id, limit);
+        }
+        self.trim_layout_caches_to_active_room(active_room_id);
+        self.trim_message_search_results();
+    }
+
+    pub fn trim_layout_caches_to_active_room(&mut self, active_room_id: Option<RoomId>) {
+        self.message_row_heights
+            .retain(|room_id, _| Some(*room_id) == active_room_id);
+        self.message_row_layouts
+            .retain(|room_id, _| Some(*room_id) == active_room_id);
+        self.message_layout_cache_keys
+            .retain(|room_id, _| Some(*room_id) == active_room_id);
+        self.last_content_height
+            .retain(|room_id, _| Some(*room_id) == active_room_id);
+    }
+
+    pub fn trim_message_search_results(&mut self) {
+        if self.message_search.messages.len() <= Self::SEARCH_MESSAGE_LIMIT {
+            return;
+        }
+        let remove_count = self.message_search.messages.len() - Self::SEARCH_MESSAGE_LIMIT;
+        self.message_search.messages.drain(..remove_count);
     }
 
     pub(super) fn invalidate_message_rows(&mut self, room_id: RoomId) {
@@ -572,8 +669,9 @@ impl BridgeState {
         room.last_message.content = Some(Self::preview_content(message));
         room.last_message.username = Some(message.sender_name.clone());
         room.last_message.user_id = Some(message.sender_id);
-        room.last_message.timestamp = Some(message.time.format("%H:%M:%S").to_string());
+        room.last_message.timestamp = Some(message.time_text.clone());
         room.utime = message.time.timestamp_millis();
+        self.bump_rooms_revision();
     }
 
     pub fn upsert_message(&mut self, room_id: RoomId, message: Message) -> bool {
@@ -593,6 +691,7 @@ impl BridgeState {
             heights.remove(&msg_id);
         }
         self.invalidate_message_rows(room_id);
+        self.trim_room_messages_to_limit(room_id, Self::ACTIVE_ROOM_MESSAGE_LIMIT);
         inserted
     }
 

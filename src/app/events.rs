@@ -166,7 +166,10 @@ impl IcaApp {
             "setAllRooms" => {
                 if let Some(value) = Self::first_payload_value(payload) {
                     match Vec::<Room>::deserialize(value) {
-                        Ok(rooms) => state.rooms = rooms,
+                        Ok(rooms) => {
+                            state.rooms = rooms;
+                            state.bump_rooms_revision();
+                        }
                         Err(e) => {
                             state.last_error = Some(format!("setAllRooms 解析失败: {}", e));
                         }
@@ -188,6 +191,7 @@ impl IcaApp {
                             state.new_message_counts.remove(&room_id);
                             state.invalidate_message_layout(room_id);
                             state.messages_by_room.insert(room_id, messages);
+                            state.trim_message_caches(state.selected_room_id);
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -227,6 +231,7 @@ impl IcaApp {
                                 state.invalidate_message_rows(room_id);
                                 // 标记需要调整 scroll offset
                                 state.prepend_scroll_fix.insert(room_id);
+                                state.trim_after_history_prepend(room_id);
                             }
                         }
                         Err(e) => {
@@ -254,6 +259,7 @@ impl IcaApp {
                             state.requested_rooms.insert(room_id);
                             state.sync_room_preview(room_id, &new_message.msg);
                             let inserted = state.upsert_message(room_id, new_message.msg);
+                            state.trim_message_caches(state.selected_room_id);
                             if should_scroll_to_bottom || should_follow_new_message {
                                 state.message_scroll_to_bottom.insert(room_id);
                                 state.new_message_counts.remove(&room_id);
@@ -327,6 +333,7 @@ impl IcaApp {
                             } else {
                                 state.rooms.push(updated_room);
                             }
+                            state.bump_rooms_revision();
                         }
                         Err(e) => {
                             state.last_error = Some(format!("updateRoom 解析失败: {}", e));
@@ -340,6 +347,7 @@ impl IcaApp {
                 {
                     room.unread_count = 0;
                     room.at = crate::ica::types::message::At::Bool(false);
+                    state.bump_rooms_revision();
                 }
             }
             "renewMessage" => {
@@ -533,6 +541,7 @@ impl IcaApp {
                         state
                             .message_search
                             .apply_response(room_id, keyword, offset, messages);
+                        state.trim_message_search_results();
                     }
                     Some(Err(e)) => {
                         tracing::warn!(

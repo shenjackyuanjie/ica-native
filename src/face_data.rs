@@ -1,421 +1,118 @@
 // 自动生成的表情数据模块
-// 内嵌 391 个 QQ 经典表情 APNG 文件
+// 只内嵌表情 ID，APNG 文件按需从 assets/face 读取并做小型 LRU 缓存。
 
-/// (表情ID, 表情字节数据) 所有可用的 QQ 表情
-static FACE_DATA: &[(u16, &[u8])] = &[
-    (0, include_bytes!("../assets/face/000.apng")),
-    (1, include_bytes!("../assets/face/001.apng")),
-    (2, include_bytes!("../assets/face/002.apng")),
-    (3, include_bytes!("../assets/face/003.apng")),
-    (4, include_bytes!("../assets/face/004.apng")),
-    (5, include_bytes!("../assets/face/005.apng")),
-    (6, include_bytes!("../assets/face/006.apng")),
-    (7, include_bytes!("../assets/face/007.apng")),
-    (8, include_bytes!("../assets/face/008.apng")),
-    (9, include_bytes!("../assets/face/009.apng")),
-    (10, include_bytes!("../assets/face/010.apng")),
-    (11, include_bytes!("../assets/face/011.apng")),
-    (12, include_bytes!("../assets/face/012.apng")),
-    (13, include_bytes!("../assets/face/013.apng")),
-    (14, include_bytes!("../assets/face/014.apng")),
-    (15, include_bytes!("../assets/face/015.apng")),
-    (16, include_bytes!("../assets/face/016.apng")),
-    (18, include_bytes!("../assets/face/018.apng")),
-    (19, include_bytes!("../assets/face/019.apng")),
-    (20, include_bytes!("../assets/face/020.apng")),
-    (21, include_bytes!("../assets/face/021.apng")),
-    (22, include_bytes!("../assets/face/022.apng")),
-    (23, include_bytes!("../assets/face/023.apng")),
-    (24, include_bytes!("../assets/face/024.apng")),
-    (25, include_bytes!("../assets/face/025.apng")),
-    (26, include_bytes!("../assets/face/026.apng")),
-    (27, include_bytes!("../assets/face/027.apng")),
-    (28, include_bytes!("../assets/face/028.apng")),
-    (29, include_bytes!("../assets/face/029.apng")),
-    (30, include_bytes!("../assets/face/030.apng")),
-    (31, include_bytes!("../assets/face/031.apng")),
-    (32, include_bytes!("../assets/face/032.apng")),
-    (33, include_bytes!("../assets/face/033.apng")),
-    (34, include_bytes!("../assets/face/034.apng")),
-    (35, include_bytes!("../assets/face/035.apng")),
-    (36, include_bytes!("../assets/face/036.apng")),
-    (37, include_bytes!("../assets/face/037.apng")),
-    (38, include_bytes!("../assets/face/038.apng")),
-    (39, include_bytes!("../assets/face/039.apng")),
-    (41, include_bytes!("../assets/face/041.apng")),
-    (42, include_bytes!("../assets/face/042.apng")),
-    (43, include_bytes!("../assets/face/043.apng")),
-    (46, include_bytes!("../assets/face/046.apng")),
-    (49, include_bytes!("../assets/face/049.apng")),
-    (50, include_bytes!("../assets/face/050.apng")),
-    (53, include_bytes!("../assets/face/053.apng")),
-    (54, include_bytes!("../assets/face/054.apng")),
-    (55, include_bytes!("../assets/face/055.apng")),
-    (56, include_bytes!("../assets/face/056.apng")),
-    (57, include_bytes!("../assets/face/057.apng")),
-    (59, include_bytes!("../assets/face/059.apng")),
-    (60, include_bytes!("../assets/face/060.apng")),
-    (61, include_bytes!("../assets/face/061.apng")),
-    (63, include_bytes!("../assets/face/063.apng")),
-    (64, include_bytes!("../assets/face/064.apng")),
-    (66, include_bytes!("../assets/face/066.apng")),
-    (67, include_bytes!("../assets/face/067.apng")),
-    (69, include_bytes!("../assets/face/069.apng")),
-    (74, include_bytes!("../assets/face/074.apng")),
-    (75, include_bytes!("../assets/face/075.apng")),
-    (76, include_bytes!("../assets/face/076.apng")),
-    (77, include_bytes!("../assets/face/077.apng")),
-    (78, include_bytes!("../assets/face/078.apng")),
-    (79, include_bytes!("../assets/face/079.apng")),
-    (81, include_bytes!("../assets/face/081.apng")),
-    (85, include_bytes!("../assets/face/085.apng")),
-    (86, include_bytes!("../assets/face/086.apng")),
-    (89, include_bytes!("../assets/face/089.apng")),
-    (96, include_bytes!("../assets/face/096.apng")),
-    (97, include_bytes!("../assets/face/097.apng")),
-    (98, include_bytes!("../assets/face/098.apng")),
-    (99, include_bytes!("../assets/face/099.apng")),
-    (100, include_bytes!("../assets/face/100.apng")),
-    (101, include_bytes!("../assets/face/101.apng")),
-    (102, include_bytes!("../assets/face/102.apng")),
-    (103, include_bytes!("../assets/face/103.apng")),
-    (104, include_bytes!("../assets/face/104.apng")),
-    (105, include_bytes!("../assets/face/105.apng")),
-    (106, include_bytes!("../assets/face/106.apng")),
-    (107, include_bytes!("../assets/face/107.apng")),
-    (108, include_bytes!("../assets/face/108.apng")),
-    (109, include_bytes!("../assets/face/109.apng")),
-    (110, include_bytes!("../assets/face/110.apng")),
-    (111, include_bytes!("../assets/face/111.apng")),
-    (112, include_bytes!("../assets/face/112.apng")),
-    (113, include_bytes!("../assets/face/113.apng")),
-    (114, include_bytes!("../assets/face/114.apng")),
-    (115, include_bytes!("../assets/face/115.apng")),
-    (116, include_bytes!("../assets/face/116.apng")),
-    (117, include_bytes!("../assets/face/117.apng")),
-    (118, include_bytes!("../assets/face/118.apng")),
-    (119, include_bytes!("../assets/face/119.apng")),
-    (120, include_bytes!("../assets/face/120.apng")),
-    (121, include_bytes!("../assets/face/121.apng")),
-    (122, include_bytes!("../assets/face/122.apng")),
-    (123, include_bytes!("../assets/face/123.apng")),
-    (124, include_bytes!("../assets/face/124.apng")),
-    (125, include_bytes!("../assets/face/125.apng")),
-    (126, include_bytes!("../assets/face/126.apng")),
-    (127, include_bytes!("../assets/face/127.apng")),
-    (128, include_bytes!("../assets/face/128.apng")),
-    (129, include_bytes!("../assets/face/129.apng")),
-    (130, include_bytes!("../assets/face/130.apng")),
-    (131, include_bytes!("../assets/face/131.apng")),
-    (132, include_bytes!("../assets/face/132.apng")),
-    (133, include_bytes!("../assets/face/133.apng")),
-    (134, include_bytes!("../assets/face/134.apng")),
-    (135, include_bytes!("../assets/face/135.apng")),
-    (136, include_bytes!("../assets/face/136.apng")),
-    (137, include_bytes!("../assets/face/137.apng")),
-    (138, include_bytes!("../assets/face/138.apng")),
-    (139, include_bytes!("../assets/face/139.apng")),
-    (140, include_bytes!("../assets/face/140.apng")),
-    (141, include_bytes!("../assets/face/141.apng")),
-    (142, include_bytes!("../assets/face/142.apng")),
-    (143, include_bytes!("../assets/face/143.apng")),
-    (144, include_bytes!("../assets/face/144.apng")),
-    (145, include_bytes!("../assets/face/145.apng")),
-    (146, include_bytes!("../assets/face/146.apng")),
-    (147, include_bytes!("../assets/face/147.apng")),
-    (148, include_bytes!("../assets/face/148.apng")),
-    (149, include_bytes!("../assets/face/149.apng")),
-    (150, include_bytes!("../assets/face/150.apng")),
-    (151, include_bytes!("../assets/face/151.apng")),
-    (152, include_bytes!("../assets/face/152.apng")),
-    (153, include_bytes!("../assets/face/153.apng")),
-    (154, include_bytes!("../assets/face/154.apng")),
-    (155, include_bytes!("../assets/face/155.apng")),
-    (156, include_bytes!("../assets/face/156.apng")),
-    (157, include_bytes!("../assets/face/157.apng")),
-    (158, include_bytes!("../assets/face/158.apng")),
-    (159, include_bytes!("../assets/face/159.apng")),
-    (160, include_bytes!("../assets/face/160.apng")),
-    (161, include_bytes!("../assets/face/161.apng")),
-    (162, include_bytes!("../assets/face/162.apng")),
-    (163, include_bytes!("../assets/face/163.apng")),
-    (164, include_bytes!("../assets/face/164.apng")),
-    (165, include_bytes!("../assets/face/165.apng")),
-    (166, include_bytes!("../assets/face/166.apng")),
-    (167, include_bytes!("../assets/face/167.apng")),
-    (168, include_bytes!("../assets/face/168.apng")),
-    (169, include_bytes!("../assets/face/169.apng")),
-    (170, include_bytes!("../assets/face/170.apng")),
-    (171, include_bytes!("../assets/face/171.apng")),
-    (172, include_bytes!("../assets/face/172.apng")),
-    (173, include_bytes!("../assets/face/173.apng")),
-    (174, include_bytes!("../assets/face/174.apng")),
-    (175, include_bytes!("../assets/face/175.apng")),
-    (176, include_bytes!("../assets/face/176.apng")),
-    (177, include_bytes!("../assets/face/177.apng")),
-    (178, include_bytes!("../assets/face/178.apng")),
-    (179, include_bytes!("../assets/face/179.apng")),
-    (180, include_bytes!("../assets/face/180.apng")),
-    (181, include_bytes!("../assets/face/181.apng")),
-    (182, include_bytes!("../assets/face/182.apng")),
-    (183, include_bytes!("../assets/face/183.apng")),
-    (184, include_bytes!("../assets/face/184.apng")),
-    (185, include_bytes!("../assets/face/185.apng")),
-    (186, include_bytes!("../assets/face/186.apng")),
-    (187, include_bytes!("../assets/face/187.apng")),
-    (188, include_bytes!("../assets/face/188.apng")),
-    (189, include_bytes!("../assets/face/189.apng")),
-    (190, include_bytes!("../assets/face/190.apng")),
-    (191, include_bytes!("../assets/face/191.apng")),
-    (192, include_bytes!("../assets/face/192.apng")),
-    (193, include_bytes!("../assets/face/193.apng")),
-    (194, include_bytes!("../assets/face/194.apng")),
-    (195, include_bytes!("../assets/face/195.apng")),
-    (196, include_bytes!("../assets/face/196.apng")),
-    (197, include_bytes!("../assets/face/197.apng")),
-    (198, include_bytes!("../assets/face/198.apng")),
-    (199, include_bytes!("../assets/face/199.apng")),
-    (200, include_bytes!("../assets/face/200.apng")),
-    (201, include_bytes!("../assets/face/201.apng")),
-    (202, include_bytes!("../assets/face/202.apng")),
-    (203, include_bytes!("../assets/face/203.apng")),
-    (204, include_bytes!("../assets/face/204.apng")),
-    (205, include_bytes!("../assets/face/205.apng")),
-    (206, include_bytes!("../assets/face/206.apng")),
-    (207, include_bytes!("../assets/face/207.apng")),
-    (208, include_bytes!("../assets/face/208.apng")),
-    (209, include_bytes!("../assets/face/209.apng")),
-    (210, include_bytes!("../assets/face/210.apng")),
-    (211, include_bytes!("../assets/face/211.apng")),
-    (212, include_bytes!("../assets/face/212.apng")),
-    (213, include_bytes!("../assets/face/213.apng")),
-    (214, include_bytes!("../assets/face/214.apng")),
-    (215, include_bytes!("../assets/face/215.apng")),
-    (216, include_bytes!("../assets/face/216.apng")),
-    (217, include_bytes!("../assets/face/217.apng")),
-    (218, include_bytes!("../assets/face/218.apng")),
-    (219, include_bytes!("../assets/face/219.apng")),
-    (220, include_bytes!("../assets/face/220.apng")),
-    (221, include_bytes!("../assets/face/221.apng")),
-    (222, include_bytes!("../assets/face/222.apng")),
-    (223, include_bytes!("../assets/face/223.apng")),
-    (224, include_bytes!("../assets/face/224.apng")),
-    (225, include_bytes!("../assets/face/225.apng")),
-    (226, include_bytes!("../assets/face/226.apng")),
-    (227, include_bytes!("../assets/face/227.apng")),
-    (228, include_bytes!("../assets/face/228.apng")),
-    (229, include_bytes!("../assets/face/229.apng")),
-    (230, include_bytes!("../assets/face/230.apng")),
-    (231, include_bytes!("../assets/face/231.apng")),
-    (232, include_bytes!("../assets/face/232.apng")),
-    (233, include_bytes!("../assets/face/233.apng")),
-    (234, include_bytes!("../assets/face/234.apng")),
-    (235, include_bytes!("../assets/face/235.apng")),
-    (236, include_bytes!("../assets/face/236.apng")),
-    (237, include_bytes!("../assets/face/237.apng")),
-    (238, include_bytes!("../assets/face/238.apng")),
-    (239, include_bytes!("../assets/face/239.apng")),
-    (240, include_bytes!("../assets/face/240.apng")),
-    (241, include_bytes!("../assets/face/241.apng")),
-    (242, include_bytes!("../assets/face/242.apng")),
-    (243, include_bytes!("../assets/face/243.apng")),
-    (244, include_bytes!("../assets/face/244.apng")),
-    (245, include_bytes!("../assets/face/245.apng")),
-    (246, include_bytes!("../assets/face/246.apng")),
-    (247, include_bytes!("../assets/face/247.apng")),
-    (260, include_bytes!("../assets/face/260.apng")),
-    (261, include_bytes!("../assets/face/261.apng")),
-    (262, include_bytes!("../assets/face/262.apng")),
-    (263, include_bytes!("../assets/face/263.apng")),
-    (264, include_bytes!("../assets/face/264.apng")),
-    (265, include_bytes!("../assets/face/265.apng")),
-    (266, include_bytes!("../assets/face/266.apng")),
-    (267, include_bytes!("../assets/face/267.apng")),
-    (268, include_bytes!("../assets/face/268.apng")),
-    (269, include_bytes!("../assets/face/269.apng")),
-    (270, include_bytes!("../assets/face/270.apng")),
-    (271, include_bytes!("../assets/face/271.apng")),
-    (272, include_bytes!("../assets/face/272.apng")),
-    (273, include_bytes!("../assets/face/273.apng")),
-    (274, include_bytes!("../assets/face/274.apng")),
-    (276, include_bytes!("../assets/face/276.apng")),
-    (277, include_bytes!("../assets/face/277.apng")),
-    (278, include_bytes!("../assets/face/278.apng")),
-    (279, include_bytes!("../assets/face/279.apng")),
-    (280, include_bytes!("../assets/face/280.apng")),
-    (281, include_bytes!("../assets/face/281.apng")),
-    (282, include_bytes!("../assets/face/282.apng")),
-    (283, include_bytes!("../assets/face/283.apng")),
-    (284, include_bytes!("../assets/face/284.apng")),
-    (285, include_bytes!("../assets/face/285.apng")),
-    (286, include_bytes!("../assets/face/286.apng")),
-    (287, include_bytes!("../assets/face/287.apng")),
-    (288, include_bytes!("../assets/face/288.apng")),
-    (289, include_bytes!("../assets/face/289.apng")),
-    (290, include_bytes!("../assets/face/290.apng")),
-    (291, include_bytes!("../assets/face/291.apng")),
-    (292, include_bytes!("../assets/face/292.apng")),
-    (293, include_bytes!("../assets/face/293.apng")),
-    (294, include_bytes!("../assets/face/294.apng")),
-    (295, include_bytes!("../assets/face/295.apng")),
-    (296, include_bytes!("../assets/face/296.apng")),
-    (297, include_bytes!("../assets/face/297.apng")),
-    (298, include_bytes!("../assets/face/298.apng")),
-    (299, include_bytes!("../assets/face/299.apng")),
-    (300, include_bytes!("../assets/face/300.apng")),
-    (301, include_bytes!("../assets/face/301.apng")),
-    (302, include_bytes!("../assets/face/302.apng")),
-    (303, include_bytes!("../assets/face/303.apng")),
-    (304, include_bytes!("../assets/face/304.apng")),
-    (305, include_bytes!("../assets/face/305.apng")),
-    (306, include_bytes!("../assets/face/306.apng")),
-    (307, include_bytes!("../assets/face/307.apng")),
-    (308, include_bytes!("../assets/face/308.apng")),
-    (309, include_bytes!("../assets/face/309.apng")),
-    (310, include_bytes!("../assets/face/310.apng")),
-    (311, include_bytes!("../assets/face/311.apng")),
-    (312, include_bytes!("../assets/face/312.apng")),
-    (313, include_bytes!("../assets/face/313.apng")),
-    (314, include_bytes!("../assets/face/314.apng")),
-    (315, include_bytes!("../assets/face/315.apng")),
-    (316, include_bytes!("../assets/face/316.apng")),
-    (317, include_bytes!("../assets/face/317.apng")),
-    (318, include_bytes!("../assets/face/318.apng")),
-    (319, include_bytes!("../assets/face/319.apng")),
-    (320, include_bytes!("../assets/face/320.apng")),
-    (321, include_bytes!("../assets/face/321.apng")),
-    (322, include_bytes!("../assets/face/322.apng")),
-    (323, include_bytes!("../assets/face/323.apng")),
-    (324, include_bytes!("../assets/face/324.apng")),
-    (325, include_bytes!("../assets/face/325.apng")),
-    (326, include_bytes!("../assets/face/326.apng")),
-    (327, include_bytes!("../assets/face/327.apng")),
-    (328, include_bytes!("../assets/face/328.apng")),
-    (329, include_bytes!("../assets/face/329.apng")),
-    (330, include_bytes!("../assets/face/330.apng")),
-    (331, include_bytes!("../assets/face/331.apng")),
-    (332, include_bytes!("../assets/face/332.apng")),
-    (333, include_bytes!("../assets/face/333.apng")),
-    (334, include_bytes!("../assets/face/334.apng")),
-    (335, include_bytes!("../assets/face/335.apng")),
-    (336, include_bytes!("../assets/face/336.apng")),
-    (337, include_bytes!("../assets/face/337.apng")),
-    (338, include_bytes!("../assets/face/338.apng")),
-    (339, include_bytes!("../assets/face/339.apng")),
-    (340, include_bytes!("../assets/face/340.apng")),
-    (341, include_bytes!("../assets/face/341.apng")),
-    (342, include_bytes!("../assets/face/342.apng")),
-    (343, include_bytes!("../assets/face/343.apng")),
-    (344, include_bytes!("../assets/face/344.apng")),
-    (345, include_bytes!("../assets/face/345.apng")),
-    (346, include_bytes!("../assets/face/346.apng")),
-    (347, include_bytes!("../assets/face/347.apng")),
-    (348, include_bytes!("../assets/face/348.apng")),
-    (349, include_bytes!("../assets/face/349.apng")),
-    (350, include_bytes!("../assets/face/350.apng")),
-    (351, include_bytes!("../assets/face/351.apng")),
-    (352, include_bytes!("../assets/face/352.apng")),
-    (353, include_bytes!("../assets/face/353.apng")),
-    (354, include_bytes!("../assets/face/354.apng")),
-    (355, include_bytes!("../assets/face/355.apng")),
-    (356, include_bytes!("../assets/face/356.apng")),
-    (357, include_bytes!("../assets/face/357.apng")),
-    (358, include_bytes!("../assets/face/358.apng")),
-    (359, include_bytes!("../assets/face/359.apng")),
-    (360, include_bytes!("../assets/face/360.apng")),
-    (361, include_bytes!("../assets/face/361.apng")),
-    (362, include_bytes!("../assets/face/362.apng")),
-    (363, include_bytes!("../assets/face/363.apng")),
-    (364, include_bytes!("../assets/face/364.apng")),
-    (365, include_bytes!("../assets/face/365.apng")),
-    (366, include_bytes!("../assets/face/366.apng")),
-    (367, include_bytes!("../assets/face/367.apng")),
-    (368, include_bytes!("../assets/face/368.apng")),
-    (369, include_bytes!("../assets/face/369.apng")),
-    (370, include_bytes!("../assets/face/370.apng")),
-    (371, include_bytes!("../assets/face/371.apng")),
-    (372, include_bytes!("../assets/face/372.apng")),
-    (373, include_bytes!("../assets/face/373.apng")),
-    (374, include_bytes!("../assets/face/374.apng")),
-    (375, include_bytes!("../assets/face/375.apng")),
-    (376, include_bytes!("../assets/face/376.apng")),
-    (377, include_bytes!("../assets/face/377.apng")),
-    (378, include_bytes!("../assets/face/378.apng")),
-    (379, include_bytes!("../assets/face/379.apng")),
-    (380, include_bytes!("../assets/face/380.apng")),
-    (381, include_bytes!("../assets/face/381.apng")),
-    (382, include_bytes!("../assets/face/382.apng")),
-    (383, include_bytes!("../assets/face/383.apng")),
-    (384, include_bytes!("../assets/face/384.apng")),
-    (385, include_bytes!("../assets/face/385.apng")),
-    (386, include_bytes!("../assets/face/386.apng")),
-    (387, include_bytes!("../assets/face/387.apng")),
-    (388, include_bytes!("../assets/face/388.apng")),
-    (389, include_bytes!("../assets/face/389.apng")),
-    (390, include_bytes!("../assets/face/390.apng")),
-    (391, include_bytes!("../assets/face/391.apng")),
-    (392, include_bytes!("../assets/face/392.apng")),
-    (393, include_bytes!("../assets/face/393.apng")),
-    (394, include_bytes!("../assets/face/394.apng")),
-    (395, include_bytes!("../assets/face/395.apng")),
-    (396, include_bytes!("../assets/face/396.apng")),
-    (397, include_bytes!("../assets/face/397.apng")),
-    (398, include_bytes!("../assets/face/398.apng")),
-    (399, include_bytes!("../assets/face/399.apng")),
-    (400, include_bytes!("../assets/face/400.apng")),
-    (401, include_bytes!("../assets/face/401.apng")),
-    (402, include_bytes!("../assets/face/402.apng")),
-    (403, include_bytes!("../assets/face/403.apng")),
-    (404, include_bytes!("../assets/face/404.apng")),
-    (405, include_bytes!("../assets/face/405.apng")),
-    (406, include_bytes!("../assets/face/406.apng")),
-    (407, include_bytes!("../assets/face/407.apng")),
-    (408, include_bytes!("../assets/face/408.apng")),
-    (409, include_bytes!("../assets/face/409.apng")),
-    (410, include_bytes!("../assets/face/410.apng")),
-    (411, include_bytes!("../assets/face/411.apng")),
-    (412, include_bytes!("../assets/face/412.apng")),
-    (413, include_bytes!("../assets/face/413.apng")),
-    (415, include_bytes!("../assets/face/415.apng")),
-    (416, include_bytes!("../assets/face/416.apng")),
-    (417, include_bytes!("../assets/face/417.apng")),
-    (418, include_bytes!("../assets/face/418.apng")),
-    (419, include_bytes!("../assets/face/419.apng")),
-    (420, include_bytes!("../assets/face/420.apng")),
-    (421, include_bytes!("../assets/face/421.apng")),
-    (422, include_bytes!("../assets/face/422.apng")),
-    (423, include_bytes!("../assets/face/423.apng")),
-    (424, include_bytes!("../assets/face/424.apng")),
-    (425, include_bytes!("../assets/face/425.apng")),
-    (426, include_bytes!("../assets/face/426.apng")),
-    (427, include_bytes!("../assets/face/427.apng")),
-    (428, include_bytes!("../assets/face/428.apng")),
-    (429, include_bytes!("../assets/face/429.apng")),
-    (430, include_bytes!("../assets/face/430.apng")),
-    (431, include_bytes!("../assets/face/431.apng")),
-    (432, include_bytes!("../assets/face/432.apng")),
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
+};
+
+use std::sync::Arc;
+
+const FACE_CACHE_LIMIT: usize = 96;
+
+static FACE_IDS: &[u16] = &[
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+    27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 41, 42, 43, 46, 49, 50, 53, 54, 55, 56, 57,
+    59, 60, 61, 63, 64, 66, 67, 69, 74, 75, 76, 77, 78, 79, 81, 85, 86, 89, 96, 97, 98, 99, 100,
+    101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119,
+    120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138,
+    139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157,
+    158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176,
+    177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195,
+    196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214,
+    215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233,
+    234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 260, 261, 262, 263, 264,
+    265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 276, 277, 278, 279, 280, 281, 282, 283, 284,
+    285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303,
+    304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322,
+    323, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341,
+    342, 343, 344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 360,
+    361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376, 377, 378, 379,
+    380, 381, 382, 383, 384, 385, 386, 387, 388, 389, 390, 391, 392, 393, 394, 395, 396, 397, 398,
+    399, 400, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 415, 416, 417, 418,
+    419, 420, 421, 422, 423, 424, 425, 426, 427, 428, 429, 430, 431, 432,
 ];
 
-/// 根据表情 ID 获取表情图片字节数据（二分查找，数据按 ID 排序）
-pub fn get_face(id: u16) -> Option<&'static [u8]> {
-    FACE_DATA
-        .binary_search_by_key(&id, |(fid, _)| *fid)
-        .ok()
-        .map(|idx| FACE_DATA[idx].1)
+struct FaceCache {
+    bytes_by_id: HashMap<u16, Arc<[u8]>>,
+    lru: Vec<u16>,
+}
+
+impl FaceCache {
+    fn new() -> Self {
+        Self {
+            bytes_by_id: HashMap::new(),
+            lru: Vec::new(),
+        }
+    }
+
+    fn get(&mut self, id: u16) -> Option<Arc<[u8]>> {
+        if let Some(bytes) = self.bytes_by_id.get(&id).cloned() {
+            self.touch(id);
+            return Some(bytes);
+        }
+
+        let bytes = std::fs::read(face_path(id)).ok()?;
+        let bytes = Arc::<[u8]>::from(bytes);
+        self.bytes_by_id.insert(id, Arc::clone(&bytes));
+        self.touch(id);
+        self.evict_if_needed();
+        Some(bytes)
+    }
+
+    fn touch(&mut self, id: u16) {
+        if let Some(index) = self.lru.iter().position(|existing| *existing == id) {
+            self.lru.remove(index);
+        }
+        self.lru.push(id);
+    }
+
+    fn evict_if_needed(&mut self) {
+        while self.lru.len() > FACE_CACHE_LIMIT {
+            let id = self.lru.remove(0);
+            self.bytes_by_id.remove(&id);
+        }
+    }
+}
+
+fn face_cache() -> &'static Mutex<FaceCache> {
+    static CACHE: OnceLock<Mutex<FaceCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(FaceCache::new()))
+}
+
+fn face_path(id: u16) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("assets")
+        .join("face")
+        .join(format!("{id:03}.apng"))
+}
+
+/// 判断表情 ID 是否存在（二分查找，数据按 ID 排序）。
+pub fn has_face(id: u16) -> bool {
+    FACE_IDS.binary_search(&id).is_ok()
+}
+
+/// 根据表情 ID 获取表情图片字节数据，命中后保存在小型 LRU 中。
+pub fn get_face(id: u16) -> Option<Arc<[u8]>> {
+    if !has_face(id) {
+        return None;
+    }
+    face_cache().lock().ok()?.get(id)
 }
 
 /// 获取所有可用的表情 ID
 pub fn all_face_ids() -> impl Iterator<Item = u16> {
-    FACE_DATA.iter().map(|(id, _)| *id)
+    FACE_IDS.iter().copied()
 }
 
 /// 按展示顺序获取表情 ID，用于虚拟化表情选择器。
 pub fn face_id_at(index: usize) -> Option<u16> {
-    FACE_DATA.get(index).map(|(id, _)| *id)
+    FACE_IDS.get(index).copied()
 }
 
 /// 可用表情总数
-pub const FACE_COUNT: usize = 391;
+pub const FACE_COUNT: usize = FACE_IDS.len();
 
 // 表情名称映射（自动生成自 faceNames.js）
 // 共 306 个有名称的表情

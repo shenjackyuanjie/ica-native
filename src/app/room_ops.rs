@@ -2,7 +2,7 @@ use crate::cfg::{self, ReEditDraftConflictMode};
 use crate::ica::IcaCommand;
 use crate::ica::types::RoomId;
 
-use super::{IcaApp, SelectedChatGroup};
+use super::{IcaApp, SelectedChatGroup, VisibleRoomIndicesCache};
 
 impl IcaApp {
     pub fn request_group_members(&mut self, bridge_idx: usize, room_id: RoomId, force: bool) {
@@ -92,10 +92,34 @@ impl IcaApp {
         }
     }
 
-    pub fn visible_room_indices(&self, bridge_idx: usize) -> Vec<usize> {
-        let Some(state) = self.bridge_states.get(bridge_idx) else {
+    pub fn visible_room_indices(&mut self, bridge_idx: usize) -> Vec<usize> {
+        let disable_chat_group = self.custom_chat.disable_chat_group;
+        let selected_chat_group = self.selected_chat_group.clone();
+        let selected_group = if !disable_chat_group {
+            match selected_chat_group {
+                SelectedChatGroup::Custom(idx) => self
+                    .chat_groups
+                    .groups
+                    .get(idx)
+                    .map(|group| (group.rooms.clone(), group.include_all_personal)),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let Some(state) = self.bridge_states.get_mut(bridge_idx) else {
             return Vec::new();
         };
+
+        if let Some(cache) = &state.visible_room_indices_cache
+            && cache.revision == state.rooms_revision
+            && cache.query == state.room_search_query
+            && cache.selected_chat_group == selected_chat_group
+            && cache.disable_chat_group == disable_chat_group
+        {
+            return cache.indices.clone();
+        }
 
         let query = state.room_search_query.trim().to_uppercase();
         let mut room_indices: Vec<_> = state
@@ -103,17 +127,19 @@ impl IcaApp {
             .iter()
             .enumerate()
             .filter(|(_, room)| {
-                if self.custom_chat.disable_chat_group {
+                if disable_chat_group {
                     return true;
                 }
-                match &self.selected_chat_group {
+                match &selected_chat_group {
                     SelectedChatGroup::All => true,
                     SelectedChatGroup::Private => room.room_id > 0,
-                    SelectedChatGroup::Custom(idx) => {
-                        self.chat_groups.groups.get(*idx).is_some_and(|group| {
-                            group.rooms.contains(&room.room_id)
-                                || (group.include_all_personal && room.room_id > 0)
-                        })
+                    SelectedChatGroup::Custom(_) => {
+                        selected_group
+                            .as_ref()
+                            .is_some_and(|(rooms, include_all_personal)| {
+                                rooms.contains(&room.room_id)
+                                    || (*include_all_personal && room.room_id > 0)
+                            })
                     }
                 }
             })
@@ -132,7 +158,18 @@ impl IcaApp {
             let pinned_b = b.index > 0;
             pinned_b.cmp(&pinned_a).then(b.utime.cmp(&a.utime))
         });
-        room_indices
+        state.visible_room_indices_cache = Some(VisibleRoomIndicesCache {
+            revision: state.rooms_revision,
+            query: state.room_search_query.clone(),
+            selected_chat_group,
+            disable_chat_group,
+            indices: room_indices,
+        });
+        state
+            .visible_room_indices_cache
+            .as_ref()
+            .map(|cache| cache.indices.clone())
+            .unwrap_or_default()
     }
 
     pub fn set_clear_search_on_room_select(&mut self, enabled: bool) {
@@ -140,6 +177,9 @@ impl IcaApp {
         cfg::update_and_save_cfg(|cfg| {
             cfg.ui_setting.clear_search_on_room_select = enabled;
         });
+        if let Some(state) = self.active_bridge_state_mut() {
+            state.invalidate_visible_room_indices();
+        }
     }
 
     pub fn set_scroll_to_bottom_after_send(&mut self, enabled: bool) {
@@ -166,8 +206,10 @@ impl IcaApp {
             state.selected_room_id = Some(room_id);
             state.scroll_to_message_id = None;
             state.scroll_to_message_attempts = 0;
+            state.trim_message_caches(Some(room_id));
             if clear_search_on_room_select {
                 state.room_search_query.clear();
+                state.invalidate_visible_room_indices();
             }
             should_request = state.requested_rooms.insert(room_id);
             if auto_read {

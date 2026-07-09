@@ -167,6 +167,8 @@ pub struct Message {
     pub code: JsonValue,
     /// 消息时间
     pub time: DateTime<chrono::Utc>,
+    /// 渲染用时间文本，避免每帧重复格式化。
+    pub time_text: String,
     /// 身份
     pub role: String,
     /// 文件
@@ -198,7 +200,7 @@ pub struct Message {
     /// 头像 img?
     pub head_img: JsonValue,
     /// 原始消息 (准确来说是 json["message"])
-    pub raw_msg: JsonValue,
+    pub raw_msg: Option<Box<JsonValue>>,
 }
 
 impl<'de> Deserialize<'de> for Message {
@@ -243,6 +245,7 @@ impl<'de> Deserialize<'de> for Message {
             .and_then(|v| v.as_i64())
             .map(|t| DateTime::from_timestamp_micros(t).unwrap_or(current))
             .unwrap_or(current);
+        let time_text = time.format("%H:%M:%S").to_string();
 
         // 身份
         let role = json
@@ -337,7 +340,7 @@ impl<'de> Deserialize<'de> for Message {
         // 头像 img?
         let head_img = json.get("head_img").cloned().unwrap_or(JsonValue::Null);
         // 原始消息 (有些场景 message 会出现在外层)
-        let raw_msg = json.get("message").cloned().unwrap_or(json.clone());
+        let raw_msg = retain_raw_message_chain(&json);
 
         Ok(Self {
             msg_id,
@@ -346,6 +349,7 @@ impl<'de> Deserialize<'de> for Message {
             content,
             code,
             time,
+            time_text,
             role,
             files,
             reply,
@@ -363,6 +367,15 @@ impl<'de> Deserialize<'de> for Message {
             head_img,
             raw_msg,
         })
+    }
+}
+
+fn retain_raw_message_chain(json: &JsonValue) -> Option<Box<JsonValue>> {
+    let raw = json.get("message").unwrap_or(json);
+    match raw {
+        JsonValue::Array(values) if !values.is_empty() => Some(Box::new(raw.clone())),
+        JsonValue::Object(map) if map.contains_key("type") => Some(Box::new(raw.clone())),
+        _ => None,
     }
 }
 

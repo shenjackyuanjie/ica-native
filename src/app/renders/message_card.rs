@@ -25,7 +25,7 @@ fn parse_face_segments(content: &str) -> Vec<ContentSegment<'_>> {
         if let Some(end) = after.find(']') {
             let id_str = &after[..end];
             if let Ok(id) = id_str.parse::<u16>() {
-                if crate::face_data::get_face(id).is_some() {
+                if crate::face_data::has_face(id) {
                     segments.push(ContentSegment::Face(id));
                 } else {
                     // 没有对应的表情文件，保留原文
@@ -72,13 +72,14 @@ fn render_rich_content(ui: &mut egui::Ui, content: &str) {
                     }
                 }
                 ContentSegment::Face(id) => {
-                    let bytes = crate::face_data::get_face(*id).unwrap();
-                    let uri = format!("bytes://face_{id}");
-                    let img = Image::from_bytes(uri, bytes)
-                        .fit_to_exact_size(egui::vec2(face_size, face_size));
-                    let response = ui.add(img);
-                    if let Some(name) = crate::face_data::get_face_name(*id) {
-                        response.on_hover_text(name);
+                    if let Some(bytes) = crate::face_data::get_face(*id) {
+                        let uri = format!("bytes://face_{id}");
+                        let img = Image::from_bytes(uri, bytes)
+                            .fit_to_exact_size(egui::vec2(face_size, face_size));
+                        let response = ui.add(img);
+                        if let Some(name) = crate::face_data::get_face_name(*id) {
+                            response.on_hover_text(name);
+                        }
                     }
                 }
             }
@@ -317,7 +318,7 @@ impl IcaApp {
                                         if options.show_sender_name {
                                             ui.colored_label(title_color, &message.sender_name);
                                         }
-                                        ui.weak(message.time.format("%H:%M:%S").to_string());
+                                        ui.weak(&message.time_text);
                                         if message.deleted {
                                             ui.weak("已撤回");
                                         }

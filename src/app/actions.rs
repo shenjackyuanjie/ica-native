@@ -13,12 +13,13 @@ use super::{ChatGroups, IcaApp, OnlineMode, SelectedChatGroup};
 
 impl IcaApp {
     fn extract_raw_chain(message: &Message) -> Option<JsonValue> {
-        match &message.raw_msg {
+        let raw_msg = message.raw_msg.as_deref()?;
+        match raw_msg {
             JsonValue::Array(values) if !values.is_empty() => {
                 Some(JsonValue::Array(values.clone()))
             }
             JsonValue::Object(map) if map.contains_key("type") => {
-                Some(JsonValue::Array(vec![message.raw_msg.clone()]))
+                Some(JsonValue::Array(vec![raw_msg.clone()]))
             }
             _ => None,
         }
@@ -343,6 +344,7 @@ impl IcaApp {
         if let Some(room) = state.rooms.iter_mut().find(|room| room.room_id == room_id) {
             room.index = if pin { 1 } else { 0 };
         }
+        state.bump_rooms_revision();
 
         if let Err(e) = self.ica_clients[bridge_idx]
             .command_tx
@@ -356,6 +358,7 @@ impl IcaApp {
             {
                 room.index = previous_index;
             }
+            self.bridge_states[bridge_idx].bump_rooms_revision();
             self.bridge_states[bridge_idx].last_error =
                 Some(format!("置顶命令发送失败: {}", room_id));
         }
@@ -369,6 +372,7 @@ impl IcaApp {
         if state.selected_room_id == Some(room_id) {
             state.selected_room_id = None;
         }
+        state.bump_rooms_revision();
         if let Err(e) = self.ica_clients[bridge_idx]
             .command_tx
             .send(IcaCommand::RemoveChat(room_id))
