@@ -223,6 +223,52 @@ pub(super) async fn handle_command(
                 );
             }
         }
+        IcaCommand::SearchMessages {
+            room_id,
+            keyword,
+            offset,
+        } => {
+            let tx = event_tx.clone();
+            let bridge_id = bridge_key.to_string();
+            let keyword_for_event = keyword.clone();
+            if let Err(e) = client
+                .emit_with_ack(
+                    "searchMessages",
+                    vec![json!(room_id), json!(keyword), json!(offset)],
+                    Duration::from_secs(15),
+                    move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
+                        let tx = tx.clone();
+                        let bridge_id = bridge_id.clone();
+                        let keyword = keyword_for_event.clone();
+                        Box::pin(async move {
+                            emit_ui_event(
+                                &tx,
+                                &bridge_id,
+                                "searchMessagesResponse",
+                                json!({
+                                    "roomId": room_id,
+                                    "keyword": keyword,
+                                    "offset": offset,
+                                    "messages": ack_payload_values(&payload),
+                                }),
+                            );
+                        })
+                    },
+                )
+                .await
+            {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "commandFailed",
+                    json!({
+                        "kind": "searchMessages",
+                        "roomId": room_id,
+                        "message": e.to_string(),
+                    }),
+                );
+            }
+        }
         IcaCommand::SocketApiCall {
             event,
             args,

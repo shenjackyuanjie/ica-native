@@ -46,6 +46,16 @@ impl IcaApp {
                     if ui.button("重新拉取历史").clicked() {
                         self.request_room_messages(active_bridge_idx, room_id, false);
                     }
+                    if ui.button("搜索聊天记录").clicked() {
+                        let room_name = self.bridge_states[active_bridge_idx]
+                            .rooms
+                            .iter()
+                            .find(|room| room.room_id == room_id)
+                            .map(|room| room.room_name.clone())
+                            .filter(|name| !name.is_empty())
+                            .unwrap_or_else(|| room_id.to_string());
+                        self.open_message_search(active_bridge_idx, room_id, room_name);
+                    }
                 });
             } else {
                 ui.horizontal_wrapped(|ui| {

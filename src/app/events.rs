@@ -506,7 +506,52 @@ impl IcaApp {
                 {
                     state.loading_group_members.remove(&room_id);
                 }
+                if payload.get("kind").and_then(JsonValue::as_str) == Some("searchMessages") {
+                    let message = Self::payload_message(payload)
+                        .unwrap_or_else(|| "搜索聊天记录失败".to_string());
+                    state.message_search.fail(message);
+                }
                 state.last_error = Self::payload_message(payload);
+            }
+            "searchMessagesResponse" => {
+                let room_id = payload
+                    .get("roomId")
+                    .and_then(JsonValue::as_i64)
+                    .unwrap_or_default();
+                let keyword = payload
+                    .get("keyword")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let offset = payload
+                    .get("offset")
+                    .and_then(JsonValue::as_u64)
+                    .unwrap_or_default() as usize;
+
+                match payload.get("messages").map(Vec::<Message>::deserialize) {
+                    Some(Ok(messages)) => {
+                        state
+                            .message_search
+                            .apply_response(room_id, keyword, offset, messages);
+                    }
+                    Some(Err(e)) => {
+                        tracing::warn!(
+                            "searchMessages parse failed: bridge={} room_id={} err={} raw={}",
+                            state.bridge_key,
+                            room_id,
+                            e,
+                            Self::json_preview(&payload["messages"], 512)
+                        );
+                        state
+                            .message_search
+                            .fail(format!("搜索结果解析失败: {}", e));
+                    }
+                    None => {
+                        state
+                            .message_search
+                            .fail("搜索结果响应缺少 messages".to_string());
+                    }
+                }
             }
             "groupMembersResponse" => {
                 let room_id = payload

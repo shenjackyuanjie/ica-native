@@ -10,4 +10,7 @@ icalingua but native
 - 排名不分先后（想起来谁是谁）
   - Kimi K2.5
   - GPT 5.2
+  - GPT 5.5
+  - DeepSeek V4 Flash
+  - Claude Opus 4.8
   - Kimi K2 thinking

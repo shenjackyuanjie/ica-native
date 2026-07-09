@@ -24,6 +24,7 @@ pub mod events;
 mod file_tools;
 mod group_tools;
 mod message_ops;
+mod message_search;
 mod message_tools;
 pub mod online_mode;
 pub mod open_page;

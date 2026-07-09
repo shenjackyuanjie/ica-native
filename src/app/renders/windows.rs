@@ -442,6 +442,7 @@ impl IcaApp {
         self.render_account_tools_window(&ctx);
         self.render_file_tools_window(&ctx);
         self.render_message_tools_window(&ctx);
+        self.render_message_search_window(&ctx);
         self.render_room_tools_window(&ctx);
         self.render_auto_sign_window(&ctx);
 

@@ -253,6 +253,97 @@ impl PendingFile {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct MessageSearchState {
+    pub open: bool,
+    pub room_id: Option<RoomId>,
+    pub room_name: String,
+    pub keyword: String,
+    pub searched_keyword: String,
+    pub messages: Vec<Message>,
+    pub loading: bool,
+    pub has_more: bool,
+    pub last_error: Option<String>,
+}
+
+impl Default for MessageSearchState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            room_id: None,
+            room_name: String::new(),
+            keyword: String::new(),
+            searched_keyword: String::new(),
+            messages: Vec::new(),
+            loading: false,
+            has_more: true,
+            last_error: None,
+        }
+    }
+}
+
+impl MessageSearchState {
+    pub fn open_for_room(&mut self, room_id: RoomId, room_name: String) {
+        if self.room_id != Some(room_id) {
+            self.keyword.clear();
+            self.searched_keyword.clear();
+            self.messages.clear();
+            self.has_more = true;
+            self.loading = false;
+            self.last_error = None;
+        }
+        self.open = true;
+        self.room_id = Some(room_id);
+        self.room_name = room_name;
+    }
+
+    pub fn start_request(&mut self, keyword: String, offset: usize) {
+        if offset == 0 || self.searched_keyword != keyword {
+            self.messages.clear();
+            self.has_more = true;
+        }
+        self.searched_keyword = keyword;
+        self.loading = true;
+        self.last_error = None;
+    }
+
+    pub fn apply_response(
+        &mut self,
+        room_id: RoomId,
+        keyword: String,
+        offset: usize,
+        messages: Vec<Message>,
+    ) {
+        if self.room_id != Some(room_id) || self.searched_keyword != keyword {
+            return;
+        }
+
+        self.loading = false;
+        self.last_error = None;
+        self.has_more = messages.len() >= 20;
+
+        if offset == 0 {
+            self.messages = messages;
+            return;
+        }
+
+        for message in messages {
+            if !self
+                .messages
+                .iter()
+                .any(|existing| existing.msg_id == message.msg_id)
+            {
+                self.messages.push(message);
+            }
+        }
+    }
+
+    pub fn fail(&mut self, error: String) {
+        self.loading = false;
+        self.last_error = Some(error);
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum SocketState {
     #[default]
@@ -360,6 +451,8 @@ pub struct BridgeState {
     pub last_notice: Option<String>,
     /// 高级 Socket API 最近一次响应。
     pub last_socket_api_response: Option<String>,
+    /// 当前 bridge 的聊天记录搜索窗口状态。
+    pub message_search: MessageSearchState,
     /// Bridge 要求登录/初始化时附带的账号信息。
     pub setup_requested: Option<String>,
     /// 服务端广播的致命错误。
@@ -422,6 +515,7 @@ impl BridgeState {
             last_error: None,
             last_notice: None,
             last_socket_api_response: None,
+            message_search: MessageSearchState::default(),
             setup_requested: None,
             fatal_error: None,
             last_event: None,

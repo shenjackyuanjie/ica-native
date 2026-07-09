@@ -5,6 +5,7 @@ mod composer_drop;
 mod image_viewer;
 mod left_groups;
 mod message_card;
+mod message_search;
 mod top_panel;
 mod windows;
 
@@ -55,7 +56,7 @@ pub(super) fn format_message_content(content: &str) -> Cow<'_, str> {
     Cow::Owned(result)
 }
 
-pub(super) fn is_image_file_type(file_type: &str) -> bool {
+pub(crate) fn is_image_file_type(file_type: &str) -> bool {
     file_type.eq_ignore_ascii_case("image")
         || file_type
             .get(..6)

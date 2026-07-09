@@ -114,6 +114,7 @@ impl IcaApp {
                 let mut pending_pin_change = None;
                 let mut pending_remove_chat = None;
                 let mut pending_ignore_chat: Option<(i64, String)> = None;
+                let mut pending_message_search: Option<(i64, String)> = None;
                 let mut pending_room_selection = None;
 
                 let scroll_area =
@@ -208,6 +209,10 @@ impl IcaApp {
                                 pending_pin_change = Some((room_id, !is_pinned));
                                 ui.close();
                             }
+                            if ui.button("搜索聊天记录").clicked() {
+                                pending_message_search = Some((room_id, room.room_name.clone()));
+                                ui.close();
+                            }
                             if ui.button("删除会话").clicked() {
                                 pending_remove_chat = Some(room_id);
                                 ui.close();
@@ -262,6 +267,9 @@ impl IcaApp {
                 }
                 if let Some((room_id, room_name)) = pending_ignore_chat {
                     self.ignore_chat(active_bridge_idx, room_id, room_name);
+                }
+                if let Some((room_id, room_name)) = pending_message_search {
+                    self.open_message_search(active_bridge_idx, room_id, room_name);
                 }
             });
     }
