@@ -83,6 +83,8 @@ pub struct IcaApp {
     pub chat_list_scroll_target: ChatListScrollTarget,
     /// 选中会话后是否自动清空搜索框
     pub clear_search_on_room_select: bool,
+    /// 切换到已经加载过的会话时是否重新拉取最新历史消息
+    pub auto_fetch_history_on_room_select: bool,
     /// 发送消息后是否自动滚动到底部
     pub scroll_to_bottom_after_send: bool,
     /// 已撤回消息重新编辑时，遇到已有草稿如何处理
@@ -308,10 +310,28 @@ impl IcaApp {
     pub fn new(cc: &CreationContext<'_>) -> Self {
         Self::setup_fonts(&cc.egui_ctx);
 
-        let (ui_tx, ui_rx) = unbounded_channel::<JsonValue>();
-
         let config = cfg::get_cfg_snapshot();
         let runtime = Self::setup_async_rt();
+
+        // Socket.IO 回调运行在 Tokio 线程中，而 egui 在没有输入时会暂停主视口重绘。
+        // 如果直接把回调事件写进 UI 队列，独立窗口打开期间主视口可能一直不消费队列，
+        // 关系网成员响应就会积压到关闭独立窗口后才统一处理。
+        //
+        // 这里使用一个入口队列做转发：每收到一个 bridge 事件，先写入应用真正消费的
+        // 队列，再主动唤醒根 egui Context。这样聊天消息、群成员和连接状态等后台事件
+        // 都不依赖鼠标操作或关闭子窗口才能及时进入下一帧。
+        let (ui_event_tx, mut ui_event_rx) = unbounded_channel::<JsonValue>();
+        let (ui_tx, ui_rx) = unbounded_channel::<JsonValue>();
+        let ui_tx_for_forwarder = ui_tx.clone();
+        let repaint_ctx = cc.egui_ctx.clone();
+        runtime.spawn(async move {
+            while let Some(event) = ui_event_rx.recv().await {
+                if ui_tx_for_forwarder.send(event).is_err() {
+                    break;
+                }
+                repaint_ctx.request_repaint();
+            }
+        });
 
         let mut socketio_stop_senders = Vec::new();
         let mut ica_clients = Vec::new();
@@ -339,9 +359,11 @@ impl IcaApp {
                 config.chat_groups.clone(),
             ));
 
-            let ui_tx_clone = ui_tx.clone();
+            let ui_event_tx_clone = ui_event_tx.clone();
             runtime.spawn(async move {
-                if let Err(e) = ica::main(stop_rx, &bridge, Some(ui_tx_clone), command_rx).await {
+                if let Err(e) =
+                    ica::main(stop_rx, &bridge, Some(ui_event_tx_clone), command_rx).await
+                {
                     tracing::error!("socketio bridge {} stopped with error: {}", bridge_key, e);
                 }
             });
@@ -360,6 +382,7 @@ impl IcaApp {
             config_editer: ConfigEditer::default(),
             chat_list_scroll_target: ChatListScrollTarget::Top,
             clear_search_on_room_select: config.ui_setting.clear_search_on_room_select,
+            auto_fetch_history_on_room_select: config.ui_setting.auto_fetch_history_on_room_select,
             scroll_to_bottom_after_send: config.ui_setting.scroll_to_bottom_after_send,
             reedit_draft_conflict_mode: config.ui_setting.reedit_draft_conflict_mode,
             active_bridge_idx: if bridge_states.is_empty() {

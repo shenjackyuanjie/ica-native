@@ -418,7 +418,8 @@ impl IcaApp {
                 self.request_older_messages(active_bridge_idx, room_id);
             }
 
-            if !measured_message_heights.is_empty() {
+            let message_heights_changed = !measured_message_heights.is_empty();
+            if message_heights_changed {
                 let bridge_state = &mut self.bridge_states[active_bridge_idx];
                 let heights = bridge_state.message_row_heights.entry(room_id).or_default();
                 for (msg_id, height) in measured_message_heights {
@@ -478,8 +479,9 @@ impl IcaApp {
                 }
             }
 
-            // 滚动到顶部时自动加载更旧的历史消息
-            if user_scrolled_to_top {
+            // 切换会话并滚到底部的首帧里，egui 返回的 offset 仍可能是滚动前的 0。
+            // 此时不能把它当成用户真的滚到了顶部，否则会立刻误触发旧消息加载。
+            if user_scrolled_to_top && !should_scroll_to_bottom {
                 self.request_older_messages(active_bridge_idx, room_id);
             }
 
@@ -558,10 +560,15 @@ impl IcaApp {
                 });
             }
 
-            if should_scroll_to_bottom {
+            if should_scroll_to_bottom && !message_heights_changed {
                 self.bridge_states[active_bridge_idx]
                     .message_scroll_to_bottom
                     .remove(&room_id);
+            } else if should_scroll_to_bottom {
+                // 首次显示时，估算高度会被真实渲染高度逐步替换。如果本帧就撤销底部
+                // 锚点，内容高度变化会让视口看起来自动向上跳。保留到下一帧继续对齐，
+                // 直到所有可见消息的高度稳定为止。
+                ui.ctx().request_repaint();
             }
 
             if let Some(action) = pending_action {

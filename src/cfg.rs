@@ -263,6 +263,9 @@ pub struct UiSetting {
     /// 选择会话后是否自动清空聊天列表搜索框
     #[serde(default = "clear_search_on_room_select_default")]
     pub clear_search_on_room_select: bool,
+    /// 切换到已经加载过的会话时，是否再次拉取最新的历史消息
+    #[serde(default = "auto_fetch_history_on_room_select_default")]
+    pub auto_fetch_history_on_room_select: bool,
     /// 发送消息后是否自动滚动到底部
     #[serde(default = "scroll_to_bottom_after_send_default")]
     pub scroll_to_bottom_after_send: bool,
@@ -276,6 +279,12 @@ pub struct UiSetting {
 
 fn clear_search_on_room_select_default() -> bool {
     true
+}
+
+fn auto_fetch_history_on_room_select_default() -> bool {
+    // 与 Icalingua++ 的默认行为保持一致：首次打开只读取 bridge 缓存，
+    // 只有用户明确开启该选项后，切换会话才会额外请求协议端漫游历史。
+    false
 }
 
 fn scroll_to_bottom_after_send_default() -> bool {
@@ -364,6 +373,7 @@ impl Default for UiSetting {
     fn default() -> Self {
         Self {
             clear_search_on_room_select: clear_search_on_room_select_default(),
+            auto_fetch_history_on_room_select: auto_fetch_history_on_room_select_default(),
             scroll_to_bottom_after_send: scroll_to_bottom_after_send_default(),
             reedit_draft_conflict_mode: reedit_draft_conflict_mode_default(),
             relation_network: RelationNetworkSetting::default(),

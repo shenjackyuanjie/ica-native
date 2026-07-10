@@ -24,6 +24,11 @@ pub(super) enum ConnectionSignal {
 #[derive(Debug, Clone)]
 pub enum IcaCommand {
     FetchMessages(RoomId),
+    /// 从 QQ/协议端拉取指定会话的最新漫游历史，而不只是读取 bridge 本地数据库。
+    FetchLatestHistory {
+        room_id: RoomId,
+        current_loaded_messages: usize,
+    },
     /// 加载更旧的历史消息（带 offset）
     FetchOlderMessages {
         room_id: RoomId,

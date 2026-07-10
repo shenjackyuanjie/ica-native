@@ -11,6 +11,8 @@ use rust_socketio::{Payload, asynchronous::Client};
 use serde_json::{Value as JsonValue, json};
 use tokio::sync::mpsc::UnboundedSender;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+
 use super::{ack_payload_first, ack_payload_values};
 use crate::ica::command::emit_ui_event;
 
@@ -22,6 +24,63 @@ fn normalize_ack_list(mut values: Vec<JsonValue>) -> JsonValue {
         };
     }
     JsonValue::Array(values)
+}
+
+/// 构造 Icalingua++ 用于“从最新位置拉取历史”的占位消息 ID。
+///
+/// bridge 的 `fetchHistory` 接口沿用了旧客户端协议：私聊 ID 是 17 字节，群聊 ID
+/// 是 21 字节，前四个字节按大端序写入 QQ 号或群号，其余字段保持为零。bridge 会
+/// 以该位置为起点向协议端请求漫游记录，完成后再广播一份新的 `setMessages`。
+fn latest_history_message_id(room_id: i64) -> Option<String> {
+    let target_id = u32::try_from(room_id.unsigned_abs()).ok()?;
+    let mut bytes = vec![0_u8; if room_id < 0 { 21 } else { 17 }];
+    bytes[..4].copy_from_slice(&target_id.to_be_bytes());
+    Some(STANDARD.encode(bytes))
+}
+
+pub(super) async fn fetch_latest_history(
+    client: &Client,
+    event_tx: &Option<UnboundedSender<JsonValue>>,
+    bridge_key: &str,
+    room_id: i64,
+    current_loaded_messages: usize,
+) {
+    let Some(message_id) = latest_history_message_id(room_id) else {
+        emit_ui_event(
+            event_tx,
+            bridge_key,
+            "commandFailed",
+            json!({
+                "kind": "fetchHistory",
+                "roomId": room_id,
+                "message": "房间 ID 超出 fetchHistory 协议支持范围",
+            }),
+        );
+        return;
+    };
+
+    if let Err(e) = client
+        .emit(
+            "fetchHistory",
+            vec![
+                json!(message_id),
+                json!(room_id),
+                json!(current_loaded_messages),
+            ],
+        )
+        .await
+    {
+        emit_ui_event(
+            event_tx,
+            bridge_key,
+            "commandFailed",
+            json!({
+                "kind": "fetchHistory",
+                "roomId": room_id,
+                "message": e.to_string(),
+            }),
+        );
+    }
 }
 
 pub(super) async fn fetch_messages(
@@ -286,9 +345,10 @@ pub(super) async fn get_system_messages(
 
 #[cfg(test)]
 mod tests {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
     use serde_json::json;
 
-    use super::normalize_ack_list;
+    use super::{latest_history_message_id, normalize_ack_list};
 
     #[test]
     fn ack_list_accepts_flat_and_nested_socket_payloads() {
@@ -300,5 +360,22 @@ mod tests {
             normalize_ack_list(vec![json!([{"id": 1}, {"id": 2}])]),
             json!([{"id": 1}, {"id": 2}])
         );
+    }
+
+    #[test]
+    fn latest_history_id_uses_legacy_private_and_group_shapes() {
+        let private = STANDARD
+            .decode(latest_history_message_id(0x0102_0304).unwrap())
+            .unwrap();
+        let group = STANDARD
+            .decode(latest_history_message_id(-0x0102_0304).unwrap())
+            .unwrap();
+
+        assert_eq!(private.len(), 17);
+        assert_eq!(group.len(), 21);
+        assert_eq!(&private[..4], &[1, 2, 3, 4]);
+        assert_eq!(&group[..4], &[1, 2, 3, 4]);
+        assert!(private[4..].iter().all(|byte| *byte == 0));
+        assert!(group[4..].iter().all(|byte| *byte == 0));
     }
 }

@@ -4,6 +4,18 @@ use crate::ica::types::RoomId;
 
 use super::{IcaApp, SelectedChatGroup, VisibleRoomIndicesCache};
 
+/// 判断切换会话时是否需要请求一份完整的消息快照。
+///
+/// 实时收到的 `addMessage` 只能证明本地缓存里存在零散消息，不能证明已经请求过该
+/// 会话的历史快照。因此这个标记只应在主动发起请求或收到 `setMessages` 时维护。
+fn should_request_messages_on_room_select(
+    has_requested_snapshot: bool,
+    room_changed: bool,
+    auto_fetch_history_on_select: bool,
+) -> bool {
+    !has_requested_snapshot || (room_changed && auto_fetch_history_on_select)
+}
+
 impl IcaApp {
     pub fn request_group_members(&mut self, bridge_idx: usize, room_id: RoomId, force: bool) {
         if room_id >= 0 {
@@ -53,6 +65,33 @@ impl IcaApp {
 
         if let Err(e) = client.command_tx.send(IcaCommand::FetchMessages(room_id)) {
             tracing::warn!("send fetchMessages command failed: {}", e);
+            if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+                // 命令没有进入后台任务时必须撤销占位，否则关闭自动刷新后，后续点击
+                // 会误以为该房间已经请求过，从而失去重试机会。
+                state.requested_rooms.remove(&room_id);
+                state.pending_message_scroll_to_bottom.remove(&room_id);
+                state.last_error = Some(format!("历史消息请求发送失败: {e}"));
+            }
+        }
+    }
+
+    fn request_latest_room_history(
+        &mut self,
+        bridge_idx: usize,
+        room_id: RoomId,
+        current_loaded_messages: usize,
+    ) {
+        let Some(client) = self.ica_clients.get(bridge_idx) else {
+            return;
+        };
+        if let Err(e) = client.command_tx.send(IcaCommand::FetchLatestHistory {
+            room_id,
+            current_loaded_messages,
+        }) {
+            tracing::warn!("send fetchHistory command failed: {}", e);
+            if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
+                state.last_error = Some(format!("最新历史拉取命令发送失败: {e}"));
+            }
         }
     }
 
@@ -189,6 +228,13 @@ impl IcaApp {
         });
     }
 
+    pub fn set_auto_fetch_history_on_room_select(&mut self, enabled: bool) {
+        self.auto_fetch_history_on_room_select = enabled;
+        cfg::update_and_save_cfg(|cfg| {
+            cfg.ui_setting.auto_fetch_history_on_room_select = enabled;
+        });
+    }
+
     pub fn set_reedit_draft_conflict_mode(&mut self, mode: ReEditDraftConflictMode) {
         self.reedit_draft_conflict_mode = mode;
         cfg::update_and_save_cfg(|cfg| {
@@ -200,9 +246,12 @@ impl IcaApp {
         self.show_face_picker = false;
         let mut should_request = false;
         let clear_search_on_room_select = self.clear_search_on_room_select;
+        let auto_fetch_history_on_select = self.auto_fetch_history_on_room_select;
         let auto_read = self.custom_chat.auto_read_on_select;
         let mut last_msg_id: Option<String> = None;
+        let mut current_loaded_messages = 0;
         if let Some(state) = self.active_bridge_state_mut() {
+            let room_changed = state.selected_room_id != Some(room_id);
             state.selected_room_id = Some(room_id);
             state.scroll_to_message_id = None;
             state.scroll_to_message_attempts = 0;
@@ -211,7 +260,18 @@ impl IcaApp {
                 state.room_search_query.clear();
                 state.invalidate_visible_room_indices();
             }
-            should_request = state.requested_rooms.insert(room_id);
+            // `requested_rooms` 表示已经发起过完整快照请求，而不是“缓存里碰巧有消息”。
+            // 首次打开始终请求；开关启用后，切换回来也刷新。
+            should_request = should_request_messages_on_room_select(
+                state.requested_rooms.contains(&room_id),
+                room_changed,
+                auto_fetch_history_on_select,
+            );
+            if should_request {
+                // 先占位可以避免响应返回前连续重绘或重复点击产生并发请求。
+                state.requested_rooms.insert(room_id);
+                current_loaded_messages = state.messages_by_room.get(&room_id).map_or(0, Vec::len);
+            }
             if auto_read {
                 last_msg_id = state
                     .messages_by_room
@@ -222,6 +282,12 @@ impl IcaApp {
         }
 
         if should_request && let Some(bridge_idx) = self.active_bridge_idx {
+            if auto_fetch_history_on_select {
+                // 与 Icalingua++ 的 fetchHistoryOnChatOpen 行为保持一致：先请求协议端
+                // 漫游历史，再读取 bridge 当前缓存。漫游拉取完成后，bridge 还会广播
+                // 新的 setMessages，届时界面会自动替换为更新后的完整列表。
+                self.request_latest_room_history(bridge_idx, room_id, current_loaded_messages);
+            }
             self.request_room_messages(bridge_idx, room_id, true);
         }
 
@@ -235,5 +301,22 @@ impl IcaApp {
                 message_id: msg_id,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_request_messages_on_room_select;
+
+    #[test]
+    fn first_room_open_always_requests_complete_snapshot() {
+        assert!(should_request_messages_on_room_select(false, true, false));
+    }
+
+    #[test]
+    fn loaded_room_only_refreshes_after_switch_when_option_is_enabled() {
+        assert!(!should_request_messages_on_room_select(true, true, false));
+        assert!(should_request_messages_on_room_select(true, true, true));
+        assert!(!should_request_messages_on_room_select(true, false, true));
     }
 }

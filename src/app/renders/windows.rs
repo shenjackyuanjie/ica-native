@@ -21,6 +21,8 @@ impl IcaApp {
         let mut custom_chat_extra_open = self.open_page.custom_chat_extra;
         let mut clear_on_select = self.clear_search_on_room_select;
         let mut clear_on_select_changed = false;
+        let mut auto_fetch_history_on_select = self.auto_fetch_history_on_room_select;
+        let mut auto_fetch_history_on_select_changed = false;
         let mut scroll_on_send = self.scroll_to_bottom_after_send;
         let mut scroll_on_send_changed = false;
         let mut reedit_mode = self.reedit_draft_conflict_mode;
@@ -30,10 +32,17 @@ impl IcaApp {
             .resizable(false)
             .show(&ctx, |ui| {
                 let clear_on_select_before = clear_on_select;
+                let auto_fetch_history_on_select_before = auto_fetch_history_on_select;
                 let scroll_on_send_before = scroll_on_send;
-                self.custom_chat
-                    .show_extra_ui(ui, &mut clear_on_select, &mut scroll_on_send);
+                self.custom_chat.show_extra_ui(
+                    ui,
+                    &mut clear_on_select,
+                    &mut auto_fetch_history_on_select,
+                    &mut scroll_on_send,
+                );
                 clear_on_select_changed |= clear_on_select != clear_on_select_before;
+                auto_fetch_history_on_select_changed |=
+                    auto_fetch_history_on_select != auto_fetch_history_on_select_before;
                 scroll_on_send_changed |= scroll_on_send != scroll_on_send_before;
                 ui.separator();
                 ui.label("重新编辑草稿冲突处理");
@@ -60,6 +69,9 @@ impl IcaApp {
         self.open_page.custom_chat_extra = custom_chat_extra_open;
         if clear_on_select_changed {
             self.set_clear_search_on_room_select(clear_on_select);
+        }
+        if auto_fetch_history_on_select_changed {
+            self.set_auto_fetch_history_on_room_select(auto_fetch_history_on_select);
         }
         if scroll_on_send_changed {
             self.set_scroll_to_bottom_after_send(scroll_on_send);

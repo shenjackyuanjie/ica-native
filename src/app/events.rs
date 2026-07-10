@@ -256,7 +256,9 @@ impl IcaApp {
                             let is_selected_room = state.selected_room_id == Some(room_id);
                             let should_follow_new_message =
                                 is_selected_room && state.message_near_bottom.contains(&room_id);
-                            state.requested_rooms.insert(room_id);
+                            // 实时消息可能早于用户首次打开会话到达。它只是一条增量消息，
+                            // 不能把房间误标记成“完整历史已经加载”，否则首次点击时不会
+                            // 再发送 fetchMessages，界面就可能永远只显示这一两条消息。
                             state.sync_room_preview(room_id, &new_message.msg);
                             let inserted = state.upsert_message(room_id, new_message.msg);
                             state.trim_message_caches(state.selected_room_id);
@@ -509,6 +511,14 @@ impl IcaApp {
                 }
             }
             "commandFailed" => {
+                if payload.get("kind").and_then(JsonValue::as_str) == Some("fetchMessages")
+                    && let Some(room_id) = payload.get("roomId").and_then(JsonValue::as_i64)
+                {
+                    // 超时或 bridge 拒绝请求后允许用户再次点击重试，不能让请求占位
+                    // 永久阻止这个房间后续加载。
+                    state.requested_rooms.remove(&room_id);
+                    state.pending_message_scroll_to_bottom.remove(&room_id);
+                }
                 if payload.get("kind").and_then(JsonValue::as_str) == Some("fetchGroupMembers")
                     && let Some(room_id) = payload.get("roomId").and_then(JsonValue::as_i64)
                 {

@@ -152,6 +152,7 @@ impl CustomChat {
         &mut self,
         ui: &mut Ui,
         clear_on_select: &mut bool,
+        auto_fetch_history_on_select: &mut bool,
         scroll_on_send: &mut bool,
     ) {
         Grid::new("custom_chat_extra_grid")
@@ -177,6 +178,13 @@ impl CustomChat {
 
                 ui.label("选中会话后清空聊天列表搜索框");
                 let _ = ui.checkbox(clear_on_select, "");
+                ui.end_row();
+
+                ui.vertical(|ui| {
+                    ui.label("切换会话时自动拉取历史消息");
+                    ui.weak("开启后会从协议端拉取最新漫游记录；关闭时只读取 bridge 缓存");
+                });
+                let _ = ui.checkbox(auto_fetch_history_on_select, "");
                 ui.end_row();
 
                 ui.label("发送消息后自动滚动到底部");

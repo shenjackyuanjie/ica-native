@@ -105,6 +105,19 @@ pub(super) async fn handle_command(
         IcaCommand::FetchMessages(room_id) => {
             history::fetch_messages(client, event_tx, bridge_key, room_id).await
         }
+        IcaCommand::FetchLatestHistory {
+            room_id,
+            current_loaded_messages,
+        } => {
+            history::fetch_latest_history(
+                client,
+                event_tx,
+                bridge_key,
+                room_id,
+                current_loaded_messages,
+            )
+            .await
+        }
         IcaCommand::FetchOlderMessages { room_id, offset } => {
             history::fetch_older_messages(client, event_tx, bridge_key, room_id, offset).await
         }
