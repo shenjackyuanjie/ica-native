@@ -32,8 +32,7 @@ image = { version = "0.25", default-features = false, features = [
 ] }
 toml = "1"
 
-# rust_socketio = { git = "https://github.com/nextdata-tech/rust-socketio.git", branch = "tyler/feat-add-features-for-other-tls-types", default-features = false, features = [
-rust_socketio = { git = "ssh://git@github.com/nextdata-tech/rust-socketio.git", branch = "tyler/feat-add-features-for-other-tls-types", default-features = false, features = [
+rust_socketio = { path = "vendor/rust-socketio/socketio", default-features = false, features = [
     "async",
     "rustls-tls-native-roots",
 ] }

@@ -3408,7 +3408,6 @@ checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 [[package]]
 name = "rust_engineio"
 version = "0.6.0"
-source = "git+ssh://git@github.com/nextdata-tech/rust-socketio.git?branch=tyler%2Ffeat-add-features-for-other-tls-types#e0805aea6288b67a90c43e5c87b0ff7e752a5790"
 dependencies = [
  "adler32",
  "async-stream",
@@ -3431,7 +3430,6 @@ dependencies = [
 [[package]]
 name = "rust_socketio"
 version = "0.6.0"
-source = "git+ssh://git@github.com/nextdata-tech/rust-socketio.git?branch=tyler%2Ffeat-add-features-for-other-tls-types#e0805aea6288b67a90c43e5c87b0ff7e752a5790"
 dependencies = [
  "adler32",
  "async-stream",
