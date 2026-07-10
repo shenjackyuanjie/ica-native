@@ -328,15 +328,15 @@ fn relation_network_force_repulsion_strength_default() -> f32 {
 }
 
 fn relation_network_force_friend_link_length_default() -> f32 {
-    0.52
+    1.05
 }
 
 fn relation_network_force_group_link_length_default() -> f32 {
-    0.82
+    0.46
 }
 
 fn relation_network_force_group_member_link_length_default() -> f32 {
-    0.30
+    0.28
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -368,10 +368,10 @@ pub struct RelationNetworkSetting {
     /// 力导向近距离斥力强度；数值越大，密集节点之间的间距越明显
     #[serde(default = "relation_network_force_repulsion_strength_default")]
     pub force_repulsion_strength: f32,
-    /// “自己”到好友节点的弹簧目标长度，使用画布归一化坐标
+    /// “自己”到好友节点的基础弹簧长度；实际长度会按节点稳定散开，默认形成外圈宽带
     #[serde(default = "relation_network_force_friend_link_length_default")]
     pub force_friend_link_length: f32,
-    /// “自己”到群节点的弹簧目标长度，适当大于好友长度可形成分层
+    /// “自己”到群节点的基础弹簧长度；实际长度会按节点稳定散开并保持在好友内侧
     #[serde(default = "relation_network_force_group_link_length_default")]
     pub force_group_link_length: f32,
     /// 群节点到普通成员节点的弹簧目标长度

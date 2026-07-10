@@ -1090,6 +1090,7 @@ fn render_relation_network_canvas(
         rect,
         relation_network.canvas_zoom,
         relation_network.canvas_pan,
+        relation_force_layout_max_radius(relation_network),
     );
     let performance = relation_performance_level(relation_network.layout_cache.visible_ids.len());
     let line_opacity = match performance.index {
@@ -1852,6 +1853,7 @@ mod tests {
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_200.0, 500.0)),
             1.0,
             egui::Vec2::ZERO,
+            1.20,
         );
         let center = transform.position(egui::Vec2::ZERO);
         let horizontal = transform.position(egui::vec2(1.0, 0.0));
@@ -1877,17 +1879,17 @@ mod tests {
         let graph = test_graph(nodes, Vec::new());
         let positions = relation_unit_node_positions(&graph, &visible, &[]);
 
-        let max_friend_radius = positions
+        let min_friend_radius = positions
             .iter()
             .filter(|(id, _)| id.starts_with("u:"))
             .map(|(_, position)| position.length())
-            .fold(0.0_f32, f32::max);
-        let min_group_radius = positions
+            .fold(f32::INFINITY, f32::min);
+        let max_group_radius = positions
             .iter()
             .filter(|(id, _)| id.starts_with("g:"))
             .map(|(_, position)| position.length())
-            .fold(f32::INFINITY, f32::min);
-        assert!(max_friend_radius < min_group_radius);
+            .fold(0.0_f32, f32::max);
+        assert!(max_group_radius < min_friend_radius);
     }
 
     #[test]
@@ -2015,7 +2017,90 @@ mod tests {
 
         let friend_radius = state.layout_cache.unit_positions["u:friend"].length();
         let group_radius = state.layout_cache.unit_positions["g:1"].length();
-        assert!(group_radius > friend_radius + 0.08);
+        assert!(friend_radius > group_radius + 0.08);
+    }
+
+    #[test]
+    fn dense_friends_use_a_wide_radial_band_instead_of_one_outer_ring() {
+        let mut nodes = vec![test_node("u:self", RelationNodeKind::SelfUser)];
+        let mut links = Vec::new();
+        for index in 0..300 {
+            let id = format!("u:{index}");
+            nodes.push(test_node(&id, RelationNodeKind::Friend));
+            links.push(RelationLink {
+                source: "u:self".to_string(),
+                target: id,
+            });
+        }
+        let mut state = RelationNetworkState::default();
+        state.replace_graph(test_graph(nodes, links));
+        let visible = visible_relation_node_ids(&state, "");
+        state.layout_cache = build_relation_layout_cache(&state, 1, visible);
+
+        let mut tick_at = Instant::now();
+        for _ in 0..180 {
+            let wait = advance_relation_force_layout(&mut state, tick_at).unwrap();
+            tick_at += wait;
+        }
+
+        let mut radii = state
+            .layout_cache
+            .unit_positions
+            .iter()
+            .filter(|(id, _)| id.as_str() != "u:self")
+            .map(|(_, position)| position.length())
+            .collect::<Vec<_>>();
+        radii.sort_by(f32::total_cmp);
+        let inner_decile = radii[radii.len() / 10];
+        let outer_decile = radii[radii.len() * 9 / 10];
+        assert!(outer_decile - inner_decile > 0.20);
+        assert!(outer_decile < relation_force_layout_max_radius(&state));
+    }
+
+    #[test]
+    fn dense_groups_remain_inside_dense_friends() {
+        let mut nodes = vec![test_node("u:self", RelationNodeKind::SelfUser)];
+        let mut links = Vec::new();
+        for index in 0..160 {
+            let friend_id = format!("u:{index}");
+            nodes.push(test_node(&friend_id, RelationNodeKind::Friend));
+            links.push(RelationLink {
+                source: "u:self".to_string(),
+                target: friend_id,
+            });
+
+            let group_id = format!("g:{index}");
+            nodes.push(test_node(&group_id, RelationNodeKind::Group));
+            links.push(RelationLink {
+                source: "u:self".to_string(),
+                target: group_id,
+            });
+        }
+        let mut state = RelationNetworkState::default();
+        state.replace_graph(test_graph(nodes, links));
+        let visible = visible_relation_node_ids(&state, "");
+        state.layout_cache = build_relation_layout_cache(&state, 1, visible);
+
+        let mut tick_at = Instant::now();
+        for _ in 0..180 {
+            let wait = advance_relation_force_layout(&mut state, tick_at).unwrap();
+            tick_at += wait;
+        }
+
+        let mut friend_radii = Vec::new();
+        let mut group_radii = Vec::new();
+        for (id, position) in &state.layout_cache.unit_positions {
+            if id.starts_with("g:") {
+                group_radii.push(position.length());
+            } else if id.as_str() != "u:self" {
+                friend_radii.push(position.length());
+            }
+        }
+        friend_radii.sort_by(f32::total_cmp);
+        group_radii.sort_by(f32::total_cmp);
+        let inner_friend = friend_radii[friend_radii.len() / 10];
+        let outer_group = group_radii[group_radii.len() * 9 / 10];
+        assert!(outer_group < inner_friend);
     }
 
     #[test]

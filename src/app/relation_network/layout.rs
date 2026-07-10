@@ -8,6 +8,8 @@ use super::ui::{RelationLayoutCache, RelationNetworkState, RelationViewMode};
 const FORCE_WARMUP_TICKS: usize = 3;
 /// 两次力导向迭代之间的最短间隔；约 42 FPS 能保留连续感，也能看清节点移动过程。
 const FORCE_TICK_INTERVAL: Duration = Duration::from_millis(24);
+/// 关系网适配画布时占用短边半径的比例，剩余空间用于节点半径、标签和操作按钮。
+const RELATION_CANVAS_FILL_RADIUS: f32 = 0.48;
 /// 每个节点最多施加斥力的空间近邻数，用固定上限控制大图的计算量。
 const MAX_REPULSION_NEIGHBORS: usize = 24;
 /// 每个节点最多检查的空间候选数；即使许多候选落在相邻网格但超出作用半径，
@@ -36,18 +38,38 @@ struct RelationForceParameters {
     friend_link_length: f32,
     group_link_length: f32,
     group_member_link_length: f32,
+    /// 节点数量带来的额外径向分散范围，节点越多，同类边长的差异越大。
+    radial_spread: f32,
+    /// 当前可见节点规模和配置共同决定的最大活动半径。
+    max_radius: f32,
 }
 
 impl RelationForceParameters {
-    fn from_state(relation_network: &RelationNetworkState) -> Self {
+    fn from_state(relation_network: &RelationNetworkState, node_count: usize) -> Self {
         let setting = &relation_network.render_setting;
+        let friend_link_length = setting.force_friend_link_length.clamp(0.05, 1.8);
+        let radial_spread = ((node_count as f32 / 800.0).sqrt() - 1.0).clamp(0.0, 0.60);
+        // 好友边长会在基础值之上按稳定哈希展开为一个范围。最大活动半径必须覆盖
+        // 该范围并留出少量制动空间，否则大量好友最终仍会撞在同一条硬边界上。
+        let max_radius = (friend_link_length * (1.40 + radial_spread) + 0.15).clamp(1.20, 3.80);
         Self {
             repulsion_strength: setting.force_repulsion_strength.clamp(0.01, 1.5),
-            friend_link_length: setting.force_friend_link_length.clamp(0.05, 1.2),
-            group_link_length: setting.force_group_link_length.clamp(0.05, 1.2),
-            group_member_link_length: setting.force_group_member_link_length.clamp(0.05, 1.2),
+            friend_link_length,
+            group_link_length: setting.force_group_link_length.clamp(0.05, 1.8),
+            group_member_link_length: setting.force_group_member_link_length.clamp(0.05, 1.8),
+            radial_spread,
+            max_radius,
         }
     }
+}
+
+/// 返回当前视图用于画布适配的稳定最大半径。
+pub(super) fn relation_force_layout_max_radius(relation_network: &RelationNetworkState) -> f32 {
+    RelationForceParameters::from_state(
+        relation_network,
+        relation_network.layout_cache.visible_ids.len(),
+    )
+    .max_radius
 }
 
 pub(super) fn visible_relation_node_ids(
@@ -177,12 +199,14 @@ pub(super) fn build_relation_layout_cache(
     };
     if cache.visible_ids.len() >= 2 && focused.is_some() {
         // 在缓存交给绘制层前先推进少量步数，使首帧已经具有基本合理的相对位置。
+        let parameters =
+            RelationForceParameters::from_state(relation_network, cache.visible_ids.len());
         step_relation_force_layout(
             &relation_network.graph,
             &mut cache,
             focused,
             FORCE_WARMUP_TICKS,
-            RelationForceParameters::from_state(relation_network),
+            parameters,
         );
     }
     tracing::debug!(
@@ -214,7 +238,10 @@ pub(super) fn advance_relation_force_layout(
     }
 
     let focused = relation_focused_node_id(relation_network).map(str::to_owned);
-    let parameters = RelationForceParameters::from_state(relation_network);
+    let parameters = RelationForceParameters::from_state(
+        relation_network,
+        relation_network.layout_cache.visible_ids.len(),
+    );
     step_relation_force_layout(
         &relation_network.graph,
         &mut relation_network.layout_cache,
@@ -306,7 +333,7 @@ fn step_relation_force_layout(
             Some((
                 *id_to_slot.get(link.source.as_str())?,
                 *id_to_slot.get(link.target.as_str())?,
-                relation_force_link_length(source_node.kind, target_node.kind, parameters),
+                relation_force_link_length(source_node, target_node, focused, parameters),
             ))
         })
         .collect();
@@ -452,8 +479,8 @@ fn step_relation_force_layout(
             }
             positions[slot] += velocities[slot];
             let radius = positions[slot].length();
-            if radius > 0.98 {
-                positions[slot] *= 0.98 / radius;
+            if radius > parameters.max_radius {
+                positions[slot] *= parameters.max_radius / radius;
                 velocities[slot] *= 0.45;
             }
         }
@@ -472,18 +499,36 @@ fn step_relation_force_layout(
 /// 的长度，让成员围绕所属群形成局部簇。其他少见边沿用好友长度，不为共同群好友增加
 /// 独立的特殊分支。
 fn relation_force_link_length(
-    source_kind: RelationNodeKind,
-    target_kind: RelationNodeKind,
+    source: &RelationNode,
+    target: &RelationNode,
+    focused: Option<&str>,
     parameters: RelationForceParameters,
 ) -> f32 {
-    match (source_kind, target_kind) {
+    let other_id = if focused.is_some_and(|focused| source.id == focused)
+        || (focused.is_none() && source.kind == RelationNodeKind::SelfUser)
+    {
+        &target.id
+    } else {
+        &source.id
+    };
+    let radial_unit = stable_relation_unit_pair(other_id).1;
+
+    // 聚焦视图需要把一跳关系铺成较宽的圆盘，而不是让同一类型的所有邻居停在一条圆环上。
+    if focused.is_some_and(|focused| source.id == focused || target.id == focused) {
+        return parameters.friend_link_length * (0.35 + radial_unit * 0.75);
+    }
+
+    match (source.kind, target.kind) {
         (RelationNodeKind::SelfUser, RelationNodeKind::Group)
-        | (RelationNodeKind::Group, RelationNodeKind::SelfUser) => parameters.group_link_length,
+        | (RelationNodeKind::Group, RelationNodeKind::SelfUser) => {
+            parameters.group_link_length
+                * (0.35 + radial_unit * (1.20 + parameters.radial_spread * 0.25))
+        }
         (RelationNodeKind::SelfUser, _) | (_, RelationNodeKind::SelfUser) => {
-            parameters.friend_link_length
+            parameters.friend_link_length * (0.95 + radial_unit * (0.45 + parameters.radial_spread))
         }
         (RelationNodeKind::Group, _) | (_, RelationNodeKind::Group) => {
-            parameters.group_member_link_length
+            parameters.group_member_link_length * (0.50 + radial_unit * 0.90)
         }
         _ => parameters.friend_link_length,
     }
@@ -727,14 +772,14 @@ pub(super) fn relation_unit_node_positions(
     for (index, node) in groups.iter().enumerate() {
         let position = match groups.len() {
             0 => egui::Vec2::ZERO,
-            1 => egui::vec2(0.36, 0.0),
+            1 => egui::vec2(0.32, 0.0),
             2..=10 => {
                 let angle = index as f32 / groups.len() as f32 * std::f32::consts::TAU - 0.35;
-                egui::vec2(angle.cos(), angle.sin()) * 0.76
+                egui::vec2(angle.cos(), angle.sin()) * 0.44
             }
             count => {
                 let progress = (index as f32 + 0.65) / count as f32;
-                let radius = 0.56 + 0.38 * progress.sqrt();
+                let radius = 0.12 + 0.50 * progress.sqrt();
                 let angle = index as f32 * golden_angle - 0.45;
                 egui::vec2(angle.cos(), angle.sin()) * radius
             }
@@ -803,12 +848,18 @@ pub(super) fn relation_unit_node_positions(
             let progress = (unanchored_index as f32 + 0.5) / unanchored_count as f32;
             let angle = unanchored_index as f32 * golden_angle + 0.6;
             unanchored_index += 1;
-            let outer_radius = if groups.is_empty() { 0.90 } else { 0.52 };
-            egui::vec2(angle.cos(), angle.sin()) * (0.04 + outer_radius * progress.sqrt())
+            let radius = if groups.is_empty() {
+                0.04 + 0.90 * progress.sqrt()
+            } else {
+                // 未通过群关系锚定的节点主要是好友，把它们直接播种到群节点外侧，
+                // 避免首帧先显示“好友内圈、群外圈”，再依靠持续动画缓慢交换位置。
+                0.70 + 0.38 * progress.sqrt()
+            };
+            egui::vec2(angle.cos(), angle.sin()) * radius
         };
         unit_positions.insert(
             node.id.clone(),
-            egui::vec2(position.x.clamp(-0.98, 0.98), position.y.clamp(-0.98, 0.98)),
+            egui::vec2(position.x.clamp(-1.20, 1.20), position.y.clamp(-1.20, 1.20)),
         );
     }
 
@@ -822,11 +873,18 @@ pub(super) struct RelationCanvasTransform {
 }
 
 impl RelationCanvasTransform {
-    pub(super) fn new(rect: egui::Rect, zoom: f32, pan: egui::Vec2) -> Self {
+    pub(super) fn new(
+        rect: egui::Rect,
+        zoom: f32,
+        pan: egui::Vec2,
+        layout_max_radius: f32,
+    ) -> Self {
         let usable_rect = rect.shrink2(egui::vec2(54.0, 54.0));
         Self {
             center: usable_rect.center() + pan,
-            scale: usable_rect.width().min(usable_rect.height()).max(1.0) * 0.48 * zoom,
+            scale: usable_rect.width().min(usable_rect.height()).max(1.0)
+                * (RELATION_CANVAS_FILL_RADIUS / layout_max_radius.max(0.1))
+                * zoom,
         }
     }
 
