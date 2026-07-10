@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::cfg::{self, RelationNetworkSetting};
 use crate::ica::IcaCommand;
@@ -31,6 +31,12 @@ pub(super) struct RelationLayoutCache {
     pub(super) visible_node_indices: Vec<usize>,
     pub(super) visible_link_indices: Vec<usize>,
     pub(super) unit_positions: HashMap<String, egui::Vec2>,
+    /// 力导向计算使用的节点速度；键与 `unit_positions` 中的节点 ID 一致。
+    ///
+    /// 速度需要跨帧保存，否则每帧都会从静止状态重新开始，布局会显得僵硬且难以收敛。
+    pub(super) velocities: HashMap<String, egui::Vec2>,
+    /// 当前聚焦视图还需要执行的力导向步数；降为零后停止持续重绘。
+    pub(super) force_ticks_remaining: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -48,7 +54,7 @@ pub struct RelationNetworkState {
     canvas_zoom: f32,
     canvas_pan: egui::Vec2,
     pub(super) graph_revision: u64,
-    layout_cache: RelationLayoutCache,
+    pub(super) layout_cache: RelationLayoutCache,
     pub(super) graph: RelationGraph,
     closed: bool,
     pending_load_limit: Option<Option<usize>>,
@@ -115,6 +121,7 @@ impl IcaApp {
         self.sync_relation_network_render_setting();
 
         let relation_network = self.relation_network.clone();
+        let parent_viewport_id = ctx.viewport_id();
         let bridge_snapshot = self.active_bridge_idx.and_then(|idx| {
             self.bridge_states
                 .get(idx)
@@ -170,6 +177,17 @@ impl IcaApp {
                     .show(viewport_ctx, |ui| {
                         render_relation_network_ui(ui, &relation_network, bridge_snapshot.as_ref());
                     });
+
+                // 独立关系网使用 deferred 子视口，按钮点击发生在主视口完成本帧动作消费之后。
+                // 因此这里检测子视口刚刚写入的加载/刷新动作，并主动唤醒父视口。
+                // 如果只请求子视口重绘，主应用不会消费动作，表象就是必须关闭独立窗口才开始加载。
+                let parent_action_pending = {
+                    let state = relation_network.lock().unwrap();
+                    state.pending_rebuild || state.pending_load_limit.is_some()
+                };
+                if parent_action_pending {
+                    viewport_ctx.request_repaint_of(parent_viewport_id);
+                }
             },
         );
 
@@ -1030,6 +1048,10 @@ fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut Rela
         relation_network.layout_cache =
             build_relation_layout_cache(relation_network, view_key, visible);
     }
+    if advance_relation_force_layout(relation_network) {
+        // 力导向布局尚未收敛时按约 60 FPS 请求下一帧；步数耗尽后不再产生额外重绘。
+        ui.ctx().request_repaint_after(Duration::from_millis(16));
+    }
     if relation_network.layout_cache.visible_ids.is_empty() {
         let toolbar_clicked = render_relation_canvas_controls(ui, rect, relation_network);
         painter.text(
@@ -1775,5 +1797,57 @@ mod tests {
             .map(|(_, position)| position.length())
             .fold(f32::INFINITY, f32::min);
         assert!(max_friend_radius < min_group_radius);
+    }
+
+    #[test]
+    fn focused_view_keeps_focus_when_node_limit_truncates_neighbors() {
+        let mut nodes = (0..8)
+            .map(|index| test_node(&format!("u:{index}"), RelationNodeKind::Friend))
+            .collect::<Vec<_>>();
+        nodes.push(test_node("g:focus", RelationNodeKind::Group));
+        let links = (0..8)
+            .map(|index| RelationLink {
+                source: "g:focus".to_string(),
+                target: format!("u:{index}"),
+            })
+            .collect();
+        let mut state = RelationNetworkState::default();
+        state.render_setting.max_visible_nodes_focused = 4;
+        state.replace_graph(test_graph(nodes, links));
+        state.view_mode = RelationViewMode::Focused("g:focus".to_string());
+
+        let visible = visible_relation_node_ids(&state, "");
+        assert_eq!(visible.len(), 4);
+        assert_eq!(visible[0], "g:focus");
+    }
+
+    #[test]
+    fn focused_force_layout_anchors_focus_and_spreads_neighbors() {
+        let mut nodes = vec![test_node("g:focus", RelationNodeKind::Group)];
+        let mut links = Vec::new();
+        for index in 0..120 {
+            let id = format!("u:{index}");
+            nodes.push(test_node(&id, RelationNodeKind::Friend));
+            links.push(RelationLink {
+                source: "g:focus".to_string(),
+                target: id,
+            });
+        }
+        let mut state = RelationNetworkState::default();
+        state.replace_graph(test_graph(nodes, links));
+        state.view_mode = RelationViewMode::Focused("g:focus".to_string());
+        let visible = visible_relation_node_ids(&state, "");
+        let cache = build_relation_layout_cache(&state, 1, visible);
+
+        assert!(cache.unit_positions["g:focus"].length() < 0.001);
+        let average_neighbor_radius = cache
+            .unit_positions
+            .iter()
+            .filter(|(id, _)| id.as_str() != "g:focus")
+            .map(|(_, position)| position.length())
+            .sum::<f32>()
+            / 120.0;
+        assert!(average_neighbor_radius > 0.35);
+        assert!(cache.force_ticks_remaining > 0);
     }
 }
