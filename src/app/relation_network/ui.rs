@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::cfg::{self, RelationNetworkSetting};
 use crate::ica::IcaCommand;
@@ -8,6 +8,14 @@ use tokio::sync::mpsc::UnboundedSender;
 
 const RELATION_MEMBER_LOAD_CONCURRENCY: usize = 12;
 const RELATION_REBUILD_GROUP_STEP: usize = 12;
+
+/// 返回关系网独立窗口的固定视口 ID。
+///
+/// 主视口处理完后台事件后，需要用同一个 ID 主动唤醒独立窗口；如果在不同位置
+/// 分别计算 ID，后续修改标识字符串时很容易只改到一处，导致子视口再次停留在旧帧。
+pub(super) fn relation_network_viewport_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("relation_network")
+}
 
 use super::super::IcaApp;
 use super::super::state::BridgeState;
@@ -35,8 +43,11 @@ pub(super) struct RelationLayoutCache {
     ///
     /// 速度需要跨帧保存，否则每帧都会从静止状态重新开始，布局会显得僵硬且难以收敛。
     pub(super) velocities: HashMap<String, egui::Vec2>,
-    /// 当前聚焦视图还需要执行的力导向步数；降为零后停止持续重绘。
-    pub(super) force_ticks_remaining: u16,
+    /// 下一次力导向迭代允许执行的时间。
+    ///
+    /// 独立窗口可能因为鼠标移动或后台事件而提前重绘；保存这个时间点
+    /// 可以确保这些额外帧不会跳过动画间隔、一次性快速消耗所有 step。
+    pub(super) force_next_tick_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +131,14 @@ impl IcaApp {
         }
         self.sync_relation_network_render_setting();
 
+        // deferred 子视口写入的按钮动作会在下一次主视口帧到来前保存在共享状态中。
+        // 必须先消费动作、再生成桥接状态快照，否则“开始加载”后的第一份子窗口快照
+        // 仍然是加载前的数据，进度条要等到首个网络响应到达后才可能出现。
+        self.apply_relation_network_viewport_actions();
+        if !self.open_page.relation_network {
+            return;
+        }
+
         let relation_network = self.relation_network.clone();
         let parent_viewport_id = ctx.viewport_id();
         let bridge_snapshot = self.active_bridge_idx.and_then(|idx| {
@@ -127,6 +146,7 @@ impl IcaApp {
                 .get(idx)
                 .map(|state| RelationBridgeSnapshot {
                     rooms_len: state.rooms.len(),
+                    total_groups: state.rooms.iter().filter(|room| room.room_id < 0).count(),
                     loaded_groups: state
                         .group_members_by_room
                         .keys()
@@ -150,7 +170,7 @@ impl IcaApp {
                 })
         });
 
-        let viewport_id = egui::ViewportId::from_hash_of("relation_network");
+        let viewport_id = relation_network_viewport_id();
         let viewport_builder = egui::ViewportBuilder::default()
             .with_title("QQ 关系网")
             .with_inner_size([1120.0, 760.0])
@@ -191,7 +211,11 @@ impl IcaApp {
             },
         );
 
-        self.apply_relation_network_viewport_actions();
+        // bridge 事件首先唤醒主视口；主视口更新状态并重新注册上面的 deferred 回调后，
+        // 还需要明确唤醒子视口，它才会用这一帧的新快照刷新进度、统计和图谱。
+        // 这也覆盖“加载中变为完成”“请求失败后加载数回退”等所有后台状态变化，
+        // 避免只有鼠标移入窗口或关闭窗口时界面才更新。
+        ctx.request_repaint_of(viewport_id);
     }
 
     pub fn rebuild_relation_network(&mut self) {
@@ -474,29 +498,6 @@ fn render_relation_network_ui(
                 render_relation_network_header(ui, &mut relation_network, bridge_snapshot);
             });
 
-        if relation_network.load_all_active || bridge_snapshot.loading_groups > 0 {
-            egui::Panel::top("relation_network_progress")
-                .exact_size(38.0)
-                .show_separator_line(false)
-                .frame(
-                    egui::Frame::new()
-                        .fill(theme.surface)
-                        .inner_margin(egui::Margin::symmetric(18, 7)),
-                )
-                .show(ui, |ui| {
-                    let total = relation_network.graph.total_group_count.max(1);
-                    let loaded = bridge_snapshot.loaded_groups.min(total);
-                    ui.add(
-                        egui::ProgressBar::new(loaded as f32 / total as f32)
-                            .desired_width(ui.available_width())
-                            .text(format!(
-                                "群成员加载 {loaded} / {total}  ·  {} 加载中  ·  {} 等待中",
-                                bridge_snapshot.loading_groups, bridge_snapshot.pending_groups
-                            )),
-                    );
-                });
-        }
-
         egui::Panel::left("relation_network_sidebar_panel")
             .exact_size(284.0)
             .resizable(false)
@@ -517,7 +518,9 @@ fn render_relation_network_ui(
                     .inner_margin(egui::Margin::same(12)),
             )
             .show(ui, |ui| {
-                render_relation_network_canvas(ui, &mut relation_network);
+                let force_animation_enabled =
+                    !relation_network.load_all_active && bridge_snapshot.loading_groups == 0;
+                render_relation_network_canvas(ui, &mut relation_network, force_animation_enabled);
             });
     });
 }
@@ -655,12 +658,11 @@ fn render_relation_network_sidebar(
             relation_sidebar_card(ui, "数据统计", |ui| {
                 render_relation_stats(ui, relation_network);
                 ui.add_space(4.0);
-                let total_groups = relation_network.graph.total_group_count.max(1);
-                let loaded_groups = bridge_snapshot.loaded_groups.min(total_groups);
+                let progress = relation_member_load_progress(bridge_snapshot);
                 ui.add(
-                    egui::ProgressBar::new(loaded_groups as f32 / total_groups as f32)
+                    egui::ProgressBar::new(progress.ratio)
                         .desired_width(ui.available_width())
-                        .text(format!("群成员 {loaded_groups} / {total_groups}")),
+                        .text(format!("群成员 {} / {}", progress.loaded, progress.total)),
                 );
                 ui.label(
                     egui::RichText::new(format!(
@@ -786,11 +788,8 @@ fn render_relation_group_list(ui: &mut egui::Ui, relation_network: &mut Relation
                     .horizontal(|ui| {
                         let (dot_rect, _) =
                             ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-                        ui.painter().circle_filled(
-                            dot_rect.center(),
-                            5.0,
-                            RelationNodeKind::Group.color(),
-                        );
+                        ui.painter()
+                            .circle_filled(dot_rect.center(), 5.0, node.color());
                         let label = if let Some(member_count) = node.member_count {
                             format!("{}  ·  {member_count}", node.name)
                         } else if node.value > 0 {
@@ -976,16 +975,19 @@ fn render_relation_node_detail(ui: &mut egui::Ui, node: &RelationNode) {
 
 fn render_relation_size_legend(ui: &mut egui::Ui) {
     let theme = RelationTheme::from_ui(ui);
-    for (label, radius, border) in [
-        ("少量关联 (<10)", 5.0, 0.0),
-        ("数十 / 百人", 8.0, 2.0),
-        ("千人群", 11.0, 3.0),
-        ("万人群", 14.0, 4.0),
+    for (label, radius, border, member_count) in [
+        ("少量关联 (<10)", 5.0, 0.0, 5),
+        ("数十 / 百人", 8.0, 2.0, 100),
+        ("千人群", 11.0, 3.0, 1_000),
+        ("万人群", 14.0, 4.0, 10_000),
     ] {
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(32.0, 24.0), egui::Sense::hover());
-            ui.painter()
-                .circle_filled(rect.center(), radius, RelationNodeKind::Group.color());
+            ui.painter().circle_filled(
+                rect.center(),
+                radius,
+                relation_group_color(Some(member_count)),
+            );
             if border > 0.0 {
                 ui.painter().circle_stroke(
                     rect.center(),
@@ -998,7 +1000,11 @@ fn render_relation_size_legend(ui: &mut egui::Ui) {
     }
 }
 
-fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut RelationNetworkState) {
+fn render_relation_network_canvas(
+    ui: &mut egui::Ui,
+    relation_network: &mut RelationNetworkState,
+    force_animation_enabled: bool,
+) {
     let theme = RelationTheme::from_ui(ui);
     let available = ui.available_size();
     let size = egui::vec2(available.x.max(320.0), available.y.max(280.0));
@@ -1048,9 +1054,18 @@ fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut Rela
         relation_network.layout_cache =
             build_relation_layout_cache(relation_network, view_key, visible);
     }
-    if advance_relation_force_layout(relation_network) {
-        // 力导向布局尚未收敛时按约 60 FPS 请求下一帧；步数耗尽后不再产生额外重绘。
-        ui.ctx().request_repaint_after(Duration::from_millis(16));
+    let repaint_after = if force_animation_enabled {
+        advance_relation_force_layout(relation_network, Instant::now())
+    } else {
+        // 加载成员期间图谱会被分批替换。此时暂停力导向动画，避免每批数据都重新启动
+        // 持续动画并与主视口争抢共享状态；加载结束后从当前稳定拓扑继续动画。
+        pause_relation_force_layout(relation_network);
+        None
+    };
+    if let Some(repaint_after) = repaint_after {
+        // 每次只执行一个 step，并按布局层返回的剩余间隔申请下一帧。即使鼠标移动或
+        // 后台状态更新触发了额外重绘，也不会让节点突然快进到最终位置。
+        ui.ctx().request_repaint_after(repaint_after);
     }
     if relation_network.layout_cache.visible_ids.is_empty() {
         let toolbar_clicked = render_relation_canvas_controls(ui, rect, relation_network);
@@ -1156,7 +1171,7 @@ fn render_relation_network_canvas(ui: &mut egui::Ui, relation_network: &mut Rela
             } else {
                 base_radius
             };
-        let color = node.kind.color();
+        let color = node.color();
         let has_multi_selection = !relation_network.selected_node_ids.is_empty();
         let fill = if relation_network.view_mode == RelationViewMode::MultiSelect
             && has_multi_selection
@@ -1477,7 +1492,7 @@ fn render_relation_node_popup(
                             24.0
                         };
                         ui.painter()
-                            .rect_filled(avatar_rect, avatar_radius, node.kind.color());
+                            .rect_filled(avatar_rect, avatar_radius, node.color());
                         ui.painter().text(
                             avatar_rect.center(),
                             egui::Align2::CENTER_CENTER,
@@ -1596,9 +1611,37 @@ fn relation_performance_level(node_count: usize) -> RelationPerformanceLevel {
 #[derive(Debug, Clone)]
 struct RelationBridgeSnapshot {
     rooms_len: usize,
+    /// 当前桥接房间列表中的群总数，不能使用上一次图谱构建时缓存的总数。
+    total_groups: usize,
     loaded_groups: usize,
     loading_groups: usize,
     pending_groups: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RelationMemberLoadProgress {
+    loaded: usize,
+    total: usize,
+    ratio: f32,
+}
+
+/// 根据实时桥接快照计算群成员加载进度。
+///
+/// 总数为零时仍向进度条提供一个安全分母，但展示文本保留真实的 `0 / 0`；同时将
+/// 已加载数量限制在总数以内，避免房间列表刚刷新、旧成员缓存尚未清理时出现超过
+/// 100% 的进度值。
+fn relation_member_load_progress(snapshot: &RelationBridgeSnapshot) -> RelationMemberLoadProgress {
+    let loaded = snapshot.loaded_groups.min(snapshot.total_groups);
+    let ratio = if snapshot.total_groups == 0 {
+        0.0
+    } else {
+        loaded as f32 / snapshot.total_groups as f32
+    };
+    RelationMemberLoadProgress {
+        loaded,
+        total: snapshot.total_groups,
+        ratio,
+    }
 }
 
 fn queue_relation_member_requests(
@@ -1656,6 +1699,54 @@ fn relation_login_user_id(state: &BridgeState) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn member_load_progress_uses_live_group_total_and_clamps_loaded_count() {
+        let snapshot = RelationBridgeSnapshot {
+            rooms_len: 12,
+            total_groups: 5,
+            loaded_groups: 8,
+            loading_groups: 0,
+            pending_groups: 0,
+        };
+
+        let progress = relation_member_load_progress(&snapshot);
+
+        assert_eq!(progress.loaded, 5);
+        assert_eq!(progress.total, 5);
+        assert_eq!(progress.ratio, 1.0);
+    }
+
+    #[test]
+    fn member_load_progress_keeps_empty_total_visible_without_dividing_by_zero() {
+        let snapshot = RelationBridgeSnapshot {
+            rooms_len: 0,
+            total_groups: 0,
+            loaded_groups: 0,
+            loading_groups: 0,
+            pending_groups: 0,
+        };
+
+        let progress = relation_member_load_progress(&snapshot);
+
+        assert_eq!(progress.loaded, 0);
+        assert_eq!(progress.total, 0);
+        assert_eq!(progress.ratio, 0.0);
+    }
+
+    #[test]
+    fn group_color_becomes_darker_as_member_count_grows() {
+        let small = relation_group_color(Some(10));
+        let medium = relation_group_color(Some(1_000));
+        let large = relation_group_color(Some(50_000));
+        let brightness = |color: egui::Color32| {
+            u16::from(color.r()) + u16::from(color.g()) + u16::from(color.b())
+        };
+
+        assert!(brightness(small) > brightness(medium));
+        assert!(brightness(medium) > brightness(large));
+        assert_eq!(relation_group_color(None), RelationNodeKind::Group.color());
+    }
 
     fn test_node(id: &str, kind: RelationNodeKind) -> RelationNode {
         RelationNode {
@@ -1848,6 +1939,142 @@ mod tests {
             .sum::<f32>()
             / 120.0;
         assert!(average_neighbor_radius > 0.35);
-        assert!(cache.force_ticks_remaining > 0);
+    }
+
+    #[test]
+    fn overview_force_layout_runs_continuously_with_a_real_time_gap() {
+        let mut state = RelationNetworkState::default();
+        state.replace_graph(test_graph(
+            vec![
+                test_node("u:1", RelationNodeKind::Friend),
+                test_node("g:1", RelationNodeKind::Group),
+            ],
+            vec![RelationLink {
+                source: "g:1".to_string(),
+                target: "u:1".to_string(),
+            }],
+        ));
+        let visible = visible_relation_node_ids(&state, "");
+        state.layout_cache = build_relation_layout_cache(&state, 1, visible);
+
+        let now = Instant::now();
+        let interval = advance_relation_force_layout(&mut state, now).unwrap();
+        let positions_after_first_tick = state.layout_cache.unit_positions.clone();
+
+        // 在计划时间之前发生的额外 UI 帧只能缩短等待时间，不能提前移动节点。
+        let early_wait = advance_relation_force_layout(&mut state, now + interval / 2).unwrap();
+        assert!(early_wait < interval);
+        assert_eq!(
+            state.layout_cache.unit_positions,
+            positions_after_first_tick
+        );
+
+        let next_interval = advance_relation_force_layout(&mut state, now + interval).unwrap();
+        assert_ne!(
+            state.layout_cache.unit_positions,
+            positions_after_first_tick
+        );
+
+        // 即使已经运行了远超旧上限的次数，布局仍会继续安排下一次迭代。
+        let mut tick_at = now + interval + next_interval;
+        for _ in 0..200 {
+            let wait = advance_relation_force_layout(&mut state, tick_at).unwrap();
+            tick_at += wait;
+        }
+        assert!(advance_relation_force_layout(&mut state, tick_at).is_some());
+    }
+
+    #[test]
+    fn configured_group_and_friend_lengths_form_separate_layers() {
+        let mut state = RelationNetworkState::default();
+        state.replace_graph(test_graph(
+            vec![
+                test_node("u:self", RelationNodeKind::SelfUser),
+                test_node("u:friend", RelationNodeKind::Friend),
+                test_node("g:1", RelationNodeKind::Group),
+            ],
+            vec![
+                RelationLink {
+                    source: "u:self".to_string(),
+                    target: "u:friend".to_string(),
+                },
+                RelationLink {
+                    source: "u:self".to_string(),
+                    target: "g:1".to_string(),
+                },
+            ],
+        ));
+        let visible = visible_relation_node_ids(&state, "");
+        state.layout_cache = build_relation_layout_cache(&state, 1, visible);
+
+        let mut tick_at = Instant::now();
+        for _ in 0..100 {
+            let wait = advance_relation_force_layout(&mut state, tick_at).unwrap();
+            tick_at += wait;
+        }
+
+        let friend_radius = state.layout_cache.unit_positions["u:friend"].length();
+        let group_radius = state.layout_cache.unit_positions["g:1"].length();
+        assert!(group_radius > friend_radius + 0.08);
+    }
+
+    #[test]
+    fn force_layout_repels_overlapping_spatial_neighbors() {
+        let mut state = RelationNetworkState::default();
+        state.replace_graph(test_graph(
+            vec![
+                test_node("u:1", RelationNodeKind::Friend),
+                test_node("u:2", RelationNodeKind::Friend),
+            ],
+            Vec::new(),
+        ));
+        let visible = visible_relation_node_ids(&state, "");
+        state.layout_cache = build_relation_layout_cache(&state, 1, visible);
+        state
+            .layout_cache
+            .unit_positions
+            .insert("u:1".to_string(), egui::Vec2::ZERO);
+        state
+            .layout_cache
+            .unit_positions
+            .insert("u:2".to_string(), egui::Vec2::ZERO);
+
+        advance_relation_force_layout(&mut state, Instant::now());
+
+        let distance = (state.layout_cache.unit_positions["u:1"]
+            - state.layout_cache.unit_positions["u:2"])
+            .length();
+        assert!(distance > 0.001);
+    }
+
+    #[test]
+    fn overview_force_layout_keeps_self_user_at_center() {
+        let mut state = RelationNetworkState::default();
+        state.replace_graph(test_graph(
+            vec![
+                test_node("u:self", RelationNodeKind::SelfUser),
+                test_node("u:friend", RelationNodeKind::Friend),
+                test_node("g:1", RelationNodeKind::Group),
+            ],
+            vec![
+                RelationLink {
+                    source: "g:1".to_string(),
+                    target: "u:self".to_string(),
+                },
+                RelationLink {
+                    source: "g:1".to_string(),
+                    target: "u:friend".to_string(),
+                },
+            ],
+        ));
+        let visible = visible_relation_node_ids(&state, "");
+        state.layout_cache = build_relation_layout_cache(&state, 1, visible);
+
+        advance_relation_force_layout(&mut state, Instant::now());
+
+        assert_eq!(
+            state.layout_cache.unit_positions["u:self"],
+            egui::Vec2::ZERO
+        );
     }
 }

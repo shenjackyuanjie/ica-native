@@ -1,17 +1,54 @@
 use std::collections::{HashMap, HashSet};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::model::*;
 use super::ui::{RelationLayoutCache, RelationNetworkState, RelationViewMode};
 
-/// 聚焦视图创建后继续逐帧计算的总步数，约产生 0.3 秒的收敛动画。
-const FORCE_LAYOUT_TICKS: u16 = 36;
 /// 首次绘制前同步预热的步数，避免把未经计算的初始位置直接闪现在画布上。
-const FORCE_WARMUP_TICKS: usize = 4;
-/// 每一帧推进的步数；数值过大会减少动画感，过小则需要更长时间才能稳定。
-const FORCE_TICKS_PER_FRAME: usize = 2;
-/// 每个节点最多抽样检查的斥力邻居数，用固定上限控制大图的计算量。
+const FORCE_WARMUP_TICKS: usize = 3;
+/// 两次力导向迭代之间的最短间隔；约 42 FPS 能保留连续感，也能看清节点移动过程。
+const FORCE_TICK_INTERVAL: Duration = Duration::from_millis(24);
+/// 每个节点最多施加斥力的空间近邻数，用固定上限控制大图的计算量。
 const MAX_REPULSION_NEIGHBORS: usize = 24;
+/// 每个节点最多检查的空间候选数；即使许多候选落在相邻网格但超出作用半径，
+/// 单个 step 的总工作量也不会退化成遍历整个节点集合。
+const MAX_REPULSION_CANDIDATES: usize = 96;
+/// 先检查节点自身所在网格，再向周围八格扩展，提高有限候选预算命中真近邻的概率。
+const REPULSION_CELL_OFFSETS: [(i32, i32); 9] = [
+    (0, 0),
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+    (-1, 0),
+    (1, 0),
+    (-1, 1),
+    (0, 1),
+    (1, 1),
+];
+
+/// 从用户配置生成一次迭代使用的物理参数，并限制到安全范围。
+///
+/// 配置文件允许直接编辑浮点数，因此这里统一处理负数、零值和极端大值，避免错误配置
+/// 导致节点瞬间飞出画布或产生无法收敛的速度。
+#[derive(Debug, Clone, Copy)]
+struct RelationForceParameters {
+    repulsion_strength: f32,
+    friend_link_length: f32,
+    group_link_length: f32,
+    group_member_link_length: f32,
+}
+
+impl RelationForceParameters {
+    fn from_state(relation_network: &RelationNetworkState) -> Self {
+        let setting = &relation_network.render_setting;
+        Self {
+            repulsion_strength: setting.force_repulsion_strength.clamp(0.01, 1.5),
+            friend_link_length: setting.force_friend_link_length.clamp(0.05, 1.2),
+            group_link_length: setting.force_group_link_length.clamp(0.05, 1.2),
+            group_member_link_length: setting.force_group_member_link_length.clamp(0.05, 1.2),
+        }
+    }
+}
 
 pub(super) fn visible_relation_node_ids(
     relation_network: &RelationNetworkState,
@@ -136,15 +173,16 @@ pub(super) fn build_relation_layout_cache(
         visible_link_indices,
         unit_positions,
         velocities: HashMap::new(),
-        force_ticks_remaining: focused.map_or(0, |_| FORCE_LAYOUT_TICKS),
+        force_next_tick_at: None,
     };
-    if cache.force_ticks_remaining > 0 {
+    if cache.visible_ids.len() >= 2 && focused.is_some() {
         // 在缓存交给绘制层前先推进少量步数，使首帧已经具有基本合理的相对位置。
         step_relation_force_layout(
             &relation_network.graph,
             &mut cache,
             focused,
             FORCE_WARMUP_TICKS,
+            RelationForceParameters::from_state(relation_network),
         );
     }
     tracing::debug!(
@@ -156,27 +194,44 @@ pub(super) fn build_relation_layout_cache(
     cache
 }
 
-/// 推进当前聚焦视图的力导向布局。
+/// 在动画间隔到期后推进一次力导向布局。
 ///
-/// 返回值表示计算结束后是否仍有剩余步数，绘制层据此决定是否继续申请下一帧。
-/// 非聚焦视图的剩余步数为零，因此不会引入持续重绘开销。
-pub(super) fn advance_relation_force_layout(relation_network: &mut RelationNetworkState) -> bool {
-    if relation_network.layout_cache.force_ticks_remaining == 0 {
-        return false;
+/// 返回值是下一次应当重绘的等待时间；不足两个节点时返回 `None`。布局不会因为达到
+/// 固定 step 数而停止，调用方可能因输入或其他动画在间隔到期前再次进入本函数，此时
+/// 只返回剩余等待时间，不移动节点。
+pub(super) fn advance_relation_force_layout(
+    relation_network: &mut RelationNetworkState,
+    now: Instant,
+) -> Option<Duration> {
+    if relation_network.layout_cache.visible_ids.len() < 2 {
+        return None;
+    }
+    if let Some(next_tick_at) = relation_network.layout_cache.force_next_tick_at
+        && let Some(wait) = next_tick_at.checked_duration_since(now)
+        && !wait.is_zero()
+    {
+        return Some(wait);
     }
 
     let focused = relation_focused_node_id(relation_network).map(str::to_owned);
+    let parameters = RelationForceParameters::from_state(relation_network);
     step_relation_force_layout(
         &relation_network.graph,
         &mut relation_network.layout_cache,
         focused.as_deref(),
-        FORCE_TICKS_PER_FRAME,
+        1,
+        parameters,
     );
-    relation_network.layout_cache.force_ticks_remaining = relation_network
-        .layout_cache
-        .force_ticks_remaining
-        .saturating_sub(FORCE_TICKS_PER_FRAME as u16);
-    relation_network.layout_cache.force_ticks_remaining > 0
+    relation_network.layout_cache.force_next_tick_at = Some(now + FORCE_TICK_INTERVAL);
+    Some(FORCE_TICK_INTERVAL)
+}
+
+/// 暂停力导向动画的计时，但保留尚未执行的 step。
+///
+/// 群成员加载完成后，下一帧会立即执行一个 step 并重新建立固定间隔；不沿用暂停前的
+/// 截止时间，可以避免长时间加载后一次性追赶多个过期帧。
+pub(super) fn pause_relation_force_layout(relation_network: &mut RelationNetworkState) {
+    relation_network.layout_cache.force_next_tick_at = None;
 }
 
 /// 为聚焦视图生成确定性的“向日葵”初始分布。
@@ -219,13 +274,14 @@ fn seed_focused_relation_positions(
 /// 执行若干次轻量力导向迭代。
 ///
 /// 模型由边的弹簧力、节点间的近距离斥力、指向画布中心的弱引力和速度阻尼组成。
-/// 聚焦节点始终固定在原点。为兼顾最多数千节点的聚焦视图，斥力使用确定性抽样，
-/// 将每一步的复杂度控制在近似 `O(节点数 + 边数)`，而不是完整两两计算的 `O(节点数²)`。
+/// 聚焦节点或总览中的“自己”节点始终固定在原点。为兼顾最多数千节点的视图，斥力
+/// 使用空间网格寻找真实近邻，并限制每个节点的作用数量，避免完整两两计算的 `O(节点数²)`。
 fn step_relation_force_layout(
     graph: &RelationGraph,
     cache: &mut RelationLayoutCache,
     focused: Option<&str>,
     iterations: usize,
+    parameters: RelationForceParameters,
 ) {
     let node_count = cache.visible_ids.len();
     if node_count < 2 {
@@ -240,18 +296,34 @@ fn step_relation_force_layout(
         .enumerate()
         .map(|(slot, id)| (id.as_str(), slot))
         .collect();
-    let edges: Vec<(usize, usize)> = cache
+    let edges: Vec<(usize, usize, f32)> = cache
         .visible_link_indices
         .iter()
         .filter_map(|&link_index| {
             let link = graph.links.get(link_index)?;
+            let source_node = relation_node_by_id(graph, &link.source)?;
+            let target_node = relation_node_by_id(graph, &link.target)?;
             Some((
                 *id_to_slot.get(link.source.as_str())?,
                 *id_to_slot.get(link.target.as_str())?,
+                relation_force_link_length(source_node.kind, target_node.kind, parameters),
             ))
         })
         .collect();
-    let focused_slot = focused.and_then(|id| id_to_slot.get(id).copied());
+    // 聚焦视图固定被点击的节点；总览和多选视图固定“自己”节点。这样黄色中心点不会
+    // 被弹簧或斥力带离画布中心，其余节点始终围绕一个稳定锚点逐步收敛。
+    let anchor_slot = focused
+        .and_then(|id| id_to_slot.get(id).copied())
+        .or_else(|| {
+            cache.visible_node_indices.iter().find_map(|&node_index| {
+                let node = graph.nodes.get(node_index)?;
+                if node.kind == RelationNodeKind::SelfUser {
+                    id_to_slot.get(node.id.as_str()).copied()
+                } else {
+                    None
+                }
+            })
+        });
     // 位置与速度在一次绘制中连续推进多步，结束后再统一写回缓存，减少 HashMap 访问。
     let mut positions: Vec<_> = cache
         .visible_ids
@@ -263,15 +335,17 @@ fn step_relation_force_layout(
         .iter()
         .map(|id| cache.velocities.get(id).copied().unwrap_or_default())
         .collect();
-
-    // 节点越多，弹簧目标长度越大，给高出度的中心节点留出足够环形空间。
-    // 所有长度都采用画布归一化坐标，与窗口实际像素尺寸无关。
-    let rest_length = match node_count {
-        0..=80 => 0.38,
-        81..=400 => 0.50,
-        401..=1_500 => 0.64,
-        _ => 0.74,
-    };
+    // 节点绘制半径是像素值，这里用典型画布半径换算为近似归一化半径。斥力距离
+    // 同时考虑节点自身尺寸，较大的群节点不会再按普通好友的小圆点间距相互挤压。
+    let collision_radii: Vec<_> = cache
+        .visible_ids
+        .iter()
+        .map(|id| {
+            relation_node_by_id(graph, id)
+                .map(|node| node.radius / 500.0)
+                .unwrap_or(0.016)
+        })
+        .collect();
     // 大图适当缩小斥力作用半径，避免密集场景中一次迭代累积过大的合力。
     let repulsion_radius = match node_count {
         0..=100 => 0.16,
@@ -285,7 +359,7 @@ fn step_relation_force_layout(
 
         // 把每条关系边视为弹簧，使相连节点趋向目标距离。单边作用力设有上限，
         // 防止高出度中心在某一步积累过大的合力，把周围节点直接甩出画布。
-        for &(source, target) in &edges {
+        for &(source, target, rest_length) in &edges {
             let delta = positions[target] - positions[source];
             let distance = delta.length().max(0.0001);
             let direction = delta / distance;
@@ -294,38 +368,78 @@ fn step_relation_force_layout(
             forces[target] -= direction * spring;
         }
 
-        // 按固定步长为每个节点抽样一组其他节点，只在距离过近时施加双向斥力。
-        // 抽样完全由节点数量和槽位决定，因此布局可复现，同时避免 6,000 节点时的两两计算。
-        let stride = (node_count / MAX_REPULSION_NEIGHBORS).max(1);
+        // 将节点放入与斥力半径等宽的空间网格，每个节点只检查自身及周围八个网格。
+        // 旧实现按数组槽位抽样，空间上真正重叠的节点可能根本不会互相检查，看起来就像
+        // 没有斥力。空间邻域能稳定找到近邻，同时用固定上限避免密集大图退化为 O(n²)。
+        let max_collision_radius = collision_radii.iter().copied().fold(0.0_f32, f32::max);
+        let grid_cell_size = repulsion_radius + max_collision_radius * 2.0;
+        let mut spatial_grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for (slot, position) in positions.iter().enumerate() {
+            let cell = (
+                (position.x / grid_cell_size).floor() as i32,
+                (position.y / grid_cell_size).floor() as i32,
+            );
+            spatial_grid.entry(cell).or_default().push(slot);
+        }
         for left in 0..node_count {
-            let mut checked = 0usize;
-            let mut right = (left + 1) % node_count;
-            while checked < MAX_REPULSION_NEIGHBORS && right != left {
-                let delta = positions[right] - positions[left];
-                let distance_sq = delta.length_sq().max(0.000_001);
-                if distance_sq < repulsion_radius * repulsion_radius {
-                    let distance = distance_sq.sqrt();
-                    let direction = if distance > 0.0001 {
-                        delta / distance
-                    } else {
-                        // 两个节点完全重合时无法从位置得到方向，改用槽位生成稳定的分离方向。
-                        let angle = (left as f32 * 1.618 + right as f32) * 2.399_963;
-                        egui::vec2(angle.cos(), angle.sin())
-                    };
-                    let strength = ((repulsion_radius - distance) * 0.16).min(0.012);
-                    forces[left] -= direction * strength;
-                    forces[right] += direction * strength;
+            let cell = (
+                (positions[left].x / grid_cell_size).floor() as i32,
+                (positions[left].y / grid_cell_size).floor() as i32,
+            );
+            let mut repelled_neighbors = 0usize;
+            let mut checked_candidates = 0usize;
+            'nearby_cells: for (offset_x, offset_y) in REPULSION_CELL_OFFSETS {
+                let Some(candidates) = spatial_grid.get(&(cell.0 + offset_x, cell.1 + offset_y))
+                else {
+                    continue;
+                };
+                for &right in candidates {
+                    if right == left {
+                        continue;
+                    }
+                    checked_candidates += 1;
+                    if checked_candidates > MAX_REPULSION_CANDIDATES {
+                        break 'nearby_cells;
+                    }
+                    let delta = positions[right] - positions[left];
+                    let distance_sq = delta.length_sq();
+                    let interaction_distance =
+                        repulsion_radius + collision_radii[left] + collision_radii[right];
+                    if distance_sq < interaction_distance * interaction_distance {
+                        let distance = distance_sq.sqrt();
+                        let direction = if distance > 0.0001 {
+                            delta / distance
+                        } else {
+                            // 两个节点完全重合时无法从位置得到方向，改用无序槽位对生成
+                            // 稳定方向，并按观察端翻转符号，确保两端受到严格相反的斥力。
+                            let first = left.min(right);
+                            let second = left.max(right);
+                            let angle = (first as f32 * 1.618 + second as f32) * 2.399_963;
+                            let pair_direction = egui::vec2(angle.cos(), angle.sin());
+                            if left < right {
+                                pair_direction
+                            } else {
+                                -pair_direction
+                            }
+                        };
+                        let strength = ((interaction_distance - distance)
+                            * parameters.repulsion_strength)
+                            .min(0.03);
+                        forces[left] -= direction * strength;
+                        repelled_neighbors += 1;
+                        if repelled_neighbors >= MAX_REPULSION_NEIGHBORS {
+                            break 'nearby_cells;
+                        }
+                    }
                 }
-                right = (right + stride) % node_count;
-                checked += 1;
             }
         }
 
         // 半隐式地更新速度和位置：弱中心引力防止图形漂走，阻尼帮助布局逐渐稳定，
         // 速度与画布半径限制则避免某一帧位移过大或节点跑到可视范围外。
         for slot in 0..node_count {
-            if Some(slot) == focused_slot {
-                // 聚焦节点是当前关系网的视觉锚点，始终固定在画布中心。
+            if Some(slot) == anchor_slot {
+                // 中心节点是当前关系网的视觉锚点，始终固定在画布中心。
                 positions[slot] = egui::Vec2::ZERO;
                 velocities[slot] = egui::Vec2::ZERO;
                 continue;
@@ -349,6 +463,29 @@ fn step_relation_force_layout(
     for (slot, id) in cache.visible_ids.iter().enumerate() {
         cache.unit_positions.insert(id.clone(), positions[slot]);
         cache.velocities.insert(id.clone(), velocities[slot]);
+    }
+}
+
+/// 根据关系两端的节点类型选择弹簧目标长度。
+///
+/// 总览中“自己—好友”和“自己—群”使用不同半径形成两层结构；群内成员关系使用更短
+/// 的长度，让成员围绕所属群形成局部簇。其他少见边沿用好友长度，不为共同群好友增加
+/// 独立的特殊分支。
+fn relation_force_link_length(
+    source_kind: RelationNodeKind,
+    target_kind: RelationNodeKind,
+    parameters: RelationForceParameters,
+) -> f32 {
+    match (source_kind, target_kind) {
+        (RelationNodeKind::SelfUser, RelationNodeKind::Group)
+        | (RelationNodeKind::Group, RelationNodeKind::SelfUser) => parameters.group_link_length,
+        (RelationNodeKind::SelfUser, _) | (_, RelationNodeKind::SelfUser) => {
+            parameters.friend_link_length
+        }
+        (RelationNodeKind::Group, _) | (_, RelationNodeKind::Group) => {
+            parameters.group_member_link_length
+        }
+        _ => parameters.friend_link_length,
     }
 }
 

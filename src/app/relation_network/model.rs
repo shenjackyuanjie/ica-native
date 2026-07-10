@@ -126,6 +126,37 @@ impl RelationNode {
                 .group_id
                 .is_some_and(|group_id| group_id.to_string().contains(query))
     }
+
+    /// 返回节点在关系图中的实际填充颜色。
+    ///
+    /// 普通用户仍沿用类型固定色；群节点在已知成员数时使用人数渐变，未加载成员列表的
+    /// 群保持基础红色，避免把“人数未知”误表现为人数很少。
+    pub(super) fn color(&self) -> egui::Color32 {
+        if self.kind == RelationNodeKind::Group {
+            relation_group_color(self.member_count)
+        } else {
+            self.kind.color()
+        }
+    }
+}
+
+/// 按群成员数量生成由亮红到深红的连续渐变。
+///
+/// QQ 群人数跨度很大，直接线性映射会让绝大多数群挤在渐变起点，因此使用对数归一化；
+/// 50,000 人及以上封顶，避免异常数据产生超出预期的颜色。
+pub(super) fn relation_group_color(member_count: Option<usize>) -> egui::Color32 {
+    let Some(member_count) = member_count else {
+        return RelationNodeKind::Group.color();
+    };
+    let normalized = ((member_count as f32 + 1.0).ln() / (50_000.0_f32 + 1.0).ln()).clamp(0.0, 1.0);
+    let interpolate = |light: u8, dark: u8| {
+        (light as f32 + (dark as f32 - light as f32) * normalized).round() as u8
+    };
+    egui::Color32::from_rgb(
+        interpolate(255, 165),
+        interpolate(112, 28),
+        interpolate(92, 42),
+    )
 }
 
 #[derive(Debug, Clone)]

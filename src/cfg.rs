@@ -323,6 +323,22 @@ fn relation_network_auto_hide_stranger_node_threshold_default() -> usize {
     50_000
 }
 
+fn relation_network_force_repulsion_strength_default() -> f32 {
+    0.32
+}
+
+fn relation_network_force_friend_link_length_default() -> f32 {
+    0.52
+}
+
+fn relation_network_force_group_link_length_default() -> f32 {
+    0.82
+}
+
+fn relation_network_force_group_member_link_length_default() -> f32 {
+    0.30
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RelationNetworkSetting {
     /// 普通视图最多参与渲染的节点数
@@ -349,6 +365,18 @@ pub struct RelationNetworkSetting {
     /// 图节点数超过该值时自动隐藏仅同群节点
     #[serde(default = "relation_network_auto_hide_stranger_node_threshold_default")]
     pub auto_hide_stranger_node_threshold: usize,
+    /// 力导向近距离斥力强度；数值越大，密集节点之间的间距越明显
+    #[serde(default = "relation_network_force_repulsion_strength_default")]
+    pub force_repulsion_strength: f32,
+    /// “自己”到好友节点的弹簧目标长度，使用画布归一化坐标
+    #[serde(default = "relation_network_force_friend_link_length_default")]
+    pub force_friend_link_length: f32,
+    /// “自己”到群节点的弹簧目标长度，适当大于好友长度可形成分层
+    #[serde(default = "relation_network_force_group_link_length_default")]
+    pub force_group_link_length: f32,
+    /// 群节点到普通成员节点的弹簧目标长度
+    #[serde(default = "relation_network_force_group_member_link_length_default")]
+    pub force_group_member_link_length: f32,
 }
 
 impl Default for RelationNetworkSetting {
@@ -365,6 +393,11 @@ impl Default for RelationNetworkSetting {
                 relation_network_auto_hide_acquaintance_node_threshold_default(),
             auto_hide_stranger_node_threshold:
                 relation_network_auto_hide_stranger_node_threshold_default(),
+            force_repulsion_strength: relation_network_force_repulsion_strength_default(),
+            force_friend_link_length: relation_network_force_friend_link_length_default(),
+            force_group_link_length: relation_network_force_group_link_length_default(),
+            force_group_member_link_length: relation_network_force_group_member_link_length_default(
+            ),
         }
     }
 }
