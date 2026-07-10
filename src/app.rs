@@ -488,6 +488,12 @@ impl IcaApp {
                 continue;
             }
 
+            let should_refresh_relation_network = matches!(
+                event_name,
+                "onlineData" | "setAllRooms" | "groupMembersResponse"
+            ) || (event_name == "commandFailed"
+                && payload.get("kind").and_then(JsonValue::as_str) == Some("fetchGroupMembers"));
+
             let should_refresh_system_messages = {
                 let state = &mut self.bridge_states[bridge_idx];
                 let prev_auth_state = state.auth_state;
@@ -499,10 +505,7 @@ impl IcaApp {
                 prev_auth_state != AuthState::Succeeded && state.auth_state == AuthState::Succeeded
             };
 
-            if matches!(
-                event_name,
-                "onlineData" | "setAllRooms" | "groupMembersResponse"
-            ) {
+            if should_refresh_relation_network {
                 self.refresh_relation_network_after_bridge_update(bridge_idx);
             }
 

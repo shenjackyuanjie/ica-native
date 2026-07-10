@@ -3,7 +3,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use futures_util::future::BoxFuture;
@@ -169,6 +169,8 @@ pub(super) async fn fetch_group_members(
 ) {
     let tx = event_tx.clone();
     let bridge_id = bridge_key.to_string();
+    let started_at = Instant::now();
+    tracing::debug!(bridge = bridge_key, room_id, "fetchGroupMembers emitted");
     if let Err(e) = client
         .emit_with_ack(
             "getGroupMembers",
@@ -179,6 +181,14 @@ pub(super) async fn fetch_group_members(
                 let bridge_id = bridge_id.clone();
                 Box::pin(async move {
                     let members = normalize_ack_list(ack_payload_values(&payload));
+                    let member_count = members.as_array().map_or(0, Vec::len);
+                    tracing::debug!(
+                        bridge = bridge_id,
+                        room_id,
+                        member_count,
+                        elapsed_ms = started_at.elapsed().as_millis(),
+                        "fetchGroupMembers acknowledged"
+                    );
 
                     emit_ui_event(
                         &tx,
@@ -194,6 +204,7 @@ pub(super) async fn fetch_group_members(
         )
         .await
     {
+        tracing::warn!(bridge = bridge_key, room_id, error = %e, "fetchGroupMembers failed");
         emit_ui_event(
             event_tx,
             bridge_key,
