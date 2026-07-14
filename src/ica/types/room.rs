@@ -33,6 +33,7 @@ pub struct Room {
     /// 我严重怀疑是脱裤子放屁
     /// 历史遗留啊,那没事了()
     // pub users: JsonValue,
+    #[serde(default)]
     pub at: At,
     #[serde(rename = "lastMessage")]
     pub last_message: LastMessage,
@@ -51,6 +52,33 @@ impl Room {
             // 私聊
             format!("https://q1.qlogo.cn/g?b=qq&nk={}&s=140", self.room_id)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::Room;
+    use crate::ica::types::message::At;
+
+    #[test]
+    fn missing_optional_at_defaults_to_none() {
+        let room: Room = serde_json::from_value(json!({
+            "roomId": -123,
+            "roomName": "测试会话",
+            "index": 0,
+            "unreadCount": 1,
+            "priority": 2,
+            "utime": 1_700_000_000_000_i64,
+            "lastMessage": {
+                "content": "普通消息",
+                "timestamp": "12:00"
+            }
+        }))
+        .expect("Room.at is optional in the bridge contract");
+
+        assert_eq!(room.at, At::None);
     }
 }
 

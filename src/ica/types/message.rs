@@ -9,11 +9,12 @@ use serde_json::{Value as JsonValue, json};
 
 use crate::ica::types::{MessageId, RoomId, UserId, files::MessageFile};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum At {
     All,
     Bool(bool),
     /// dummy
+    #[default]
     None,
 }
 
