@@ -84,7 +84,11 @@ pub struct ChatGroup {
     pub name: String,
     #[serde(default)]
     pub rooms: Vec<RoomId>,
-    #[serde(default)]
+    #[serde(
+        default,
+        rename(deserialize = "includeAllPersonal"),
+        alias = "include_all_personal"
+    )]
     pub include_all_personal: bool,
 }
 
@@ -107,5 +111,37 @@ impl ChatGroup {
 
     pub fn name(&self) -> String {
         self.name.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::ChatGroup;
+
+    #[test]
+    fn deserializes_protocol_include_all_personal() {
+        let group: ChatGroup = serde_json::from_value(json!({
+            "name": "全部私聊",
+            "index": 0,
+            "rooms": [],
+            "includeAllPersonal": true,
+        }))
+        .expect("protocol chat group should deserialize");
+
+        assert!(group.include_all_personal);
+    }
+
+    #[test]
+    fn deserializes_legacy_snake_case_include_all_personal() {
+        let group: ChatGroup = serde_json::from_value(json!({
+            "name": "全部私聊",
+            "rooms": [],
+            "include_all_personal": true,
+        }))
+        .expect("legacy local chat group should deserialize");
+
+        assert!(group.include_all_personal);
     }
 }
