@@ -8,6 +8,8 @@ use super::ui::{RelationLayoutCache, RelationNetworkState, RelationViewMode};
 const FORCE_WARMUP_TICKS: usize = 3;
 /// 两次力导向迭代之间的最短间隔；约 42 FPS 能保留连续感，也能看清节点移动过程。
 const FORCE_TICK_INTERVAL: Duration = Duration::from_millis(24);
+/// 力导向布局的全局物理尺度。所有节点位置、边长、斥力范围和每步位移统一放大。
+pub(super) const RELATION_LAYOUT_SCALE: f32 = 10.0;
 /// 关系网适配画布时占用短边半径的比例，剩余空间用于节点半径、标签和操作按钮。
 const RELATION_CANVAS_FILL_RADIUS: f32 = 0.48;
 /// 每个节点最多施加斥力的空间近邻数，用固定上限控制大图的计算量。
@@ -47,16 +49,31 @@ struct RelationForceParameters {
 impl RelationForceParameters {
     fn from_state(relation_network: &RelationNetworkState, node_count: usize) -> Self {
         let setting = &relation_network.render_setting;
-        let friend_link_length = setting.force_friend_link_length.clamp(0.05, 1.8);
+        let friend_link_length =
+            setting.force_friend_link_length.clamp(0.05, 1.8) * RELATION_LAYOUT_SCALE;
+        // 群数量通常明显高于好友数量，允许群边使用更大的配置范围，避免高密度群节点
+        // 只能挤在好友边长附近。好友边长的范围保持不变。
+        let group_link_length =
+            setting.force_group_link_length.clamp(0.05, 3.2) * RELATION_LAYOUT_SCALE;
         let radial_spread = ((node_count as f32 / 800.0).sqrt() - 1.0).clamp(0.0, 0.60);
-        // 好友边长会在基础值之上按稳定哈希展开为一个范围。最大活动半径必须覆盖
-        // 该范围并留出少量制动空间，否则大量好友最终仍会撞在同一条硬边界上。
-        let max_radius = (friend_link_length * (1.40 + radial_spread) + 0.15).clamp(1.20, 3.80);
+        // 好友和群边长都会在基础值之上按稳定哈希展开为一个范围。最大活动半径必须
+        // 覆盖两者中更长的目标距离并留出少量制动空间，否则加长后的群节点仍会撞在
+        // 同一条硬边界上。聚焦视图的一跳边统一使用好友长度，不受群边配置影响。
+        let friend_outer_radius = friend_link_length * (1.40 + radial_spread);
+        let group_outer_radius = group_link_length * (1.55 + radial_spread * 0.25);
+        let outer_radius = if relation_focused_node_id(relation_network).is_some() {
+            friend_outer_radius
+        } else {
+            friend_outer_radius.max(group_outer_radius)
+        };
+        let max_radius = (outer_radius + 0.15 * RELATION_LAYOUT_SCALE)
+            .clamp(1.20 * RELATION_LAYOUT_SCALE, 6.00 * RELATION_LAYOUT_SCALE);
         Self {
             repulsion_strength: setting.force_repulsion_strength.clamp(0.01, 1.5),
             friend_link_length,
-            group_link_length: setting.force_group_link_length.clamp(0.05, 1.8),
-            group_member_link_length: setting.force_group_member_link_length.clamp(0.05, 1.8),
+            group_link_length,
+            group_member_link_length: setting.force_group_member_link_length.clamp(0.05, 1.8)
+                * RELATION_LAYOUT_SCALE,
             radial_spread,
             max_radius,
         }
@@ -70,6 +87,11 @@ pub(super) fn relation_force_layout_max_radius(relation_network: &RelationNetwor
         relation_network.layout_cache.visible_ids.len(),
     )
     .max_radius
+}
+
+/// 画布保持放大前的归一化比例，使全局物理尺度能真实反映为更大的屏幕间距。
+pub(super) fn relation_force_canvas_max_radius(relation_network: &RelationNetworkState) -> f32 {
+    relation_force_layout_max_radius(relation_network) / RELATION_LAYOUT_SCALE
 }
 
 pub(super) fn visible_relation_node_ids(
@@ -138,6 +160,7 @@ pub(super) fn build_relation_layout_cache(
     visible_ids: Vec<String>,
 ) -> RelationLayoutCache {
     let started_at = Instant::now();
+    let parameters = RelationForceParameters::from_state(relation_network, visible_ids.len());
     let visible_set: HashSet<&str> = visible_ids.iter().map(String::as_str).collect();
     let visible_node_indices = visible_ids
         .iter()
@@ -179,8 +202,13 @@ pub(super) fn build_relation_layout_cache(
             }
         }
     }
-    let mut unit_positions =
-        relation_unit_node_positions(&relation_network.graph, &visible_ids, &visible_link_indices);
+    let mut unit_positions = relation_unit_node_positions(
+        &relation_network.graph,
+        &visible_ids,
+        &visible_link_indices,
+        parameters.group_link_length,
+        parameters.radial_spread,
+    );
 
     // 普通视图沿用按节点类型和群归属生成的稳定布局；进入聚焦视图后重新散开一跳邻居，
     // 为后续力导向计算提供不重叠、可复现的起点。
@@ -199,8 +227,6 @@ pub(super) fn build_relation_layout_cache(
     };
     if cache.visible_ids.len() >= 2 && focused.is_some() {
         // 在缓存交给绘制层前先推进少量步数，使首帧已经具有基本合理的相对位置。
-        let parameters =
-            RelationForceParameters::from_state(relation_network, cache.visible_ids.len());
         step_relation_force_layout(
             &relation_network.graph,
             &mut cache,
@@ -289,7 +315,7 @@ fn seed_focused_relation_positions(
         }
         let progress = (index as f32 + 0.75) / neighbor_count as f32;
         let angle = index as f32 * golden_angle + phase;
-        let radius = 0.18 + 0.70 * progress.sqrt();
+        let radius = (0.18 + 0.70 * progress.sqrt()) * RELATION_LAYOUT_SCALE;
         positions.insert(
             node_id.clone(),
             egui::vec2(angle.cos(), angle.sin()) * radius,
@@ -369,8 +395,8 @@ fn step_relation_force_layout(
         .iter()
         .map(|id| {
             relation_node_by_id(graph, id)
-                .map(|node| node.radius / 500.0)
-                .unwrap_or(0.016)
+                .map(|node| node.radius / 500.0 * RELATION_LAYOUT_SCALE)
+                .unwrap_or(0.016 * RELATION_LAYOUT_SCALE)
         })
         .collect();
     // 大图适当缩小斥力作用半径，避免密集场景中一次迭代累积过大的合力。
@@ -379,7 +405,7 @@ fn step_relation_force_layout(
         101..=500 => 0.11,
         501..=2_000 => 0.075,
         _ => 0.05,
-    };
+    } * RELATION_LAYOUT_SCALE;
 
     for _ in 0..iterations {
         let mut forces = vec![egui::Vec2::ZERO; node_count];
@@ -390,7 +416,10 @@ fn step_relation_force_layout(
             let delta = positions[target] - positions[source];
             let distance = delta.length().max(0.0001);
             let direction = delta / distance;
-            let spring = ((distance - rest_length) * 0.055).clamp(-0.018, 0.018);
+            let spring = ((distance - rest_length) * 0.055).clamp(
+                -0.018 * RELATION_LAYOUT_SCALE,
+                0.018 * RELATION_LAYOUT_SCALE,
+            );
             forces[source] += direction * spring;
             forces[target] -= direction * spring;
         }
@@ -451,7 +480,7 @@ fn step_relation_force_layout(
                         };
                         let strength = ((interaction_distance - distance)
                             * parameters.repulsion_strength)
-                            .min(0.03);
+                            .min(0.03 * RELATION_LAYOUT_SCALE);
                         forces[left] -= direction * strength;
                         repelled_neighbors += 1;
                         if repelled_neighbors >= MAX_REPULSION_NEIGHBORS {
@@ -474,8 +503,8 @@ fn step_relation_force_layout(
             forces[slot] -= positions[slot] * 0.006;
             velocities[slot] = (velocities[slot] + forces[slot]) * 0.82;
             let speed = velocities[slot].length();
-            if speed > 0.035 {
-                velocities[slot] *= 0.035 / speed;
+            if speed > 0.035 * RELATION_LAYOUT_SCALE {
+                velocities[slot] *= 0.035 * RELATION_LAYOUT_SCALE / speed;
             }
             positions[slot] += velocities[slot];
             let radius = positions[slot].length();
@@ -748,6 +777,8 @@ pub(super) fn relation_unit_node_positions(
     graph: &RelationGraph,
     visible_ids: &[String],
     visible_link_indices: &[usize],
+    group_link_length: f32,
+    radial_spread: f32,
 ) -> HashMap<String, egui::Vec2> {
     let mut unit_positions = HashMap::with_capacity(visible_ids.len());
     if visible_ids.len() == 1 {
@@ -770,20 +801,16 @@ pub(super) fn relation_unit_node_positions(
         .collect();
     let golden_angle = std::f32::consts::PI * (3.0 - 5.0_f32.sqrt());
     for (index, node) in groups.iter().enumerate() {
-        let position = match groups.len() {
-            0 => egui::Vec2::ZERO,
-            1 => egui::vec2(0.32, 0.0),
-            2..=10 => {
-                let angle = index as f32 / groups.len() as f32 * std::f32::consts::TAU - 0.35;
-                egui::vec2(angle.cos(), angle.sin()) * 0.44
-            }
-            count => {
-                let progress = (index as f32 + 0.65) / count as f32;
-                let radius = 0.12 + 0.50 * progress.sqrt();
-                let angle = index as f32 * golden_angle - 0.45;
-                egui::vec2(angle.cos(), angle.sin()) * radius
-            }
+        let angle = match groups.len() {
+            0 | 1 => 0.0,
+            2..=10 => index as f32 / groups.len() as f32 * std::f32::consts::TAU - 0.35,
+            _ => index as f32 * golden_angle - 0.45,
         };
+        // 群节点直接播种到自己的弹簧目标半径，避免首帧仍挤在旧的 0.12～0.62
+        // 内圈，再依靠动画缓慢向外移动。稳定哈希与力导向边长使用同一套公式。
+        let radial_unit = stable_relation_unit_pair(&node.id).1;
+        let radius = group_link_length * (0.35 + radial_unit * (1.20 + radial_spread * 0.25));
+        let position = egui::vec2(angle.cos(), angle.sin()) * radius;
         unit_positions.insert(node.id.clone(), position);
     }
 
@@ -840,7 +867,7 @@ pub(super) fn relation_unit_node_positions(
         let position = if let Some((sum, count)) = group_anchors.get(node.id.as_str()) {
             let anchor = *sum / *count as f32;
             let (angle_unit, radius_unit) = stable_relation_unit_pair(&node.id);
-            let cluster_radius = if *count > 1 { 0.075 } else { 0.13 };
+            let cluster_radius = if *count > 1 { 0.075 } else { 0.13 } * RELATION_LAYOUT_SCALE;
             let radius = cluster_radius * (0.28 + radius_unit * 0.72);
             let angle = angle_unit * std::f32::consts::TAU;
             anchor + egui::vec2(angle.cos(), angle.sin()) * radius
@@ -854,13 +881,10 @@ pub(super) fn relation_unit_node_positions(
                 // 未通过群关系锚定的节点主要是好友，把它们直接播种到群节点外侧，
                 // 避免首帧先显示“好友内圈、群外圈”，再依靠持续动画缓慢交换位置。
                 0.70 + 0.38 * progress.sqrt()
-            };
+            } * RELATION_LAYOUT_SCALE;
             egui::vec2(angle.cos(), angle.sin()) * radius
         };
-        unit_positions.insert(
-            node.id.clone(),
-            egui::vec2(position.x.clamp(-1.20, 1.20), position.y.clamp(-1.20, 1.20)),
-        );
+        unit_positions.insert(node.id.clone(), position);
     }
 
     unit_positions

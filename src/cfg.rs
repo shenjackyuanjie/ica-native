@@ -332,7 +332,7 @@ fn relation_network_force_friend_link_length_default() -> f32 {
 }
 
 fn relation_network_force_group_link_length_default() -> f32 {
-    0.46
+    2.40
 }
 
 fn relation_network_force_group_member_link_length_default() -> f32 {
@@ -371,7 +371,7 @@ pub struct RelationNetworkSetting {
     /// “自己”到好友节点的基础弹簧长度；实际长度会按节点稳定散开，默认形成外圈宽带
     #[serde(default = "relation_network_force_friend_link_length_default")]
     pub force_friend_link_length: f32,
-    /// “自己”到群节点的基础弹簧长度；实际长度会按节点稳定散开并保持在好友内侧
+    /// “自己”到群节点的基础弹簧长度；实际长度会按节点稳定散开，密集群默认使用更宽范围
     #[serde(default = "relation_network_force_group_link_length_default")]
     pub force_group_link_length: f32,
     /// 群节点到普通成员节点的弹簧目标长度

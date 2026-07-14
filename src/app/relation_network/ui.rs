@@ -1090,7 +1090,7 @@ fn render_relation_network_canvas(
         rect,
         relation_network.canvas_zoom,
         relation_network.canvas_pan,
-        relation_force_layout_max_radius(relation_network),
+        relation_force_canvas_max_radius(relation_network),
     );
     let performance = relation_performance_level(relation_network.layout_cache.visible_ids.len());
     let line_opacity = match performance.index {
@@ -1322,7 +1322,7 @@ fn render_relation_canvas_controls(
         );
     }
     if fit {
-        relation_network.canvas_zoom = 1.0;
+        relation_network.canvas_zoom = 1.0 / RELATION_LAYOUT_SCALE;
         relation_network.canvas_pan = egui::Vec2::ZERO;
     }
 
@@ -1336,7 +1336,7 @@ fn set_relation_canvas_zoom(
     rect: egui::Rect,
 ) {
     let previous = relation_network.canvas_zoom.max(0.01);
-    let zoom = zoom.clamp(0.35, 4.0);
+    let zoom = zoom.clamp(0.05, 4.0);
     let scale = zoom / previous;
     let anchor_from_center = anchor - rect.center();
     relation_network.canvas_pan =
@@ -1800,14 +1800,15 @@ mod tests {
             }],
         );
         let visible = vec!["u:1".to_string(), "g:1".to_string()];
-        let positions = relation_unit_node_positions(&graph, &visible, &[0]);
+        let positions =
+            relation_unit_node_positions(&graph, &visible, &[0], 2.40 * RELATION_LAYOUT_SCALE, 0.0);
 
         let member = positions["u:1"];
         let group = positions["g:1"];
-        assert!((member - group).length() <= 0.131);
+        assert!((member - group).length() <= 0.131 * RELATION_LAYOUT_SCALE);
         assert_eq!(
             positions,
-            relation_unit_node_positions(&graph, &visible, &[0])
+            relation_unit_node_positions(&graph, &visible, &[0], 2.40 * RELATION_LAYOUT_SCALE, 0.0,)
         );
     }
 
@@ -1863,7 +1864,7 @@ mod tests {
     }
 
     #[test]
-    fn dense_overview_separates_friends_and_groups() {
+    fn dense_overview_initializes_groups_outside_friends() {
         let mut nodes = Vec::new();
         let mut visible = Vec::new();
         for index in 0..32 {
@@ -1877,19 +1878,20 @@ mod tests {
             visible.push(id);
         }
         let graph = test_graph(nodes, Vec::new());
-        let positions = relation_unit_node_positions(&graph, &visible, &[]);
+        let positions =
+            relation_unit_node_positions(&graph, &visible, &[], 2.40 * RELATION_LAYOUT_SCALE, 0.0);
 
-        let min_friend_radius = positions
+        let max_friend_radius = positions
             .iter()
             .filter(|(id, _)| id.starts_with("u:"))
             .map(|(_, position)| position.length())
-            .fold(f32::INFINITY, f32::min);
+            .fold(0.0_f32, f32::max);
         let max_group_radius = positions
             .iter()
             .filter(|(id, _)| id.starts_with("g:"))
             .map(|(_, position)| position.length())
             .fold(0.0_f32, f32::max);
-        assert!(max_group_radius < min_friend_radius);
+        assert!(max_group_radius > max_friend_radius + 10.0);
     }
 
     #[test]
@@ -2017,7 +2019,7 @@ mod tests {
 
         let friend_radius = state.layout_cache.unit_positions["u:friend"].length();
         let group_radius = state.layout_cache.unit_positions["g:1"].length();
-        assert!(friend_radius > group_radius + 0.08);
+        assert!(group_radius > friend_radius + 0.08);
     }
 
     #[test]
@@ -2058,7 +2060,7 @@ mod tests {
     }
 
     #[test]
-    fn dense_groups_remain_inside_dense_friends() {
+    fn dense_groups_use_a_wide_radius_without_hitting_the_layout_boundary() {
         let mut nodes = vec![test_node("u:self", RelationNodeKind::SelfUser)];
         let mut links = Vec::new();
         for index in 0..160 {
@@ -2077,6 +2079,9 @@ mod tests {
             });
         }
         let mut state = RelationNetworkState::default();
+        // 与随仓库提供的配置一致：好友长度保持原值，只扩大群边长度。
+        state.render_setting.force_friend_link_length = 0.52;
+        state.render_setting.force_group_link_length = 2.40;
         state.replace_graph(test_graph(nodes, links));
         let visible = visible_relation_node_ids(&state, "");
         state.layout_cache = build_relation_layout_cache(&state, 1, visible);
@@ -2098,9 +2103,12 @@ mod tests {
         }
         friend_radii.sort_by(f32::total_cmp);
         group_radii.sort_by(f32::total_cmp);
-        let inner_friend = friend_radii[friend_radii.len() / 10];
+        let outer_friend = friend_radii[friend_radii.len() * 9 / 10];
+        let inner_group = group_radii[group_radii.len() / 10];
         let outer_group = group_radii[group_radii.len() * 9 / 10];
-        assert!(outer_group < inner_friend);
+        assert!(outer_group > outer_friend + 10.0);
+        assert!(outer_group - inner_group > 8.0);
+        assert!(outer_group < relation_force_layout_max_radius(&state));
     }
 
     #[test]
