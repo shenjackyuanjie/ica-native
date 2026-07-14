@@ -18,19 +18,19 @@ rust_engineio = { version = "0.6.0", path = "../engineio", default-features = fa
 base64 = "0.22.1"
 bytes = "1"
 backoff = "0.4"
-rand = "0.8.5"
+rand = "0.8.7"
 adler32 = "1.2.0"
 serde_json = "1.0"
 thiserror = "1.0"
-url = "2.5.4"
-tokio = { version = "1.40.0", optional = true }
+url = "2.5.8"
+tokio = { version = "1.52.3", optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
 async-stream = { version = "0.3.6", optional = true }
-log = "0.4.22"
-serde = "1.0.209"
+log = "0.4.33"
+serde = "1.0.228"
 native-tls = { version = "0.2", optional = true }
 rustls = { version = "0.23", default-features = false, optional = true }
-getrandom = "0.2.10"
+getrandom = "0.2.17"
 
 [dev-dependencies]
 cargo-tarpaulin = "0.18.5"
@@ -40,7 +40,7 @@ webpki = "0.22"
 rust_engineio = { version = "0.6.0", path = "../engineio", default-features = false, features = ["_test"] }
 
 [dev-dependencies.tokio]
-version = "1.40.0"
+version = "1.52.3"
 # we need the `#[tokio::test]` macro
 features = ["macros", "rt-multi-thread"]
 
