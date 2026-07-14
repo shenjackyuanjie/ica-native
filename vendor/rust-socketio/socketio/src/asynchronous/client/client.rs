@@ -463,8 +463,7 @@ impl Client {
 
         if ack.time_started.elapsed() < ack.timeout {
             if let Some(ref payload) = socket_packet.data {
-                ack.callback.deref_mut()(Payload::from(payload.to_owned()), self.clone())
-                    .await;
+                ack.callback.deref_mut()(Payload::from(payload.to_owned()), self.clone()).await;
             }
             if let Some(ref attachments) = socket_packet.attachments {
                 if let Some(payload) = attachments.first() {

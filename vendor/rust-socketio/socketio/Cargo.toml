@@ -16,26 +16,26 @@ all-features = true
 [dependencies]
 rust_engineio = { version = "0.6.0", path = "../engineio", default-features = false}
 base64 = "0.22.1"
-bytes = "1"
+bytes = "1.12.1"
 backoff = "0.4"
 rand = "0.10.2"
 adler32 = "1.2.0"
-serde_json = "1.0"
+serde_json = "1.0.150"
 thiserror = "2.0.18"
 url = "2.5.8"
 tokio = { version = "1.52.3", optional = true }
-futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
+futures-util = { version = "0.3.32", default-features = false, features = ["sink"], optional = true }
 async-stream = { version = "0.3.6", optional = true }
 log = "0.4.33"
 serde = "1.0.228"
-native-tls = { version = "0.2", optional = true }
-rustls = { version = "0.23", default-features = false, optional = true }
+native-tls = { version = "0.2.18", optional = true }
+rustls = { version = "0.23.42", default-features = false, optional = true }
 
 [dev-dependencies]
-cargo-tarpaulin = "0.18.5"
-serial_test = "3.0.0"
-rustls-pemfile = "2"
-webpki = "0.22"
+cargo-tarpaulin = "0.37.0"
+serial_test = "3.5.0"
+rustls-pemfile = "2.2.0"
+webpki = "0.22.4"
 rust_engineio = { version = "0.6.0", path = "../engineio", default-features = false, features = ["_test"] }
 
 [dev-dependencies.tokio]
