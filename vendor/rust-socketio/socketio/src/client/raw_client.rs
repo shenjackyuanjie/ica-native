@@ -2,7 +2,7 @@ use super::callback::Callback;
 use crate::packet::{Packet, PacketId};
 use crate::Error;
 pub(crate) use crate::{event::CloseReason, event::Event, payload::Payload};
-use rand::{thread_rng, Rng};
+use rand::RngExt;
 use serde_json::Value;
 
 use crate::client::callback::{SocketAnyCallback, SocketCallback};
@@ -203,7 +203,7 @@ impl RawClient {
         E: Into<Event>,
         D: Into<Payload>,
     {
-        let id = thread_rng().gen_range(0..999);
+        let id = rand::rng().random_range(0..999);
         let socket_packet =
             Packet::new_from_payload(data.into(), event.into(), &self.nsp, Some(id))?;
 

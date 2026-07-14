@@ -3438,7 +3438,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.2.17",
  "log",
- "rand 0.8.7",
+ "rand 0.10.2",
  "rust_engineio",
  "rustls",
  "serde",
