@@ -21,7 +21,7 @@ backoff = "0.4"
 rand = "0.10.2"
 adler32 = "1.2.0"
 serde_json = "1.0"
-thiserror = "1.0"
+thiserror = "2.0.18"
 url = "2.5.8"
 tokio = { version = "1.52.3", optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
@@ -30,7 +30,6 @@ log = "0.4.33"
 serde = "1.0.228"
 native-tls = { version = "0.2", optional = true }
 rustls = { version = "0.23", default-features = false, optional = true }
-getrandom = "0.2.17"
 
 [dev-dependencies]
 cargo-tarpaulin = "0.18.5"
