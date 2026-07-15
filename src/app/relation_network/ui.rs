@@ -13,7 +13,7 @@ const RELATION_REBUILD_GROUP_STEP: usize = 12;
 ///
 /// 主视口处理完后台事件后，需要用同一个 ID 主动唤醒独立窗口；如果在不同位置
 /// 分别计算 ID，后续修改标识字符串时很容易只改到一处，导致子视口再次停留在旧帧。
-pub(super) fn relation_network_viewport_id() -> egui::ViewportId {
+pub fn relation_network_viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("relation_network")
 }
 
@@ -33,40 +33,40 @@ pub enum RelationViewMode {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(super) struct RelationLayoutCache {
-    pub(super) view_key: u64,
-    pub(super) visible_ids: Vec<String>,
-    pub(super) visible_node_indices: Vec<usize>,
-    pub(super) visible_link_indices: Vec<usize>,
-    pub(super) unit_positions: HashMap<String, egui::Vec2>,
+pub struct RelationLayoutCache {
+    pub view_key: u64,
+    pub visible_ids: Vec<String>,
+    pub visible_node_indices: Vec<usize>,
+    pub visible_link_indices: Vec<usize>,
+    pub unit_positions: HashMap<String, egui::Vec2>,
     /// 力导向计算使用的节点速度；键与 `unit_positions` 中的节点 ID 一致。
     ///
     /// 速度需要跨帧保存，否则每帧都会从静止状态重新开始，布局会显得僵硬且难以收敛。
-    pub(super) velocities: HashMap<String, egui::Vec2>,
+    pub velocities: HashMap<String, egui::Vec2>,
     /// 下一次力导向迭代允许执行的时间。
     ///
     /// 独立窗口可能因为鼠标移动或后台事件而提前重绘；保存这个时间点
     /// 可以确保这些额外帧不会跳过动画间隔、一次性快速消耗所有 step。
-    pub(super) force_next_tick_at: Option<Instant>,
+    pub force_next_tick_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
 pub struct RelationNetworkState {
     include_unloaded_groups: bool,
     show_labels: bool,
-    pub(super) options: RelationGraphOptions,
+    pub options: RelationGraphOptions,
     search_query: String,
     group_search_query: String,
-    pub(super) focused_node_id: Option<String>,
+    pub focused_node_id: Option<String>,
     selected_node_id: Option<String>,
     hovered_node_id: Option<String>,
-    pub(super) selected_node_ids: HashSet<String>,
-    pub(super) view_mode: RelationViewMode,
+    pub selected_node_ids: HashSet<String>,
+    pub view_mode: RelationViewMode,
     canvas_zoom: f32,
     canvas_pan: egui::Vec2,
-    pub(super) graph_revision: u64,
-    pub(super) layout_cache: RelationLayoutCache,
-    pub(super) graph: RelationGraph,
+    pub graph_revision: u64,
+    pub layout_cache: RelationLayoutCache,
+    pub graph: RelationGraph,
     closed: bool,
     pending_load_limit: Option<Option<usize>>,
     pending_rebuild: bool,
@@ -74,7 +74,7 @@ pub struct RelationNetworkState {
     load_started_at: Option<Instant>,
     load_start_loaded_groups: usize,
     load_last_rebuild_loaded_groups: usize,
-    pub(super) render_setting: RelationNetworkSetting,
+    pub render_setting: RelationNetworkSetting,
 }
 
 impl Default for RelationNetworkState {
@@ -246,7 +246,7 @@ impl IcaApp {
         let total_groups = graph.total_group_count;
         self.relation_network.lock().unwrap().replace_graph(graph);
         self.apply_relation_network_auto_degrade();
-        tracing::info!(
+        tracing::debug!(
             node_count,
             link_count,
             loaded_groups,
@@ -279,7 +279,7 @@ impl IcaApp {
                 relation_network.load_start_loaded_groups = loaded_groups;
                 relation_network.load_last_rebuild_loaded_groups = loaded_groups;
             }
-            tracing::info!(
+            tracing::debug!(
                 loaded_groups,
                 total_groups,
                 concurrency = RELATION_MEMBER_LOAD_CONCURRENCY,
@@ -300,7 +300,7 @@ impl IcaApp {
             &self.ica_clients[bridge_idx].command_tx,
             limit,
         );
-        tracing::info!(queued, limit = ?limit, "relation network group-member batch queued");
+        tracing::debug!(queued, limit = ?limit, "relation network group-member batch queued");
     }
 
     pub fn refresh_relation_network_after_bridge_update(&mut self, bridge_idx: usize) {

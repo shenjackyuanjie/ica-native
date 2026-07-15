@@ -9,7 +9,7 @@ const FORCE_WARMUP_TICKS: usize = 3;
 /// 两次力导向迭代之间的最短间隔；约 42 FPS 能保留连续感，也能看清节点移动过程。
 const FORCE_TICK_INTERVAL: Duration = Duration::from_millis(24);
 /// 力导向布局的全局物理尺度。所有节点位置、边长、斥力范围和每步位移统一放大。
-pub(super) const RELATION_LAYOUT_SCALE: f32 = 10.0;
+pub const RELATION_LAYOUT_SCALE: f32 = 10.0;
 /// 关系网适配画布时占用短边半径的比例，剩余空间用于节点半径、标签和操作按钮。
 const RELATION_CANVAS_FILL_RADIUS: f32 = 0.48;
 /// 每个节点最多施加斥力的空间近邻数，用固定上限控制大图的计算量。
@@ -81,7 +81,7 @@ impl RelationForceParameters {
 }
 
 /// 返回当前视图用于画布适配的稳定最大半径。
-pub(super) fn relation_force_layout_max_radius(relation_network: &RelationNetworkState) -> f32 {
+pub fn relation_force_layout_max_radius(relation_network: &RelationNetworkState) -> f32 {
     RelationForceParameters::from_state(
         relation_network,
         relation_network.layout_cache.visible_ids.len(),
@@ -90,11 +90,11 @@ pub(super) fn relation_force_layout_max_radius(relation_network: &RelationNetwor
 }
 
 /// 画布保持放大前的归一化比例，使全局物理尺度能真实反映为更大的屏幕间距。
-pub(super) fn relation_force_canvas_max_radius(relation_network: &RelationNetworkState) -> f32 {
+pub fn relation_force_canvas_max_radius(relation_network: &RelationNetworkState) -> f32 {
     relation_force_layout_max_radius(relation_network) / RELATION_LAYOUT_SCALE
 }
 
-pub(super) fn visible_relation_node_ids(
+pub fn visible_relation_node_ids(
     relation_network: &RelationNetworkState,
     query: &str,
 ) -> Vec<String> {
@@ -121,7 +121,7 @@ pub(super) fn visible_relation_node_ids(
     ids
 }
 
-pub(super) fn relation_view_cache_key(relation_network: &RelationNetworkState, query: &str) -> u64 {
+pub fn relation_view_cache_key(relation_network: &RelationNetworkState, query: &str) -> u64 {
     fn mix(seed: u64, value: u64) -> u64 {
         seed.rotate_left(9).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ value
     }
@@ -154,7 +154,7 @@ pub(super) fn relation_view_cache_key(relation_network: &RelationNetworkState, q
     hash | 1
 }
 
-pub(super) fn build_relation_layout_cache(
+pub fn build_relation_layout_cache(
     relation_network: &RelationNetworkState,
     view_key: u64,
     visible_ids: Vec<String>,
@@ -249,7 +249,7 @@ pub(super) fn build_relation_layout_cache(
 /// 返回值是下一次应当重绘的等待时间；不足两个节点时返回 `None`。布局不会因为达到
 /// 固定 step 数而停止，调用方可能因输入或其他动画在间隔到期前再次进入本函数，此时
 /// 只返回剩余等待时间，不移动节点。
-pub(super) fn advance_relation_force_layout(
+pub fn advance_relation_force_layout(
     relation_network: &mut RelationNetworkState,
     now: Instant,
 ) -> Option<Duration> {
@@ -283,7 +283,7 @@ pub(super) fn advance_relation_force_layout(
 ///
 /// 群成员加载完成后，下一帧会立即执行一个 step 并重新建立固定间隔；不沿用暂停前的
 /// 截止时间，可以避免长时间加载后一次性追赶多个过期帧。
-pub(super) fn pause_relation_force_layout(relation_network: &mut RelationNetworkState) {
+pub fn pause_relation_force_layout(relation_network: &mut RelationNetworkState) {
     relation_network.layout_cache.force_next_tick_at = None;
 }
 
@@ -648,7 +648,7 @@ fn relation_multi_select_relationship_ids(relation_network: &RelationNetworkStat
     relation_node_kind_ordered_ids(&relation_network.graph, visible_ids)
 }
 
-pub(super) fn relation_node_by_id<'a>(
+pub fn relation_node_by_id<'a>(
     graph: &'a RelationGraph,
     id: &str,
 ) -> Option<&'a RelationNode> {
@@ -773,7 +773,7 @@ fn relation_neighbors<'a>(graph: &'a RelationGraph, node_id: &str) -> Vec<&'a st
         .collect()
 }
 
-pub(super) fn relation_unit_node_positions(
+pub fn relation_unit_node_positions(
     graph: &RelationGraph,
     visible_ids: &[String],
     visible_link_indices: &[usize],
@@ -891,13 +891,13 @@ pub(super) fn relation_unit_node_positions(
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct RelationCanvasTransform {
+pub struct RelationCanvasTransform {
     center: egui::Pos2,
     scale: f32,
 }
 
 impl RelationCanvasTransform {
-    pub(super) fn new(
+    pub fn new(
         rect: egui::Rect,
         zoom: f32,
         pan: egui::Vec2,
@@ -912,7 +912,7 @@ impl RelationCanvasTransform {
         }
     }
 
-    pub(super) fn position(self, unit_position: egui::Vec2) -> egui::Pos2 {
+    pub fn position(self, unit_position: egui::Vec2) -> egui::Pos2 {
         egui::pos2(
             self.center.x + unit_position.x * self.scale,
             self.center.y + unit_position.y * self.scale,

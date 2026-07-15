@@ -1,36 +1,36 @@
 #[derive(Clone, Copy)]
-pub(super) struct RelationTheme {
-    pub(super) page_bg: egui::Color32,
-    pub(super) surface: egui::Color32,
-    pub(super) surface_alt: egui::Color32,
-    pub(super) canvas: egui::Color32,
-    pub(super) border: egui::Color32,
-    pub(super) text: egui::Color32,
-    pub(super) muted: egui::Color32,
-    pub(super) subtle: egui::Color32,
-    pub(super) button_fill: egui::Color32,
-    pub(super) button_border: egui::Color32,
-    pub(super) control_text: egui::Color32,
-    pub(super) grid: egui::Color32,
-    pub(super) edge: egui::Color32,
-    pub(super) edge_hover: egui::Color32,
-    pub(super) canvas_text: egui::Color32,
-    pub(super) canvas_hint: egui::Color32,
-    pub(super) overlay_fill: egui::Color32,
-    pub(super) overlay_border: egui::Color32,
-    pub(super) shadow: egui::Color32,
-    pub(super) success_fill: egui::Color32,
-    pub(super) success_text: egui::Color32,
-    pub(super) warning: egui::Color32,
-    pub(super) node_outline: egui::Color32,
+pub struct RelationTheme {
+    pub page_bg: egui::Color32,
+    pub surface: egui::Color32,
+    pub surface_alt: egui::Color32,
+    pub canvas: egui::Color32,
+    pub border: egui::Color32,
+    pub text: egui::Color32,
+    pub muted: egui::Color32,
+    pub subtle: egui::Color32,
+    pub button_fill: egui::Color32,
+    pub button_border: egui::Color32,
+    pub control_text: egui::Color32,
+    pub grid: egui::Color32,
+    pub edge: egui::Color32,
+    pub edge_hover: egui::Color32,
+    pub canvas_text: egui::Color32,
+    pub canvas_hint: egui::Color32,
+    pub overlay_fill: egui::Color32,
+    pub overlay_border: egui::Color32,
+    pub shadow: egui::Color32,
+    pub success_fill: egui::Color32,
+    pub success_text: egui::Color32,
+    pub warning: egui::Color32,
+    pub node_outline: egui::Color32,
 }
 
 impl RelationTheme {
-    pub(super) fn from_ui(ui: &egui::Ui) -> Self {
+    pub fn from_ui(ui: &egui::Ui) -> Self {
         Self::from_visuals(ui.visuals())
     }
 
-    pub(super) fn from_visuals(visuals: &egui::Visuals) -> Self {
+    pub fn from_visuals(visuals: &egui::Visuals) -> Self {
         let text = visuals.text_color();
         let muted = visuals.weak_text_color();
         let inactive = &visuals.widgets.inactive;

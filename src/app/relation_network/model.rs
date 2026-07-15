@@ -5,7 +5,7 @@ use crate::ica::types::{RoomId, room::Room};
 use super::super::state::GroupMember;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) enum RelationNodeKind {
+pub enum RelationNodeKind {
     SelfUser,
     Friend,
     Acquaintance,
@@ -14,7 +14,7 @@ pub(super) enum RelationNodeKind {
 }
 
 impl RelationNodeKind {
-    pub(super) fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Self::SelfUser => "自己",
             Self::Friend => "好友",
@@ -24,7 +24,7 @@ impl RelationNodeKind {
         }
     }
 
-    pub(super) fn color(self) -> egui::Color32 {
+    pub fn color(self) -> egui::Color32 {
         match self {
             Self::SelfUser => egui::Color32::from_rgb(255, 215, 0),
             Self::Friend => egui::Color32::from_rgb(74, 144, 217),
@@ -36,18 +36,18 @@ impl RelationNodeKind {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct RelationNode {
-    pub(super) id: String,
-    pub(super) name: String,
-    pub(super) kind: RelationNodeKind,
-    pub(super) value: usize,
-    pub(super) radius: f32,
-    pub(super) size_level: u8,
-    pub(super) qq: Option<i64>,
-    pub(super) group_id: Option<i64>,
-    pub(super) member_count: Option<usize>,
-    pub(super) common_group_count: usize,
-    pub(super) role: String,
+pub struct RelationNode {
+    pub id: String,
+    pub name: String,
+    pub kind: RelationNodeKind,
+    pub value: usize,
+    pub radius: f32,
+    pub size_level: u8,
+    pub qq: Option<i64>,
+    pub group_id: Option<i64>,
+    pub member_count: Option<usize>,
+    pub common_group_count: usize,
+    pub role: String,
 }
 
 impl RelationNode {
@@ -118,7 +118,7 @@ impl RelationNode {
         };
     }
 
-    pub(super) fn matches_query(&self, query: &str) -> bool {
+    pub fn matches_query(&self, query: &str) -> bool {
         query.is_empty()
             || self.name.to_lowercase().contains(query)
             || self.qq.is_some_and(|qq| qq.to_string().contains(query))
@@ -131,7 +131,7 @@ impl RelationNode {
     ///
     /// 普通用户仍沿用类型固定色；群节点在已知成员数时使用人数渐变，未加载成员列表的
     /// 群保持基础红色，避免把“人数未知”误表现为人数很少。
-    pub(super) fn color(&self) -> egui::Color32 {
+    pub fn color(&self) -> egui::Color32 {
         if self.kind == RelationNodeKind::Group {
             relation_group_color(self.member_count)
         } else {
@@ -144,7 +144,7 @@ impl RelationNode {
 ///
 /// QQ 群人数跨度很大，直接线性映射会让绝大多数群挤在渐变起点，因此使用对数归一化；
 /// 50,000 人及以上封顶，避免异常数据产生超出预期的颜色。
-pub(super) fn relation_group_color(member_count: Option<usize>) -> egui::Color32 {
+pub fn relation_group_color(member_count: Option<usize>) -> egui::Color32 {
     let Some(member_count) = member_count else {
         return RelationNodeKind::Group.color();
     };
@@ -160,44 +160,44 @@ pub(super) fn relation_group_color(member_count: Option<usize>) -> egui::Color32
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct RelationLink {
-    pub(super) source: String,
-    pub(super) target: String,
+pub struct RelationLink {
+    pub source: String,
+    pub target: String,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(super) struct RelationGraph {
-    pub(super) nodes: Vec<RelationNode>,
-    pub(super) links: Vec<RelationLink>,
-    pub(super) node_index: HashMap<String, usize>,
-    pub(super) group_node_indices: Vec<usize>,
-    pub(super) node_counts: RelationNodeCounts,
-    pub(super) loaded_group_count: usize,
-    pub(super) total_group_count: usize,
+pub struct RelationGraph {
+    pub nodes: Vec<RelationNode>,
+    pub links: Vec<RelationLink>,
+    pub node_index: HashMap<String, usize>,
+    pub group_node_indices: Vec<usize>,
+    pub node_counts: RelationNodeCounts,
+    pub loaded_group_count: usize,
+    pub total_group_count: usize,
 }
 
 impl RelationGraph {
-    pub(super) fn node_counts(&self) -> RelationNodeCounts {
+    pub fn node_counts(&self) -> RelationNodeCounts {
         self.node_counts
     }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub(super) struct RelationNodeCounts {
-    pub(super) self_user: usize,
-    pub(super) friend: usize,
-    pub(super) acquaintance: usize,
-    pub(super) stranger: usize,
-    pub(super) group: usize,
+pub struct RelationNodeCounts {
+    pub self_user: usize,
+    pub friend: usize,
+    pub acquaintance: usize,
+    pub stranger: usize,
+    pub group: usize,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct RelationGraphOptions {
-    pub(super) show_self_user: bool,
-    pub(super) show_friends: bool,
-    pub(super) show_acquaintances: bool,
-    pub(super) show_strangers: bool,
-    pub(super) show_groups: bool,
+pub struct RelationGraphOptions {
+    pub show_self_user: bool,
+    pub show_friends: bool,
+    pub show_acquaintances: bool,
+    pub show_strangers: bool,
+    pub show_groups: bool,
 }
 
 impl Default for RelationGraphOptions {
@@ -213,7 +213,7 @@ impl Default for RelationGraphOptions {
 }
 
 impl RelationGraphOptions {
-    pub(super) fn allows(&self, kind: RelationNodeKind) -> bool {
+    pub fn allows(&self, kind: RelationNodeKind) -> bool {
         match kind {
             RelationNodeKind::SelfUser => self.show_self_user,
             RelationNodeKind::Friend => self.show_friends,
@@ -225,7 +225,7 @@ impl RelationGraphOptions {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct RelationGraphBuilder {
+pub struct RelationGraphBuilder {
     nodes: HashMap<String, RelationNode>,
     links: HashMap<(String, String), RelationLink>,
     user_group_map: HashMap<i64, HashSet<i64>>,
@@ -234,7 +234,7 @@ pub(super) struct RelationGraphBuilder {
 }
 
 impl RelationGraphBuilder {
-    pub(super) fn build(
+    pub fn build(
         login_user_id: Option<i64>,
         rooms: &[Room],
         group_members_by_room: &HashMap<RoomId, Vec<GroupMember>>,
@@ -447,7 +447,7 @@ impl RelationGraphBuilder {
     }
 }
 
-pub(super) fn node_kind_order(kind: RelationNodeKind) -> u8 {
+pub fn node_kind_order(kind: RelationNodeKind) -> u8 {
     match kind {
         RelationNodeKind::SelfUser => 0,
         RelationNodeKind::Friend => 1,
