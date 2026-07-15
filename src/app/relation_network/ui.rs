@@ -23,6 +23,9 @@ use super::layout::*;
 use super::model::*;
 use super::theme::RelationTheme;
 
+/// 关系网的视图模式。
+///
+/// 决定画布显示哪些节点、点击节点的行为，以及侧边栏提示文案。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum RelationViewMode {
     #[default]
@@ -32,6 +35,10 @@ pub enum RelationViewMode {
     MultiSelectRelationship,
 }
 
+/// 关系网布局的缓存。
+///
+/// 保存当前视图可见的节点与连线索引、单位坐标以及力导向速度。视图版本键
+/// （`view_key`）变化时整体重建，避免每帧重复计算布局。
 #[derive(Debug, Clone, Default)]
 pub struct RelationLayoutCache {
     pub view_key: u64,
@@ -50,6 +57,10 @@ pub struct RelationLayoutCache {
     pub force_next_tick_at: Option<Instant>,
 }
 
+/// 关系网的完整界面状态。
+///
+/// 包含筛选选项、视图模式、画布变换、当前图谱以及布局缓存。该状态在独立窗口与主
+/// 视口之间通过 `Arc<Mutex<_>>` 共享，按钮动作先写入这里，再由主视口在下一帧消费。
 #[derive(Debug, Clone)]
 pub struct RelationNetworkState {
     include_unloaded_groups: bool,
@@ -125,6 +136,11 @@ impl RelationNetworkState {
 }
 
 impl IcaApp {
+    /// 渲染关系网独立窗口（deferred 子视口）。
+    ///
+    /// 窗口未打开时直接返回；否则同步渲染配置、消费子视口写入的动作，并构建桥接状态
+    /// 快照后交给 deferred 回调绘制。每次调用都会主动唤醒子视口，确保后台状态变化
+    /// 能及时反映到界面上。
     pub fn render_relation_network_window(&mut self, ctx: &egui::Context) {
         if !self.open_page.relation_network {
             return;
@@ -218,6 +234,10 @@ impl IcaApp {
         ctx.request_repaint_of(viewport_id);
     }
 
+    /// 根据当前桥接状态重新构建关系网图谱。
+    ///
+    /// 会先同步渲染配置，再从房间列表与群成员数据组装图谱，替换旧图后应用自动降级，
+    /// 并记录构建耗时用于调试。
     pub fn rebuild_relation_network(&mut self) {
         self.sync_relation_network_render_setting();
         let started_at = Instant::now();
@@ -253,10 +273,14 @@ impl IcaApp {
             total_groups,
             include_unloaded_groups,
             elapsed_ms = started_at.elapsed().as_millis(),
-            "relation network graph rebuilt"
+            "关系网图谱已重建"
         );
     }
 
+    /// 请求加载群成员列表。
+    ///
+    /// `limit` 为 `None` 时启动“加载全部”，按并发上限分批请求直到所有群完成；
+    /// 为 `Some(n)` 时只排队最多 `n` 个尚未加载的群。
     pub fn request_relation_network_members(&mut self, limit: Option<usize>) {
         if limit.is_none() {
             let Some(bridge_idx) = self.active_bridge_idx else {
@@ -283,7 +307,7 @@ impl IcaApp {
                 loaded_groups,
                 total_groups,
                 concurrency = RELATION_MEMBER_LOAD_CONCURRENCY,
-                "relation network group-member load started"
+                "关系网群成员加载已开始"
             );
             self.continue_relation_network_member_loading();
             return;
@@ -300,7 +324,7 @@ impl IcaApp {
             &self.ica_clients[bridge_idx].command_tx,
             limit,
         );
-        tracing::debug!(queued, limit = ?limit, "relation network group-member batch queued");
+        tracing::debug!(queued, limit = ?limit, "关系网群成员批次已排队");
     }
 
     pub fn refresh_relation_network_after_bridge_update(&mut self, bridge_idx: usize) {
@@ -386,11 +410,11 @@ impl IcaApp {
                 .keys()
                 .filter(|room_id| **room_id < 0)
                 .count();
-            tracing::info!(
+            tracing::debug!(
                 loaded_groups,
                 newly_loaded = loaded_groups.saturating_sub(start_loaded_groups),
                 elapsed_ms = started_at.map(|started| started.elapsed().as_millis()),
-                "relation network group-member load finished"
+                "关系网群成员加载已完成"
             );
             return;
         }
@@ -408,7 +432,7 @@ impl IcaApp {
             queued,
             loading_groups,
             pending_groups,
-            "relation network group-member load refilled"
+            "关系网群成员加载已补充"
         );
     }
 
@@ -418,19 +442,19 @@ impl IcaApp {
         let render_setting = relation_network.render_setting.clone();
         if node_count > render_setting.auto_hide_labels_node_threshold {
             if relation_network.show_labels {
-                tracing::info!(node_count, "relation network auto-disabled labels");
+                tracing::debug!(node_count, "关系网已自动隐藏标签");
             }
             relation_network.show_labels = false;
         }
         if node_count > render_setting.auto_hide_acquaintance_node_threshold {
             if relation_network.options.show_acquaintances {
-                tracing::info!(node_count, "relation network auto-hidden acquaintances");
+                tracing::debug!(node_count, "关系网已自动隐藏共同群好友");
             }
             relation_network.options.show_acquaintances = false;
         }
         if node_count > render_setting.auto_hide_stranger_node_threshold {
             if relation_network.options.show_strangers {
-                tracing::info!(node_count, "relation network auto-hidden strangers");
+                tracing::debug!(node_count, "关系网已自动隐藏仅同群");
             }
             relation_network.options.show_strangers = false;
         }
@@ -1609,6 +1633,10 @@ fn relation_performance_level(node_count: usize) -> RelationPerformanceLevel {
     }
 }
 
+/// 渲染关系网界面所需的桥接状态快照。
+///
+/// 由主视口在每帧构建并传给子视口，包含房间数、群加载进度等只读信息，
+/// 使子视口无需直接访问 `BridgeState`。
 #[derive(Debug, Clone)]
 struct RelationBridgeSnapshot {
     rooms_len: usize,
@@ -1650,7 +1678,7 @@ fn queue_relation_member_requests(
     limit: Option<usize>,
 ) {
     relation_network.pending_load_limit = Some(limit);
-    tracing::debug!(limit = ?limit, "relation network member-load action queued");
+    tracing::debug!(limit = ?limit, "关系网成员加载动作已排队");
 }
 
 fn request_relation_network_members_with_tx(

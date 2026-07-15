@@ -1,3 +1,6 @@
+/// 关系网界面使用的配色集合。
+///
+/// 所有颜色都从当前 egui 主题的 `Visuals` 派生，保证关系网窗口与整体界面风格一致。
 #[derive(Clone, Copy)]
 pub struct RelationTheme {
     pub page_bg: egui::Color32,
@@ -26,10 +29,12 @@ pub struct RelationTheme {
 }
 
 impl RelationTheme {
+    /// 从 egui 的 `Ui` 派生一套关系网配色。
     pub fn from_ui(ui: &egui::Ui) -> Self {
         Self::from_visuals(ui.visuals())
     }
 
+    /// 从 egui 的 `Visuals` 派生一套关系网配色。
     pub fn from_visuals(visuals: &egui::Visuals) -> Self {
         let text = visuals.text_color();
         let muted = visuals.weak_text_color();

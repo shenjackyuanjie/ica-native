@@ -4,6 +4,9 @@ use crate::ica::types::{RoomId, room::Room};
 
 use super::super::state::GroupMember;
 
+/// 关系网中节点的分类。
+///
+/// 分类决定节点的固定颜色、在列表中的排序层级，以及筛选开关对应的类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RelationNodeKind {
     SelfUser,
@@ -14,6 +17,7 @@ pub enum RelationNodeKind {
 }
 
 impl RelationNodeKind {
+    /// 返回该类型在界面上展示的中文名称。
     pub fn label(self) -> &'static str {
         match self {
             Self::SelfUser => "自己",
@@ -24,6 +28,7 @@ impl RelationNodeKind {
         }
     }
 
+    /// 返回该类型的固定填充颜色（群节点除外，群节点颜色随成员数变化）。
     pub fn color(self) -> egui::Color32 {
         match self {
             Self::SelfUser => egui::Color32::from_rgb(255, 215, 0),
@@ -35,6 +40,10 @@ impl RelationNodeKind {
     }
 }
 
+/// 关系网中的单个节点，可能是用户或群。
+///
+/// 节点的 `value` 表示关联数（相连的边数量），`radius` 与 `size_level` 由 `value`
+/// 或群成员数换算得到，用于绘制时的视觉大小。
 #[derive(Debug, Clone)]
 pub struct RelationNode {
     pub id: String,
@@ -118,6 +127,9 @@ impl RelationNode {
         };
     }
 
+    /// 判断节点是否匹配搜索关键词。
+    ///
+    /// 空关键词视为匹配全部；否则按昵称、QQ 号或群号做不区分大小写的包含匹配。
     pub fn matches_query(&self, query: &str) -> bool {
         query.is_empty()
             || self.name.to_lowercase().contains(query)
@@ -159,12 +171,19 @@ pub fn relation_group_color(member_count: Option<usize>) -> egui::Color32 {
     )
 }
 
+/// 关系网中的一条连线，连接两个节点 ID。
+///
+/// 连线无方向，存储时统一按 ID 字典序去重。
 #[derive(Debug, Clone)]
 pub struct RelationLink {
     pub source: String,
     pub target: String,
 }
 
+/// 关系网的完整数据：节点、连线以及用于快速查询的索引。
+///
+/// `node_index` 把节点 ID 映射到 `nodes` 中的下标；`group_node_indices` 单独保存所有
+/// 群节点的下标，便于侧边栏群列表直接遍历。
 #[derive(Debug, Clone, Default)]
 pub struct RelationGraph {
     pub nodes: Vec<RelationNode>,
@@ -177,11 +196,13 @@ pub struct RelationGraph {
 }
 
 impl RelationGraph {
+    /// 返回当前图谱中各类型节点的数量统计。
     pub fn node_counts(&self) -> RelationNodeCounts {
         self.node_counts
     }
 }
 
+/// 各类型节点的数量统计，用于侧边栏展示与筛选行计数。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RelationNodeCounts {
     pub self_user: usize,
@@ -191,6 +212,9 @@ pub struct RelationNodeCounts {
     pub group: usize,
 }
 
+/// 关系网各类型节点的显示开关。
+///
+/// 这些开关对应侧边栏“显示选项”中的复选框，决定哪些类型的节点参与布局与绘制。
 #[derive(Debug, Clone)]
 pub struct RelationGraphOptions {
     pub show_self_user: bool,
@@ -213,6 +237,7 @@ impl Default for RelationGraphOptions {
 }
 
 impl RelationGraphOptions {
+    /// 判断给定节点类型当前是否允许显示。
     pub fn allows(&self, kind: RelationNodeKind) -> bool {
         match kind {
             RelationNodeKind::SelfUser => self.show_self_user,
@@ -224,6 +249,10 @@ impl RelationGraphOptions {
     }
 }
 
+/// 关系网构建器，从房间列表与群成员数据逐步组装出 [`RelationGraph`]。
+///
+/// 先放入“自己”、私聊好友和群，再补充群成员并据此修正节点类型，最后统一排序、
+/// 计算尺寸与统计信息。
 #[derive(Debug, Default)]
 pub struct RelationGraphBuilder {
     nodes: HashMap<String, RelationNode>,
@@ -234,6 +263,10 @@ pub struct RelationGraphBuilder {
 }
 
 impl RelationGraphBuilder {
+    /// 根据登录用户、房间列表与群成员数据构建关系网。
+    ///
+    /// `include_unloaded_groups` 为 `false` 时会跳过尚未加载成员列表的群，
+    /// 避免图谱中出现没有连线的孤立群节点。
     pub fn build(
         login_user_id: Option<i64>,
         rooms: &[Room],
@@ -447,6 +480,9 @@ impl RelationGraphBuilder {
     }
 }
 
+/// 返回节点类型的排序层级，用于让同类节点在列表与布局中保持相邻。
+///
+/// 顺序为：自己 < 好友 < 共同群好友 < 仅同群 < 群。
 pub fn node_kind_order(kind: RelationNodeKind) -> u8 {
     match kind {
         RelationNodeKind::SelfUser => 0,

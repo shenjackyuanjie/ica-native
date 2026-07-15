@@ -94,6 +94,10 @@ pub fn relation_force_canvas_max_radius(relation_network: &RelationNetworkState)
     relation_force_layout_max_radius(relation_network) / RELATION_LAYOUT_SCALE
 }
 
+/// 根据当前视图模式与搜索关键词，返回应当显示的节点 ID 列表。
+///
+/// 总览/多选视图取全部允许显示的节点；聚焦视图只取聚焦节点及其一跳邻居；
+/// 关系视图取多选节点及其共同群。结果会按视图上限截断。
 pub fn visible_relation_node_ids(
     relation_network: &RelationNetworkState,
     query: &str,
@@ -121,6 +125,10 @@ pub fn visible_relation_node_ids(
     ids
 }
 
+/// 计算布局缓存的版本键。
+///
+/// 当筛选开关、搜索词、图谱版本、视图模式或选中集合发生变化时，键随之改变，
+/// 用于判断是否需要重建布局缓存，避免每帧都重新计算。
 pub fn relation_view_cache_key(relation_network: &RelationNetworkState, query: &str) -> u64 {
     fn mix(seed: u64, value: u64) -> u64 {
         seed.rotate_left(9).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ value
@@ -239,7 +247,7 @@ pub fn build_relation_layout_cache(
         visible_nodes = cache.visible_node_indices.len(),
         visible_links = cache.visible_link_indices.len(),
         elapsed_ms = started_at.elapsed().as_millis(),
-        "relation network layout cache rebuilt"
+        "关系网布局缓存已重建"
     );
     cache
 }
@@ -648,6 +656,7 @@ fn relation_multi_select_relationship_ids(relation_network: &RelationNetworkStat
     relation_node_kind_ordered_ids(&relation_network.graph, visible_ids)
 }
 
+/// 在关系图中按节点 ID 查找节点。
 pub fn relation_node_by_id<'a>(
     graph: &'a RelationGraph,
     id: &str,
@@ -773,6 +782,10 @@ fn relation_neighbors<'a>(graph: &'a RelationGraph, node_id: &str) -> Vec<&'a st
         .collect()
 }
 
+/// 计算所有可见节点的初始单位坐标。
+///
+/// 群节点直接播种到弹簧目标半径；群成员围绕所属群锚点聚成局部簇；未通过群关系
+/// 锚定的好友则沿外圈螺旋展开。返回的坐标已尽量接近最终布局，减少首帧跳动。
 pub fn relation_unit_node_positions(
     graph: &RelationGraph,
     visible_ids: &[String],
@@ -890,6 +903,9 @@ pub fn relation_unit_node_positions(
     unit_positions
 }
 
+/// 把单位坐标系下的节点位置映射到画布像素坐标的变换。
+///
+/// 由画布矩形、缩放、平移以及布局最大半径共同决定中心点与缩放比例。
 #[derive(Clone, Copy)]
 pub struct RelationCanvasTransform {
     center: egui::Pos2,
