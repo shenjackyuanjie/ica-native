@@ -4,6 +4,8 @@ use serde_json::json;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
+use super::event::BridgeEvent;
+
 use crate::ica::types::{
     RoomId,
     message::{DeleteMessage, Mention, ReplyMessage, SendMessage},
@@ -147,27 +149,46 @@ pub enum IcaCommand {
 }
 
 #[derive(Debug, Clone)]
-pub struct IcaClient {
-    pub bridge_key: String,
-    pub command_tx: UnboundedSender<IcaCommand>,
+pub struct BridgeHandle {
+    bridge_key: String,
+    command_tx: UnboundedSender<IcaCommand>,
+}
+
+impl BridgeHandle {
+    pub fn new(bridge_key: String, command_tx: UnboundedSender<IcaCommand>) -> Self {
+        Self {
+            bridge_key,
+            command_tx,
+        }
+    }
+
+    pub fn bridge_key(&self) -> &str {
+        &self.bridge_key
+    }
+
+    pub fn send(&self, command: IcaCommand) -> Result<(), String> {
+        self.command_tx
+            .send(command)
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn command_sender(&self) -> UnboundedSender<IcaCommand> {
+        self.command_tx.clone()
+    }
 }
 
 pub(super) fn emit_ui_event(
-    tx: &Option<UnboundedSender<JsonValue>>,
+    tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_id: &str,
     event_name: &'static str,
     payload: JsonValue,
 ) {
-    let obj = json!({
-        "bridge": bridge_id,
-        "event": event_name,
-        "payload": payload,
-    });
+    let event = BridgeEvent::from_protocol(bridge_id, event_name, payload);
 
     if let Some(tx) = tx {
-        let _ = tx.send(obj);
+        let _ = tx.send(event);
     } else {
-        tracing::info!("{}: {}", event_name, obj);
+        tracing::info!("{}: {:?}", event_name, event);
     }
 }
 

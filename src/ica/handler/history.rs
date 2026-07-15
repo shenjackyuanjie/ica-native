@@ -11,6 +11,8 @@ use rust_socketio::{Payload, asynchronous::Client};
 use serde_json::{Value as JsonValue, json};
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::ica::event::BridgeEvent;
+
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 use super::{ack_payload_first, ack_payload_values};
@@ -40,7 +42,7 @@ fn latest_history_message_id(room_id: i64) -> Option<String> {
 
 pub(super) async fn fetch_latest_history(
     client: &Client,
-    event_tx: &Option<UnboundedSender<JsonValue>>,
+    event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
     room_id: i64,
     current_loaded_messages: usize,
@@ -85,7 +87,7 @@ pub(super) async fn fetch_latest_history(
 
 pub(super) async fn fetch_messages(
     client: &Client,
-    event_tx: &Option<UnboundedSender<JsonValue>>,
+    event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
     room_id: i64,
 ) {
@@ -167,7 +169,7 @@ pub(super) async fn fetch_messages(
 
 pub(super) async fn fetch_older_messages(
     client: &Client,
-    event_tx: &Option<UnboundedSender<JsonValue>>,
+    event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
     room_id: i64,
     offset: usize,
@@ -222,7 +224,7 @@ pub(super) async fn fetch_older_messages(
 
 pub(super) async fn fetch_group_members(
     client: &Client,
-    event_tx: &Option<UnboundedSender<JsonValue>>,
+    event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
     room_id: i64,
 ) {
@@ -279,7 +281,7 @@ pub(super) async fn fetch_group_members(
 
 pub(super) async fn get_system_messages(
     client: &Client,
-    event_tx: &Option<UnboundedSender<JsonValue>>,
+    event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
 ) {
     let timeout = Duration::from_secs(10);

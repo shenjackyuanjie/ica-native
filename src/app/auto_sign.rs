@@ -167,6 +167,7 @@ impl IcaApp {
             self.auto_sign.last_message = "当前 bridge 状态不存在".to_string();
             return;
         };
+        let bridge_key = state.bridge_key.clone();
 
         let mode = self.auto_sign.mode;
         let hot_hours = self.auto_sign.hot_hours.max(1);
@@ -190,8 +191,7 @@ impl IcaApp {
             rooms.sort_by_key(|room| std::cmp::Reverse(room.utime));
         }
 
-        self.auto_sign
-            .begin(bridge_idx, state.bridge_key.clone(), rooms);
+        self.auto_sign.begin(bridge_idx, bridge_key, rooms);
     }
 
     pub fn tick_auto_sign(&mut self, ctx: &egui::Context) {
@@ -212,9 +212,8 @@ impl IcaApp {
             return;
         };
         let bridge_idx = self.auto_sign.bridge_idx;
-        let sent = self.ica_clients.get(bridge_idx).is_some_and(|client| {
-            client
-                .command_tx
+        let sent = self.bridge_states.get(bridge_idx).is_some_and(|session| {
+            session
                 .send(IcaCommand::SendGroupSign {
                     room_id: room.room_id,
                 })

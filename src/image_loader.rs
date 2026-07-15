@@ -12,12 +12,13 @@
 mod decode;
 mod disk;
 mod gif;
+mod raw;
 mod state;
 mod texture;
 mod util;
 mod worker;
 
-use std::{sync::Arc, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use decode::{
     decode_image, decoded_image_byte_size, is_permanent_download_error, normalize_image_load_error,
@@ -34,7 +35,22 @@ use tracing::{debug, info, warn};
 use util::{decode_worker_count, format_bytes};
 use worker::{DecodeWorkerPool, ScheduleError};
 
-use crate::cfg;
+#[derive(Debug, Clone)]
+pub struct ImageCacheSettings {
+    pub directory: PathBuf,
+    pub memory_max_bytes: u64,
+    pub disk_max_bytes: u64,
+}
+
+impl ImageCacheSettings {
+    pub fn from_config(config: &crate::config::IcaCfg) -> Self {
+        Self {
+            directory: config.get_image_cache_path(),
+            memory_max_bytes: config.image_cache_max_bytes,
+            disk_max_bytes: config.disk_image_cache_max_bytes,
+        }
+    }
+}
 
 /// 带内存统计的图片加载器。
 #[derive(Clone)]
@@ -42,6 +58,7 @@ pub struct TrackingImageLoader {
     state: Arc<Mutex<LoaderState>>,
     disk_cache: Option<Arc<DiskCache>>,
     workers: Arc<DecodeWorkerPool>,
+    raw_cache: raw::RawImageCache,
 }
 
 impl TrackingImageLoader {
@@ -49,28 +66,27 @@ impl TrackingImageLoader {
     pub const ID: &'static str = egui::generate_loader_id!(TrackingImageLoader);
 
     /// 创建一个新的加载器实例。
-    pub fn new() -> Self {
-        let cfg = cfg::get_cfg_snapshot();
+    pub fn new(settings: ImageCacheSettings) -> Self {
         let worker_count = decode_worker_count();
 
-        let disk_cache = DiskCache::new(cfg.get_image_cache_path(), cfg.disk_image_cache_max_bytes)
-            .map(Arc::new);
+        let disk_cache = DiskCache::new(settings.directory, settings.disk_max_bytes).map(Arc::new);
 
         info!(
             "TrackingImageLoader configured: workers={} memory_limit={} disk_limit={}",
             worker_count,
-            format_bytes(cfg.image_cache_max_bytes),
-            if cfg.disk_image_cache_max_bytes == 0 {
+            format_bytes(settings.memory_max_bytes),
+            if settings.disk_max_bytes == 0 {
                 "unlimited".to_string()
             } else {
-                format_bytes(cfg.disk_image_cache_max_bytes)
+                format_bytes(settings.disk_max_bytes)
             }
         );
 
         Self {
-            state: Arc::new(Mutex::new(LoaderState::new(cfg.image_cache_max_bytes))),
+            state: Arc::new(Mutex::new(LoaderState::new(settings.memory_max_bytes))),
             disk_cache,
             workers: Arc::new(DecodeWorkerPool::new(worker_count, "image-decode")),
+            raw_cache: raw::RawImageCache::new(settings.memory_max_bytes),
         }
     }
 
@@ -88,6 +104,8 @@ impl TrackingImageLoader {
         size_hint: Option<egui::Vec2>,
         loaded_from_disk: bool,
     ) -> Result<(), LoadError> {
+        self.raw_cache
+            .insert(uri.clone(), Arc::<[u8]>::from(bytes.as_ref()));
         {
             let mut state = self.state.lock();
             if !state.mark_decoding(&uri, generation, size_hint) {
@@ -204,12 +222,6 @@ impl TrackingImageLoader {
     }
 }
 
-impl Default for TrackingImageLoader {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ImageLoader for TrackingImageLoader {
     fn id(&self) -> &str {
         Self::ID
@@ -319,14 +331,21 @@ impl ImageLoader for TrackingImageLoader {
 }
 
 /// 在 `egui::Context` 上安装该图片加载器（若尚未安装）。
-pub fn install_tracking_image_loader(ctx: &Context) {
+pub fn install_tracking_image_loader(ctx: &Context, settings: ImageCacheSettings) {
     if ctx.is_loader_installed(TrackingImageLoader::ID) {
         return;
     }
 
-    let cfg = cfg::get_cfg_snapshot();
-    ctx.add_image_loader(Arc::new(TrackingImageLoader::new()));
-    gif::install(ctx, cfg.image_cache_max_bytes);
-    texture::install(ctx, cfg.image_cache_max_bytes);
+    let memory_max_bytes = settings.memory_max_bytes;
+    let loader = Arc::new(TrackingImageLoader::new(settings));
+    raw::install(ctx, loader.raw_cache.clone());
+    ctx.add_image_loader(loader);
+    gif::install(ctx, memory_max_bytes);
+    texture::install(ctx, memory_max_bytes);
     info!("installed TrackingImageLoader (state-machine + worker-pool)");
+}
+
+/// Returns original encoded bytes retained by the tracking loader.
+pub fn cached_original_bytes(ctx: &Context, uri: &str) -> Option<Arc<[u8]>> {
+    raw::get(ctx, uri)
 }

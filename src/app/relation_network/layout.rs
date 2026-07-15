@@ -1,8 +1,60 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+use crate::config::RelationNetworkSetting;
+
 use super::model::*;
-use super::ui::{RelationLayoutCache, RelationNetworkState, RelationViewMode};
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum RelationViewMode {
+    #[default]
+    Default,
+    Focused(String),
+    MultiSelect,
+    MultiSelectRelationship,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RelationLayoutCache {
+    pub view_key: u64,
+    pub visible_ids: Vec<String>,
+    pub visible_node_indices: Vec<usize>,
+    pub visible_link_indices: Vec<usize>,
+    pub unit_positions: HashMap<String, egui::Vec2>,
+    pub velocities: HashMap<String, egui::Vec2>,
+    pub force_next_tick_at: Option<Instant>,
+}
+
+/// All graph data and parameters consumed by the layout engine.
+///
+/// Keeping this type in `layout` prevents the algorithm from depending on
+/// viewport/UI state while still allowing the feature state to own it.
+#[derive(Debug, Clone)]
+pub struct RelationLayoutModel {
+    pub options: RelationGraphOptions,
+    pub focused_node_id: Option<String>,
+    pub selected_node_ids: HashSet<String>,
+    pub view_mode: RelationViewMode,
+    pub graph_revision: u64,
+    pub layout_cache: RelationLayoutCache,
+    pub graph: RelationGraph,
+    pub render_setting: RelationNetworkSetting,
+}
+
+impl Default for RelationLayoutModel {
+    fn default() -> Self {
+        Self {
+            options: RelationGraphOptions::default(),
+            focused_node_id: None,
+            selected_node_ids: HashSet::new(),
+            view_mode: RelationViewMode::Default,
+            graph_revision: 0,
+            layout_cache: RelationLayoutCache::default(),
+            graph: RelationGraph::default(),
+            render_setting: RelationNetworkSetting::default(),
+        }
+    }
+}
 
 /// 首次绘制前同步预热的步数，避免把未经计算的初始位置直接闪现在画布上。
 const FORCE_WARMUP_TICKS: usize = 3;
@@ -47,7 +99,7 @@ struct RelationForceParameters {
 }
 
 impl RelationForceParameters {
-    fn from_state(relation_network: &RelationNetworkState, node_count: usize) -> Self {
+    fn from_state(relation_network: &RelationLayoutModel, node_count: usize) -> Self {
         let setting = &relation_network.render_setting;
         let friend_link_length =
             setting.force_friend_link_length.clamp(0.05, 1.8) * RELATION_LAYOUT_SCALE;
@@ -81,7 +133,7 @@ impl RelationForceParameters {
 }
 
 /// 返回当前视图用于画布适配的稳定最大半径。
-pub fn relation_force_layout_max_radius(relation_network: &RelationNetworkState) -> f32 {
+pub fn relation_force_layout_max_radius(relation_network: &RelationLayoutModel) -> f32 {
     RelationForceParameters::from_state(
         relation_network,
         relation_network.layout_cache.visible_ids.len(),
@@ -90,7 +142,7 @@ pub fn relation_force_layout_max_radius(relation_network: &RelationNetworkState)
 }
 
 /// 画布保持放大前的归一化比例，使全局物理尺度能真实反映为更大的屏幕间距。
-pub fn relation_force_canvas_max_radius(relation_network: &RelationNetworkState) -> f32 {
+pub fn relation_force_canvas_max_radius(relation_network: &RelationLayoutModel) -> f32 {
     relation_force_layout_max_radius(relation_network) / RELATION_LAYOUT_SCALE
 }
 
@@ -99,7 +151,7 @@ pub fn relation_force_canvas_max_radius(relation_network: &RelationNetworkState)
 /// 总览/多选视图取全部允许显示的节点；聚焦视图只取聚焦节点及其一跳邻居；
 /// 关系视图取多选节点及其共同群。结果会按视图上限截断。
 pub fn visible_relation_node_ids(
-    relation_network: &RelationNetworkState,
+    relation_network: &RelationLayoutModel,
     query: &str,
 ) -> Vec<String> {
     let mut ids = match &relation_network.view_mode {
@@ -129,7 +181,7 @@ pub fn visible_relation_node_ids(
 ///
 /// 当筛选开关、搜索词、图谱版本、视图模式或选中集合发生变化时，键随之改变，
 /// 用于判断是否需要重建布局缓存，避免每帧都重新计算。
-pub fn relation_view_cache_key(relation_network: &RelationNetworkState, query: &str) -> u64 {
+pub fn relation_view_cache_key(relation_network: &RelationLayoutModel, query: &str) -> u64 {
     fn mix(seed: u64, value: u64) -> u64 {
         seed.rotate_left(9).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ value
     }
@@ -163,7 +215,7 @@ pub fn relation_view_cache_key(relation_network: &RelationNetworkState, query: &
 }
 
 pub fn build_relation_layout_cache(
-    relation_network: &RelationNetworkState,
+    relation_network: &RelationLayoutModel,
     view_key: u64,
     visible_ids: Vec<String>,
 ) -> RelationLayoutCache {
@@ -258,7 +310,7 @@ pub fn build_relation_layout_cache(
 /// 固定 step 数而停止，调用方可能因输入或其他动画在间隔到期前再次进入本函数，此时
 /// 只返回剩余等待时间，不移动节点。
 pub fn advance_relation_force_layout(
-    relation_network: &mut RelationNetworkState,
+    relation_network: &mut RelationLayoutModel,
     now: Instant,
 ) -> Option<Duration> {
     if relation_network.layout_cache.visible_ids.len() < 2 {
@@ -291,7 +343,7 @@ pub fn advance_relation_force_layout(
 ///
 /// 群成员加载完成后，下一帧会立即执行一个 step 并重新建立固定间隔；不沿用暂停前的
 /// 截止时间，可以避免长时间加载后一次性追赶多个过期帧。
-pub fn pause_relation_force_layout(relation_network: &mut RelationNetworkState) {
+pub fn pause_relation_force_layout(relation_network: &mut RelationLayoutModel) {
     relation_network.layout_cache.force_next_tick_at = None;
 }
 
@@ -571,14 +623,14 @@ fn relation_force_link_length(
     }
 }
 
-fn relation_focused_node_id(relation_network: &RelationNetworkState) -> Option<&str> {
+fn relation_focused_node_id(relation_network: &RelationLayoutModel) -> Option<&str> {
     match &relation_network.view_mode {
         RelationViewMode::Focused(node_id) => Some(node_id.as_str()),
         _ => relation_network.focused_node_id.as_deref(),
     }
 }
 
-fn relation_multi_select_relationship_ids(relation_network: &RelationNetworkState) -> Vec<String> {
+fn relation_multi_select_relationship_ids(relation_network: &RelationLayoutModel) -> Vec<String> {
     if relation_network.selected_node_ids.is_empty() {
         return Vec::new();
     }
@@ -657,10 +709,7 @@ fn relation_multi_select_relationship_ids(relation_network: &RelationNetworkStat
 }
 
 /// 在关系图中按节点 ID 查找节点。
-pub fn relation_node_by_id<'a>(
-    graph: &'a RelationGraph,
-    id: &str,
-) -> Option<&'a RelationNode> {
+pub fn relation_node_by_id<'a>(graph: &'a RelationGraph, id: &str) -> Option<&'a RelationNode> {
     graph
         .node_index
         .get(id)
@@ -702,7 +751,7 @@ fn relation_node_kind_ordered_ids(graph: &RelationGraph, ids: HashSet<String>) -
 }
 
 fn relation_visible_ids_default(
-    relation_network: &RelationNetworkState,
+    relation_network: &RelationLayoutModel,
     query: &str,
 ) -> Vec<String> {
     relation_network
@@ -716,7 +765,7 @@ fn relation_visible_ids_default(
 }
 
 fn relation_visible_ids_from_focus(
-    relation_network: &RelationNetworkState,
+    relation_network: &RelationLayoutModel,
     focused: &str,
     query: &str,
 ) -> Vec<String> {
@@ -750,7 +799,7 @@ fn relation_visible_ids_from_focus(
     visible_ids
 }
 
-fn relation_view_limit(relation_network: &RelationNetworkState) -> usize {
+fn relation_view_limit(relation_network: &RelationLayoutModel) -> usize {
     if matches!(relation_network.view_mode, RelationViewMode::Focused(_)) {
         relation_network.render_setting.max_visible_nodes_focused
     } else {
@@ -758,7 +807,7 @@ fn relation_view_limit(relation_network: &RelationNetworkState) -> usize {
     }
 }
 
-fn relation_drawn_link_limit(relation_network: &RelationNetworkState) -> usize {
+fn relation_drawn_link_limit(relation_network: &RelationLayoutModel) -> usize {
     if matches!(relation_network.view_mode, RelationViewMode::Focused(_)) {
         relation_network.render_setting.max_drawn_links_focused
     } else {
@@ -913,12 +962,7 @@ pub struct RelationCanvasTransform {
 }
 
 impl RelationCanvasTransform {
-    pub fn new(
-        rect: egui::Rect,
-        zoom: f32,
-        pan: egui::Vec2,
-        layout_max_radius: f32,
-    ) -> Self {
+    pub fn new(rect: egui::Rect, zoom: f32, pan: egui::Vec2, layout_max_radius: f32) -> Self {
         let usable_rect = rect.shrink2(egui::vec2(54.0, 54.0));
         Self {
             center: usable_rect.center() + pan,

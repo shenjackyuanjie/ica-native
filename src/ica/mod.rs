@@ -2,7 +2,7 @@ use rust_socketio::asynchronous::{Client, ClientBuilder};
 use rust_socketio::{Payload, TransportType};
 
 use crate::StopGetter;
-use crate::cfg::IcaBridge;
+use crate::config::IcaBridge;
 
 use futures_util::future::BoxFuture;
 
@@ -13,12 +13,14 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 pub mod client;
 mod command;
+pub mod event;
 mod file_manager;
 mod handler;
+pub use command::{BridgeHandle, ICA_PROTOCOL_VERSION, IcaCommand};
 use command::{
     ConnectionSignal, MAX_RECONNECT_ATTEMPTS, emit_ui_event, payload_to_json, reconnect_delay,
 };
-pub use command::{ICA_PROTOCOL_VERSION, IcaClient, IcaCommand};
+pub use event::{BridgeEvent, BridgeEventKind};
 pub mod types;
 
 /// 启动 socketio client，并把服务端事件用 unbounded channel 发回 GUI 主线程
@@ -27,17 +29,18 @@ pub mod types;
 /*
  - stop_alrm: 停止信号（oneshot receiver 的别名 StopGetter）
  - bridge_cfg: 当前 bridge 的配置（包含 url 与 private_key）
- - ui_sender: 可选的 mpsc 发送者，用于把收到的事件发回 GUI（发送 serde_json::Value）
+ - event_tx: 类型化 bridge 事件发送端
 */
-pub async fn main(
+pub async fn run_bridge(
     stop_alrm: StopGetter,
     bridge_cfg: &IcaBridge,
-    event_tx: Option<UnboundedSender<JsonValue>>,
+    event_tx: UnboundedSender<BridgeEvent>,
     mut command_rx: UnboundedReceiver<IcaCommand>,
 ) -> anyhow::Result<()> {
     if !bridge_cfg.enable {
         return Ok(());
     }
+    let event_tx = Some(event_tx);
 
     // 这里的值都固定绑定到当前 bridge，后面注册回调时直接捕获它们。
     let bridge_key = if bridge_cfg.name.is_empty() {

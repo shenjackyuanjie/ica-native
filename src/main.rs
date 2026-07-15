@@ -3,7 +3,7 @@ use egui::IconData;
 
 pub mod app;
 pub mod assets;
-pub mod cfg;
+pub mod config;
 pub mod face_data;
 pub mod ica;
 pub mod image_loader;
@@ -53,11 +53,11 @@ fn main() -> anyhow::Result<()> {
 
 fn egui_main() -> anyhow::Result<()> {
     memory_probe::log("egui_main:start");
-    cfg::init_cfg();
+    let config_store = config::ConfigStore::load()?;
     memory_probe::log("cfg:init");
 
     // 获取一个 cfg 快照
-    let config = cfg::get_cfg_snapshot();
+    let config = config_store.snapshot();
     memory_probe::log("cfg:snapshot");
 
     let icon = {
@@ -91,23 +91,29 @@ fn egui_main() -> anyhow::Result<()> {
     eframe::run_native(
         "ica native",
         options,
-        Box::new(|cc| {
-            memory_probe::log("egui:creation_context");
-            // 安装 egui extra
-            egui_extras::install_image_loaders(&cc.egui_ctx);
-            memory_probe::log("egui:image_loaders");
-            // 安装图片统计加载器
-            image_loader::install_tracking_image_loader(&cc.egui_ctx);
-            memory_probe::log("egui:tracking_loader");
-            let app = app::IcaApp::new(cc);
-            memory_probe::log("app:new");
-            Ok(Box::new(app))
+        Box::new({
+            let config_store = config_store.clone();
+            move |cc| {
+                memory_probe::log("egui:creation_context");
+                // 安装 egui extra
+                egui_extras::install_image_loaders(&cc.egui_ctx);
+                memory_probe::log("egui:image_loaders");
+                // 安装图片统计加载器
+                image_loader::install_tracking_image_loader(
+                    &cc.egui_ctx,
+                    image_loader::ImageCacheSettings::from_config(&config_store.snapshot()),
+                );
+                memory_probe::log("egui:tracking_loader");
+                let app = app::IcaApp::new(cc, config_store.clone());
+                memory_probe::log("app:new");
+                Ok(Box::new(app))
+            }
         }),
     )
     .expect("error in eframe::run_native");
 
     memory_probe::log("egui_main:exit");
-    cfg::write_back_cfg()?;
+    config_store.save()?;
     memory_probe::log("cfg:write_back");
     Ok(())
 }

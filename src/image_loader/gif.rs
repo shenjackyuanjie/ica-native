@@ -200,6 +200,7 @@ impl ImageLoader for BoundedGifLoader {
         match ctx.try_load_bytes(image_uri) {
             Ok(BytesPoll::Pending { size }) => Ok(ImagePoll::Pending { size }),
             Ok(BytesPoll::Ready { bytes, .. }) => {
+                super::raw::remember(ctx, image_uri, bytes.as_ref());
                 if !has_gif_magic_header(&bytes) {
                     return Err(LoadError::FormatNotSupported {
                         detected_format: None,

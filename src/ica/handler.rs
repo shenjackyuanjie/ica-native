@@ -9,6 +9,8 @@ use serde_json::json;
 
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::ica::event::BridgeEvent;
+
 use crate::ica::types::message::SendMessage;
 
 use super::client;
@@ -45,7 +47,7 @@ fn ack_payload_first(payload: &Payload) -> Option<JsonValue> {
 async fn send_message(
     message: SendMessage,
     client: &Client,
-    event_tx: &Option<UnboundedSender<JsonValue>>,
+    event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
     api_base_url: &str,
 ) {
@@ -96,7 +98,7 @@ async fn send_message(
 pub(super) async fn handle_command(
     command: IcaCommand,
     client: &Client,
-    event_tx: &Option<UnboundedSender<JsonValue>>,
+    event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
     socket_url: &str,
     api_base_url: &str,

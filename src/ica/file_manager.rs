@@ -6,6 +6,8 @@ use rust_socketio::asynchronous::{Client, ClientBuilder};
 use rust_socketio::{Payload, TransportType};
 use serde_json::{Value as JsonValue, json};
 use tokio::sync::mpsc::UnboundedSender;
+
+use crate::ica::event::BridgeEvent;
 use tokio::sync::{Mutex, mpsc};
 
 use super::command::{emit_ui_event, json_preview};
@@ -32,7 +34,7 @@ fn ack_payload_first(payload: &Payload) -> Option<JsonValue> {
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn call_file_manager(
     main_client: &Client,
-    event_tx: &Option<UnboundedSender<JsonValue>>,
+    event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
     socket_url: &str,
     gin: i64,
