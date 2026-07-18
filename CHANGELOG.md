@@ -2,6 +2,17 @@
 
 本文件记录 ica-native 的变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格。
 
+## [0.1.8]
+
+### Added
+- 群聊标题新增群成员入口和可调整宽度的右侧管理面板，支持成员搜索、全部/禁言筛选、角色与剩余禁言时间展示，以及带确认的预设/自定义禁言和解除禁言。
+
+### Changed
+- 群禁言改用类型化 `SetGroupBan` 命令；无 ACK 的 Bridge 请求只提示“请求已发送”，约 1 秒后自动刷新并保留旧成员列表。`rust-socketio` 改为固定公开 fork revision，删除仓库内 vendor 副本。
+
+### Fixed
+- 群成员 ACK 增加独立 15 秒超时守卫，ACK 与超时通过原子完成标记竞争，避免断线时加载状态永久卡住或重复处理迟到响应。
+
 ## [0.1.7]
 
 ### Added

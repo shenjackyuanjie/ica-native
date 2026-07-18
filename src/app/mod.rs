@@ -309,6 +309,8 @@ impl IcaApp {
         self.chat_list_scroll_target = ChatListScrollTarget::Top;
         self.show_face_picker = false;
         self.show_mention_picker = false;
+        self.group_member_panel.open = false;
+        self.group_member_panel.confirmation = None;
         self.mention_search_query.clear();
         self.mention_search_focus_requested = false;
         self.mention_replace_trigger = false;
@@ -470,7 +472,9 @@ impl eframe::App for IcaApp {
         self.render_top_panel(ui);
         self.render_left_groups_panel(ui);
         self.render_chat_list_panel(ui);
+        self.render_group_members_panel(ui);
         self.render_central_panel(ui);
+        self.render_group_ban_confirmation(ui.ctx());
         self.render_windows(ui);
     }
 }

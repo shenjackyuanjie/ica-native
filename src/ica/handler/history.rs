@@ -228,19 +228,28 @@ pub(super) async fn fetch_group_members(
     bridge_key: &str,
     room_id: i64,
 ) {
+    let timeout = Duration::from_secs(15);
+    let completed = Arc::new(AtomicBool::new(false));
+    let completed_callback = completed.clone();
     let tx = event_tx.clone();
     let bridge_id = bridge_key.to_string();
+    let timeout_tx = event_tx.clone();
+    let timeout_bridge_id = bridge_key.to_string();
     let started_at = Instant::now();
     tracing::debug!(bridge = bridge_key, room_id, "fetchGroupMembers emitted");
-    if let Err(e) = client
+    match client
         .emit_with_ack(
             "getGroupMembers",
             vec![json!(room_id.abs())],
-            Duration::from_secs(15),
+            timeout,
             move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
                 let tx = tx.clone();
                 let bridge_id = bridge_id.clone();
+                let completed = completed_callback.clone();
                 Box::pin(async move {
+                    if completed.swap(true, Ordering::AcqRel) {
+                        return;
+                    }
                     let members = normalize_ack_list(ack_payload_values(&payload));
                     let member_count = members.as_array().map_or(0, Vec::len);
                     tracing::debug!(
@@ -265,17 +274,37 @@ pub(super) async fn fetch_group_members(
         )
         .await
     {
-        tracing::warn!(bridge = bridge_key, room_id, error = %e, "fetchGroupMembers failed");
-        emit_ui_event(
-            event_tx,
-            bridge_key,
-            "commandFailed",
-            json!({
-                "kind": "fetchGroupMembers",
-                "roomId": room_id,
-                "message": e.to_string(),
-            }),
-        );
+        Ok(()) => {
+            tokio::spawn(async move {
+                tokio::time::sleep(timeout).await;
+                if !completed.swap(true, Ordering::AcqRel) {
+                    emit_ui_event(
+                        &timeout_tx,
+                        &timeout_bridge_id,
+                        "commandFailed",
+                        json!({
+                            "kind": "fetchGroupMembers",
+                            "roomId": room_id,
+                            "message": "群成员列表 ACK 等待超时",
+                        }),
+                    );
+                }
+            });
+        }
+        Err(e) => {
+            completed.store(true, Ordering::Release);
+            tracing::warn!(bridge = bridge_key, room_id, error = %e, "fetchGroupMembers failed");
+            emit_ui_event(
+                event_tx,
+                bridge_key,
+                "commandFailed",
+                json!({
+                    "kind": "fetchGroupMembers",
+                    "roomId": room_id,
+                    "message": e.to_string(),
+                }),
+            );
+        }
     }
 }
 

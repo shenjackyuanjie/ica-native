@@ -14,6 +14,44 @@ use super::super::{
 };
 use super::{BridgeSession, ChatListScrollTarget, ImageViewerState};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GroupMemberFilter {
+    #[default]
+    All,
+    Muted,
+}
+
+#[derive(Debug, Clone)]
+pub struct GroupBanConfirmation {
+    pub room_id: i64,
+    pub target_id: i64,
+    pub target_name: String,
+    pub duration: u64,
+}
+
+#[derive(Debug)]
+pub struct GroupMemberPanelState {
+    pub open: bool,
+    pub search_query: String,
+    pub filter: GroupMemberFilter,
+    pub custom_duration: String,
+    pub error: Option<String>,
+    pub confirmation: Option<GroupBanConfirmation>,
+}
+
+impl Default for GroupMemberPanelState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            search_query: String::new(),
+            filter: GroupMemberFilter::All,
+            custom_duration: "600".to_string(),
+            error: None,
+            confirmation: None,
+        }
+    }
+}
+
 pub struct AppState {
     pub custom_chat: ChatAppearanceSettings,
     pub online_mode: OnlineMode,
@@ -55,6 +93,7 @@ pub struct AppState {
     pub sticker_picker_tab: StickerPickerTab,
     pub media_notice: Option<String>,
     pub media_error: Option<String>,
+    pub group_member_panel: GroupMemberPanelState,
 }
 
 impl AppState {
@@ -107,6 +146,7 @@ impl AppState {
             sticker_picker_tab: StickerPickerTab::default(),
             media_notice: None,
             media_error: None,
+            group_member_panel: GroupMemberPanelState::default(),
         }
     }
 }

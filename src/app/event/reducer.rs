@@ -610,6 +610,14 @@ impl IcaApp {
                     }
                 }
             }
+            "groupBanRequested" => {
+                let room_id = payload
+                    .get("roomId")
+                    .and_then(JsonValue::as_i64)
+                    .unwrap_or_default();
+                state.conversation_mut(room_id).loading_group_members = true;
+                state.last_notice = Some("群管理请求已发送，稍后刷新成员列表".to_string());
+            }
             "socketApiResponse" | "fileManagerResponse" => {
                 let response = Self::json_preview(payload, 1024);
                 state.last_socket_api_response = Some(response.clone());

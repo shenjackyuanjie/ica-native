@@ -13,6 +13,7 @@ use crate::ica::types::{
 
 /// icalingua 客户端的兼容版本号
 pub const ICA_PROTOCOL_VERSION: &str = "2.26.0";
+pub const GROUP_BAN_MAX_DURATION: u64 = 30 * 24 * 60 * 60;
 /// 自动重连最多尝试 5 次。
 pub(super) const MAX_RECONNECT_ATTEMPTS: usize = 5;
 /// 指数退避的等待时间上限，避免失败时越等越久。
@@ -38,6 +39,11 @@ pub enum IcaCommand {
     },
     FetchGroupMembers {
         room_id: RoomId,
+    },
+    SetGroupBan {
+        room_id: RoomId,
+        target_id: i64,
+        duration: u64,
     },
     GetSystemMsg,
     PinRoom {

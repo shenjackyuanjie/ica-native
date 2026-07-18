@@ -38,6 +38,22 @@ impl IcaApp {
                     if is_shut_up {
                         ui.colored_label(egui::Color32::YELLOW, "禁言中");
                     }
+                    if room_id < 0 {
+                        let icon = egui::Image::new(crate::assets::svg::CHAT_GROUP)
+                            .fit_to_exact_size(egui::vec2(18.0, 18.0))
+                            .alt_text("群成员");
+                        if ui
+                            .add_sized([30.0, 30.0], egui::Button::image(icon))
+                            .on_hover_text("群成员")
+                            .clicked()
+                        {
+                            self.group_member_panel.open = !self.group_member_panel.open;
+                            self.group_member_panel.confirmation = None;
+                            if self.group_member_panel.open {
+                                self.request_group_members(active_bridge_idx, room_id, true);
+                            }
+                        }
+                    }
                     if room_id < 0 && ui.button("群签到").clicked() {
                         self.send_group_sign(room_id);
                     }

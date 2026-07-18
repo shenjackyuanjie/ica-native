@@ -1,6 +1,6 @@
 [package]
 name = "ica-native"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2024"
 
 [dependencies]
@@ -32,7 +32,7 @@ image = { version = "0.25.10", default-features = false, features = [
 ] }
 toml = "1.1.3"
 
-rust_socketio = { path = "vendor/rust-socketio/socketio", default-features = false, features = [
+rust_socketio = { git = "https://github.com/shenjackyuanjie/rust-socketio.git", rev = "6c873fedc991295f28e8797f5116cbaa4f6bc696", default-features = false, features = [
     "async",
     "rustls-tls-native-roots",
 ] }

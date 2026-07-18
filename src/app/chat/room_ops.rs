@@ -29,10 +29,6 @@ impl IcaApp {
             return;
         }
         conversation.loading_group_members = true;
-        if force {
-            conversation.group_members.clear();
-            conversation.group_members_loaded = false;
-        }
         if let Err(e) =
             self.bridge_states[bridge_idx].send(IcaCommand::FetchGroupMembers { room_id })
         {
@@ -252,6 +248,16 @@ impl IcaApp {
 
     pub fn select_active_room(&mut self, room_id: RoomId) {
         self.show_face_picker = false;
+        let selected_room_changed = self
+            .active_bridge_state()
+            .is_none_or(|state| state.selected_room_id != Some(room_id));
+        if selected_room_changed {
+            self.group_member_panel.confirmation = None;
+        }
+        if room_id > 0 {
+            self.group_member_panel.open = false;
+            self.group_member_panel.confirmation = None;
+        }
         let mut should_request = false;
         let clear_search_on_room_select = self.clear_search_on_room_select;
         let auto_fetch_history_on_select = self.auto_fetch_history_on_room_select;
@@ -305,6 +311,14 @@ impl IcaApp {
                 room_id,
                 message_id: msg_id,
             });
+        }
+
+        if selected_room_changed
+            && room_id < 0
+            && self.group_member_panel.open
+            && let Some(bridge_idx) = self.active_bridge_idx
+        {
+            self.request_group_members(bridge_idx, room_id, true);
         }
     }
 }

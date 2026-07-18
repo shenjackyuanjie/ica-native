@@ -1,6 +1,8 @@
 use serde_json::{Value as JsonValue, json};
 
 use crate::app::IcaApp;
+use crate::app::state::GroupBanConfirmation;
+use crate::ica::GROUP_BAN_MAX_DURATION;
 
 #[derive(Debug, Clone)]
 pub struct GroupToolsState {
@@ -32,6 +34,11 @@ enum GroupToolAction {
         event: &'static str,
         args: Vec<JsonValue>,
         expect_ack: bool,
+    },
+    SetGroupBan {
+        group_id: i64,
+        target_id: i64,
+        duration: u64,
     },
     FillSelectedGroup,
 }
@@ -71,6 +78,24 @@ impl IcaApp {
                 expect_ack,
             } => {
                 self.send_socket_api_event(event, args, expect_ack);
+            }
+            GroupToolAction::SetGroupBan {
+                group_id,
+                target_id,
+                duration,
+            } => {
+                let Some(group_id) = group_id.checked_abs().filter(|group_id| *group_id > 0) else {
+                    if let Some(state) = self.active_bridge_state_mut() {
+                        state.last_error = Some("群号无效".to_string());
+                    }
+                    return;
+                };
+                self.group_member_panel.confirmation = Some(GroupBanConfirmation {
+                    room_id: -group_id,
+                    target_id,
+                    target_name: target_id.to_string(),
+                    duration,
+                });
             }
         }
     }
@@ -179,12 +204,20 @@ impl IcaApp {
                             Self::parse_group_tool_i64(&self.group_tools.member_id, "成员 QQ"),
                             Self::parse_group_tool_u64(&self.group_tools.ban_seconds, "禁言秒数"),
                         ) {
-                            (Ok(gin), Ok(uin), Ok(duration)) => {
-                                pending_action = Some(GroupToolAction::Call {
-                                    event: "setGroupBan",
-                                    args: vec![json!(gin), json!(uin), json!(duration)],
-                                    expect_ack: false,
+                            (Ok(gin), Ok(uin), Ok(duration))
+                                if (1..=GROUP_BAN_MAX_DURATION).contains(&duration) =>
+                            {
+                                pending_action = Some(GroupToolAction::SetGroupBan {
+                                    group_id: gin,
+                                    target_id: uin,
+                                    duration,
                                 });
+                            }
+                            (Ok(_), Ok(_), Ok(_)) => {
+                                pending_error = Some(format!(
+                                    "禁言秒数必须在 1..={} 之间",
+                                    GROUP_BAN_MAX_DURATION
+                                ));
                             }
                             (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
                                 pending_error = Some(e);
@@ -197,10 +230,10 @@ impl IcaApp {
                             Self::parse_group_tool_i64(&self.group_tools.member_id, "成员 QQ"),
                         ) {
                             (Ok(gin), Ok(uin)) => {
-                                pending_action = Some(GroupToolAction::Call {
-                                    event: "setGroupBan",
-                                    args: vec![json!(gin), json!(uin), json!(0)],
-                                    expect_ack: false,
+                                pending_action = Some(GroupToolAction::SetGroupBan {
+                                    group_id: gin,
+                                    target_id: uin,
+                                    duration: 0,
                                 });
                             }
                             (Err(e), _) | (_, Err(e)) => pending_error = Some(e),

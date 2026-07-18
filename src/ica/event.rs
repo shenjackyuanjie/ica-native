@@ -129,6 +129,7 @@ bridge_event_kinds! {
     CommandFailed => "commandFailed",
     SearchMessagesResponse => "searchMessagesResponse",
     GroupMembersResponse => "groupMembersResponse",
+    GroupBanRequested => "groupBanRequested",
     SocketApiResponse => "socketApiResponse",
     FileManagerResponse => "fileManagerResponse",
 }

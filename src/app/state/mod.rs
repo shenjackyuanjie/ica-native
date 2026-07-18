@@ -25,7 +25,7 @@ mod ui;
 
 pub use conversation::ConversationState;
 pub use session::{BridgeSession, ConnectionState, RoomDirectory};
-pub use ui::AppState;
+pub use ui::{AppState, GroupBanConfirmation, GroupMemberFilter};
 
 fn deserialize_string_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
@@ -46,6 +46,27 @@ where
     })
 }
 
+fn deserialize_i64_or_default<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(value) = Option::<JsonValue>::deserialize(deserializer)? else {
+        return Ok(0);
+    };
+    match value {
+        JsonValue::Null => Ok(0),
+        JsonValue::Number(value) => value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
+            .ok_or_else(|| serde::de::Error::custom("integer is outside i64 range")),
+        JsonValue::String(value) if value.trim().is_empty() => Ok(0),
+        JsonValue::String(value) => value.parse().map_err(serde::de::Error::custom),
+        _ => Err(serde::de::Error::custom(
+            "expected integer, integer string, or null",
+        )),
+    }
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct GroupMember {
     pub user_id: i64,
@@ -61,6 +82,8 @@ pub struct GroupMember {
     pub level: String,
     #[serde(default, deserialize_with = "deserialize_string_or_default")]
     pub role: String,
+    #[serde(default, deserialize_with = "deserialize_i64_or_default")]
+    pub shutup_time: i64,
 }
 
 impl GroupMember {
@@ -86,6 +109,83 @@ impl GroupMember {
             ]
             .iter()
             .any(|field| field.to_lowercase().contains(query))
+    }
+
+    pub fn is_muted_at(&self, timestamp: i64) -> bool {
+        self.shutup_time > timestamp
+    }
+
+    pub fn remaining_mute_seconds_at(&self, timestamp: i64) -> u64 {
+        u64::try_from(self.shutup_time.saturating_sub(timestamp)).unwrap_or(0)
+    }
+
+    pub fn role_rank(&self) -> u8 {
+        match self.role.trim().to_ascii_lowercase().as_str() {
+            "owner" => 2,
+            "admin" | "administrator" => 1,
+            _ => 0,
+        }
+    }
+
+    pub fn role_label(&self) -> Option<&'static str> {
+        match self.role_rank() {
+            2 => Some("群主"),
+            1 => Some("管理员"),
+            _ => None,
+        }
+    }
+
+    pub fn moderation_denial_reason(
+        actor: Option<&GroupMember>,
+        target: &GroupMember,
+        self_id: i64,
+    ) -> Option<&'static str> {
+        if target.user_id == self_id {
+            return Some("不能管理自己");
+        }
+        let Some(actor) = actor else {
+            return Some("成员列表中没有当前账号的权限信息");
+        };
+        if actor.role_rank() == 0 {
+            return Some("普通成员只能查看群成员");
+        }
+        if target.role_rank() >= actor.role_rank() {
+            return Some("不能管理同级或更高权限成员");
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod group_member_tests {
+    use serde_json::json;
+
+    use super::GroupMember;
+
+    fn member(user_id: i64, role: &str) -> GroupMember {
+        serde_json::from_value(json!({
+            "user_id": user_id,
+            "nickname": user_id.to_string(),
+            "role": role,
+            "shutup_time": 100,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn mute_boundary_and_moderation_permissions_match_group_roles() {
+        let owner = member(1, "owner");
+        let admin = member(2, "admin");
+        let regular = member(3, "member");
+
+        assert!(regular.is_muted_at(99));
+        assert!(!regular.is_muted_at(100));
+        assert_eq!(regular.remaining_mute_seconds_at(98), 2);
+        assert!(GroupMember::moderation_denial_reason(Some(&owner), &admin, 1).is_none());
+        assert!(GroupMember::moderation_denial_reason(Some(&admin), &regular, 2).is_none());
+        assert!(GroupMember::moderation_denial_reason(Some(&admin), &owner, 2).is_some());
+        assert!(GroupMember::moderation_denial_reason(Some(&regular), &admin, 3).is_some());
+        assert!(GroupMember::moderation_denial_reason(Some(&owner), &owner, 1).is_some());
     }
 }
 

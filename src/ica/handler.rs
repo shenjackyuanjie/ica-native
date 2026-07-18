@@ -14,7 +14,7 @@ use crate::ica::event::BridgeEvent;
 use crate::ica::types::message::SendMessage;
 
 use super::client;
-use super::command::{IcaCommand, emit_ui_event};
+use super::command::{GROUP_BAN_MAX_DURATION, IcaCommand, emit_ui_event};
 use super::file_manager::call_file_manager;
 
 mod file_upload;
@@ -125,6 +125,66 @@ pub(super) async fn handle_command(
         }
         IcaCommand::FetchGroupMembers { room_id } => {
             history::fetch_group_members(client, event_tx, bridge_key, room_id).await
+        }
+        IcaCommand::SetGroupBan {
+            room_id,
+            target_id,
+            duration,
+        } => {
+            let Some(group_id) = room_id
+                .checked_abs()
+                .filter(|_| room_id < 0 && duration <= GROUP_BAN_MAX_DURATION)
+            else {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "commandFailed",
+                    json!({
+                        "kind": "setGroupBan",
+                        "roomId": room_id,
+                        "message": "群禁言参数无效",
+                    }),
+                );
+                return;
+            };
+
+            if let Err(error) = client
+                .emit(
+                    "setGroupBan",
+                    vec![json!(group_id), json!(target_id), json!(duration)],
+                )
+                .await
+            {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "commandFailed",
+                    json!({
+                        "kind": "setGroupBan",
+                        "roomId": room_id,
+                        "message": error.to_string(),
+                    }),
+                );
+            } else {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "groupBanRequested",
+                    json!({
+                        "roomId": room_id,
+                        "targetId": target_id,
+                        "duration": duration,
+                    }),
+                );
+
+                let client = client.clone();
+                let event_tx = event_tx.clone();
+                let bridge_key = bridge_key.to_string();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    history::fetch_group_members(&client, &event_tx, &bridge_key, room_id).await;
+                });
+            }
         }
         IcaCommand::GetSystemMsg => {
             history::get_system_messages(client, event_tx, bridge_key).await

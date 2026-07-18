@@ -16,7 +16,7 @@ mod command;
 pub mod event;
 mod file_manager;
 mod handler;
-pub use command::{BridgeHandle, ICA_PROTOCOL_VERSION, IcaCommand};
+pub use command::{BridgeHandle, GROUP_BAN_MAX_DURATION, ICA_PROTOCOL_VERSION, IcaCommand};
 use command::{
     ConnectionSignal, MAX_RECONNECT_ATTEMPTS, emit_ui_event, payload_to_json, reconnect_delay,
 };
