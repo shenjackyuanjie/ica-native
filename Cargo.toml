@@ -32,7 +32,7 @@ image = { version = "0.25.10", default-features = false, features = [
 ] }
 toml = "1.1.3"
 
-rust_socketio = { git = "https://github.com/shenjackyuanjie/rust-socketio.git", rev = "6c873fedc991295f28e8797f5116cbaa4f6bc696", default-features = false, features = [
+rust_socketio = { git = "https://github.com/shenjackyuanjie/rust-socketio.git", rev = "4bdb04f7cb305a724590bcf580dff11df8f6a06b", default-features = false, features = [
     "async",
     "rustls-tls-native-roots",
 ] }
