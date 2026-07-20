@@ -57,6 +57,9 @@ impl IcaApp {
                 // 标题栏
                 ui.horizontal(|ui| {
                     ui.label("聊天列表");
+                    if ui.button("联系人").clicked() {
+                        self.open_contacts();
+                    }
                     if ui.button("刷新").clicked()
                         && let Some(bridge_idx) = self.active_bridge_idx
                         && let Some(room_id) = self

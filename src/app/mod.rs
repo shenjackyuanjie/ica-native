@@ -11,6 +11,7 @@ use rand::RngExt;
 pub mod auto_sign;
 mod chat;
 pub mod chat_groups;
+mod contacts;
 mod event;
 mod media;
 pub mod online_mode;
@@ -191,6 +192,10 @@ impl IcaApp {
                 unread_count: rng.random_range(0..100),
                 priority: rng.random_range(1..4),
                 utime: 1700000000 + rng.random_range(0..100000),
+                users: serde_json::json!([
+                    { "_id": 1, "username": "1" },
+                    { "_id": 2, "username": "2" }
+                ]),
                 at: match rng.random_range(0..5) {
                     0 => crate::ica::types::message::At::All,
                     1 => crate::ica::types::message::At::Bool(rng.random_bool(0.2)),

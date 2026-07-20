@@ -4,6 +4,7 @@
 //!
 //! https://github.com/shenjackyuanjie/icalingua-bridge-bot
 
+pub mod contact;
 pub mod files;
 pub mod message;
 pub mod online_data;

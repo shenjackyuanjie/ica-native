@@ -65,7 +65,11 @@ impl IcaApp {
             .cloned()
     }
 
-    fn selected_forward_messages(&self, bridge_idx: usize, room_id: RoomId) -> Vec<Message> {
+    pub(super) fn selected_forward_messages(
+        &self,
+        bridge_idx: usize,
+        room_id: RoomId,
+    ) -> Vec<Message> {
         let Some(state) = self.bridge_states.get(bridge_idx) else {
             return Vec::new();
         };
@@ -170,9 +174,11 @@ impl IcaApp {
     ) {
         if let Some(state) = self.active_bridge_state_mut() {
             state.replace_forward_selection(room_id, message_id);
+            state.forward_target_as_merged = true;
             state.forward_target_picker_open = open_picker;
             if open_picker {
                 state.forward_target_search_query.clear();
+                state.forward_target_room_ids.clear();
             }
         }
     }
@@ -207,11 +213,17 @@ impl IcaApp {
     }
 
     pub fn open_forward_target_picker(&mut self, room_id: RoomId) {
+        self.open_forward_target_picker_with_mode(room_id, false);
+    }
+
+    pub fn open_forward_target_picker_with_mode(&mut self, room_id: RoomId, merged: bool) {
         if let Some(state) = self.active_bridge_state_mut()
             && state.is_forward_selection_active(room_id)
         {
+            state.forward_target_as_merged = merged;
             state.forward_target_picker_open = true;
             state.forward_target_search_query.clear();
+            state.forward_target_room_ids.clear();
         }
     }
 
@@ -221,31 +233,73 @@ impl IcaApp {
         }
     }
 
-    pub fn forward_selected_messages_to_room(&mut self, target_room_id: RoomId) {
+    pub fn forward_selected_messages_to_rooms(&mut self, target_room_ids: Vec<RoomId>) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
         };
         let Some(source_room_id) = self.bridge_states[bridge_idx].forward_room_id else {
             return;
         };
+        let mut targets = Vec::new();
+        for room_id in target_room_ids {
+            if !targets.contains(&room_id) {
+                targets.push(room_id);
+            }
+        }
+        if targets.is_empty() {
+            return;
+        }
+
+        if self.bridge_states[bridge_idx].forward_target_as_merged {
+            let mut sent_targets = 0_usize;
+            for target_room_id in &targets {
+                if self.send_selected_messages_as_merged_forward(*target_room_id) {
+                    sent_targets += 1;
+                }
+            }
+            let failed_targets = targets.len() - sent_targets;
+            if failed_targets > 0 {
+                self.bridge_states[bridge_idx].last_error =
+                    Some(format!("有 {failed_targets} 个目标未能提交合并转发"));
+            }
+            if sent_targets > 0 {
+                self.bridge_states[bridge_idx].clear_forward_selection();
+            }
+            return;
+        }
         let messages = self.selected_forward_messages(bridge_idx, source_room_id);
         if messages.is_empty() {
             self.bridge_states[bridge_idx].clear_forward_selection();
             return;
         }
 
-        let mut failed = 0_usize;
-        for message in &messages {
-            if !self.send_message_clone_to_room(target_room_id, message) {
-                failed += 1;
+        let mut sent_targets = 0_usize;
+        let mut failed_messages = 0_usize;
+        for target_room_id in &targets {
+            let mut target_sent = false;
+            for message in &messages {
+                if self.send_message_clone_to_room(*target_room_id, message) {
+                    target_sent = true;
+                } else {
+                    failed_messages += 1;
+                }
+            }
+            if target_sent {
+                sent_targets += 1;
             }
         }
 
-        if failed > 0 {
+        if failed_messages > 0 {
             self.bridge_states[bridge_idx].last_error =
-                Some(format!("有 {} 条消息无法完整转发", failed));
+                Some(format!("有 {failed_messages} 条目标消息无法完整转发"));
         }
-        self.bridge_states[bridge_idx].clear_forward_selection();
+        if sent_targets > 0 {
+            self.bridge_states[bridge_idx].last_notice = Some(format!(
+                "已向 {sent_targets} 个会话提交逐条转发，共 {} 条消息",
+                messages.len()
+            ));
+            self.bridge_states[bridge_idx].clear_forward_selection();
+        }
     }
 
     pub fn save_chat_groups(&mut self) {

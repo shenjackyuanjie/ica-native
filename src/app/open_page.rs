@@ -21,6 +21,8 @@ pub struct AppOpenPage {
     pub raw_config: bool,
     /// 聊天分组编辑器
     pub chat_group_editor: bool,
+    /// 好友与群联系人
+    pub contacts: bool,
     /// 群/成员管理工具
     pub group_tools: bool,
     /// 账号/登录设备工具

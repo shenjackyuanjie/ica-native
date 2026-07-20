@@ -49,7 +49,8 @@ impl IcaApp {
         let mut clear_image = false;
         let mut clear_file = false;
         let mut clear_forward_selection = false;
-        let mut open_forward_picker = false;
+        let mut open_merged_forward_picker = false;
+        let mut open_individual_forward_picker = false;
         let mut plus_one_forward = false;
 
         let mut should_send = false;
@@ -76,8 +77,11 @@ impl IcaApp {
                     egui::Frame::group(ui.style()).show(ui, |ui| {
                         ui.horizontal_wrapped(|ui| {
                             ui.weak(format!("已选 {} 条消息", forward_selected_count));
+                            if ui.button("合并转发").clicked() {
+                                open_merged_forward_picker = true;
+                            }
                             if ui.button("逐条转发").clicked() {
-                                open_forward_picker = true;
+                                open_individual_forward_picker = true;
                             }
                             if ui.button("+1").clicked() {
                                 plus_one_forward = true;
@@ -740,7 +744,11 @@ impl IcaApp {
             self.clear_forward_selection();
         }
 
-        if open_forward_picker {
+        if open_merged_forward_picker {
+            self.open_forward_target_picker_with_mode(room_id, true);
+        }
+
+        if open_individual_forward_picker {
             self.open_forward_target_picker(room_id);
         }
 

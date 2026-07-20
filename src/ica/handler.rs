@@ -17,7 +17,9 @@ use super::client;
 use super::command::{GROUP_BAN_MAX_DURATION, IcaCommand, emit_ui_event};
 use super::file_manager::call_file_manager;
 
+mod contacts;
 mod file_upload;
+mod forward;
 mod history;
 mod http_send;
 mod message_payload;
@@ -189,6 +191,24 @@ pub(super) async fn handle_command(
         IcaCommand::GetSystemMsg => {
             history::get_system_messages(client, event_tx, bridge_key).await
         }
+        IcaCommand::FetchContacts { request_id } => {
+            contacts::fetch_contacts(client, event_tx, bridge_key, request_id).await
+        }
+        IcaCommand::AddRoom(room) => {
+            let room_id = room.room_id;
+            if let Err(error) = client.emit("addRoom", json!(room)).await {
+                emit_ui_event(
+                    event_tx,
+                    bridge_key,
+                    "commandFailed",
+                    json!({
+                        "kind": "addRoom",
+                        "roomId": room_id,
+                        "message": error.to_string(),
+                    }),
+                );
+            }
+        }
         IcaCommand::SendMessage(message) => {
             send_message(message, client, event_tx, bridge_key, api_base_url).await;
         }
@@ -343,6 +363,33 @@ pub(super) async fn handle_command(
                     }),
                 );
             }
+        }
+        IcaCommand::FetchForwardMessages {
+            request_id,
+            res_id,
+            file_name,
+        } => {
+            forward::fetch_forward_messages(
+                client, event_tx, bridge_key, request_id, res_id, file_name,
+            )
+            .await;
+        }
+        IcaCommand::SendMergedForward {
+            nodes,
+            direct_message,
+            origin,
+            target_room_id,
+        } => {
+            forward::send_merged_forward(
+                client,
+                event_tx,
+                bridge_key,
+                nodes,
+                direct_message,
+                origin,
+                target_room_id,
+            )
+            .await;
         }
         IcaCommand::SocketApiCall {
             event,

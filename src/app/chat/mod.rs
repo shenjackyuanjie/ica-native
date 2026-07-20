@@ -3,6 +3,7 @@ mod central_panel;
 mod clipboard;
 mod composer;
 mod composer_drop;
+mod forward;
 mod group_members;
 mod image_viewer;
 mod message_card;

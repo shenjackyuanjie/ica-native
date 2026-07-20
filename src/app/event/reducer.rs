@@ -3,6 +3,7 @@ use serde_json::Value as JsonValue;
 
 use crate::ica::BridgeEventKind;
 use crate::ica::types::{
+    contact::{FriendContact, GroupContact},
     message::{Message, NewMessage},
     online_data::OnlineData,
     room::{JoinRequestRoom, Room},
@@ -544,6 +545,79 @@ impl IcaApp {
                 }
                 state.last_error = Self::payload_message(payload);
             }
+            "contactsPartResponse" => {
+                let request_id = payload
+                    .get("requestId")
+                    .and_then(JsonValue::as_u64)
+                    .unwrap_or_default();
+                let part = payload
+                    .get("part")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or_default();
+                let Some(items) = payload.get("items") else {
+                    state
+                        .contacts
+                        .fail_part(request_id, part, "联系人响应缺少 items".to_string());
+                    return;
+                };
+
+                match part {
+                    "friends" => match Vec::<FriendContact>::deserialize(items) {
+                        Ok(mut friends) => {
+                            friends.sort_by_key(|friend| friend.uin);
+                            friends.dedup_by_key(|friend| friend.uin);
+                            friends.sort_by(|left, right| {
+                                left.display_name()
+                                    .to_lowercase()
+                                    .cmp(&right.display_name().to_lowercase())
+                                    .then(left.uin.cmp(&right.uin))
+                            });
+                            state.contacts.apply_friends(request_id, friends);
+                        }
+                        Err(error) => {
+                            let message = format!("好友列表解析失败: {error}");
+                            if state.contacts.fail_part(request_id, part, message.clone()) {
+                                state.last_error = Some(message);
+                            }
+                        }
+                    },
+                    "groups" => match Vec::<GroupContact>::deserialize(items) {
+                        Ok(mut groups) => {
+                            groups.sort_by_key(|group| group.group_id);
+                            groups.dedup_by_key(|group| group.group_id);
+                            groups.sort_by(|left, right| {
+                                left.display_name()
+                                    .to_lowercase()
+                                    .cmp(&right.display_name().to_lowercase())
+                                    .then(left.group_id.cmp(&right.group_id))
+                            });
+                            state.contacts.apply_groups(request_id, groups);
+                        }
+                        Err(error) => {
+                            let message = format!("群列表解析失败: {error}");
+                            if state.contacts.fail_part(request_id, part, message.clone()) {
+                                state.last_error = Some(message);
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+            }
+            "contactsPartFailed" => {
+                let request_id = payload
+                    .get("requestId")
+                    .and_then(JsonValue::as_u64)
+                    .unwrap_or_default();
+                let part = payload
+                    .get("part")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or_default();
+                let message =
+                    Self::payload_message(payload).unwrap_or_else(|| "联系人请求失败".to_string());
+                if state.contacts.fail_part(request_id, part, message.clone()) {
+                    state.last_error = Some(message);
+                }
+            }
             "searchMessagesResponse" => {
                 let room_id = payload
                     .get("roomId")
@@ -584,6 +658,45 @@ impl IcaApp {
                             .fail("搜索结果响应缺少 messages".to_string());
                     }
                 }
+            }
+            "forwardMessagesResponse" => {
+                let request_id = payload
+                    .get("requestId")
+                    .and_then(JsonValue::as_u64)
+                    .unwrap_or_default();
+                match payload.get("messages").map(Vec::<Message>::deserialize) {
+                    Some(Ok(messages)) => {
+                        state.forward_viewer.apply_response(request_id, messages);
+                    }
+                    Some(Err(error)) => {
+                        state
+                            .forward_viewer
+                            .fail(request_id, format!("合并转发内容解析失败: {error}"));
+                    }
+                    None => {
+                        state
+                            .forward_viewer
+                            .fail(request_id, "合并转发响应缺少 messages".to_string());
+                    }
+                }
+            }
+            "forwardMessagesFailed" => {
+                let request_id = payload
+                    .get("requestId")
+                    .and_then(JsonValue::as_u64)
+                    .unwrap_or_default();
+                state.forward_viewer.fail(
+                    request_id,
+                    Self::payload_message(payload)
+                        .unwrap_or_else(|| "查看合并转发失败".to_string()),
+                );
+            }
+            "forwardSendRequested" => {
+                let count = payload
+                    .get("count")
+                    .and_then(JsonValue::as_u64)
+                    .unwrap_or_default();
+                state.last_notice = Some(format!("已请求发送 {} 条消息的合并转发", count));
             }
             "groupMembersResponse" => {
                 let room_id = payload

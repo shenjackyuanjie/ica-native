@@ -621,6 +621,13 @@ impl IcaApp {
                     } => {
                         self.begin_forward_selection(room_id, message_id, true);
                     }
+                    MessageAction::OpenForward {
+                        res_id,
+                        file_name,
+                        inline_messages,
+                    } => {
+                        self.open_forward_reference(res_id, file_name, inline_messages);
+                    }
                     MessageAction::Image(action) => {
                         self.handle_image_action(ui.ctx(), active_bridge_idx, action);
                     }

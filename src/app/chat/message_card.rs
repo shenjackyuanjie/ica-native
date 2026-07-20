@@ -5,8 +5,8 @@ use crate::ica::types::RoomId;
 use egui::{Hyperlink, Image, Label};
 
 use super::{
-    format_message_content, image_url_looks_like_gif, is_image_file_type,
-    should_probe_gif_after_static_error, try_load_gif_texture,
+    format_message_content, forward::forward_reference, image_url_looks_like_gif,
+    is_image_file_type, should_probe_gif_after_static_error, try_load_gif_texture,
 };
 
 /// 解析消息内容中的 [Face: id] 标记，返回文本/表情片段
@@ -237,6 +237,7 @@ impl IcaApp {
     ) -> Option<MessageAction> {
         let is_self = self_id > 0 && message.sender_id == self_id;
         let formatted_content = format_message_content(&message.content);
+        let forward_reference = forward_reference(message, None);
         let message_is_hidden = (message.deleted || message.hide) && !message.reveal;
         let pure_text_mode = self.custom_chat.hide_group_member_avatar;
 
@@ -493,6 +494,17 @@ impl IcaApp {
                                         );
                                     }
 
+                                    if let Some(reference) = &forward_reference {
+                                        has_body = true;
+                                        if ui.button("查看合并转发").clicked() {
+                                            action = Some(MessageAction::OpenForward {
+                                                res_id: reference.res_id.clone(),
+                                                file_name: reference.file_name.clone(),
+                                                inline_messages: reference.inline_messages.clone(),
+                                            });
+                                        }
+                                    }
+
                                     if !has_body {
                                         ui.weak("[空消息]");
                                     }
@@ -571,6 +583,16 @@ impl IcaApp {
                                     action = Some(MessageAction::StartForward {
                                         room_id,
                                         message_id: message.msg_id.clone(),
+                                    });
+                                    ui.close();
+                                }
+                                if let Some(reference) = &forward_reference
+                                    && ui.button("查看合并转发").clicked()
+                                {
+                                    action = Some(MessageAction::OpenForward {
+                                        res_id: reference.res_id.clone(),
+                                        file_name: reference.file_name.clone(),
+                                        inline_messages: reference.inline_messages.clone(),
                                     });
                                     ui.close();
                                 }

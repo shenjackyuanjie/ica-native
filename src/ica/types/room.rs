@@ -3,6 +3,7 @@ use crate::ica::types::{
     message::{At, LastMessage},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 
 /// export default interface Room {
 ///     roomId: number
@@ -30,9 +31,9 @@ pub struct Room {
     pub unread_count: u64,
     pub priority: u8,
     pub utime: i64,
-    /// 我严重怀疑是脱裤子放屁
-    /// 历史遗留啊,那没事了()
-    // pub users: JsonValue,
+    /// Storage providers still persist this legacy field when adding a room.
+    #[serde(default)]
+    pub users: JsonValue,
     #[serde(default)]
     pub at: At,
     #[serde(rename = "lastMessage")]

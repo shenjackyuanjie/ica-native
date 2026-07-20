@@ -17,6 +17,7 @@ use serde_json::Value as JsonValue;
 use crate::config::ChatGroups;
 
 use super::SelectedChatGroup;
+use super::contacts::ContactDirectory;
 use super::media::{ImageAction, ImageSource};
 
 mod conversation;
@@ -349,6 +350,11 @@ pub enum MessageAction {
         room_id: RoomId,
         message_id: String,
     },
+    OpenForward {
+        res_id: String,
+        file_name: Option<String>,
+        inline_messages: Option<Vec<Message>>,
+    },
     ScrollToMessage {
         msg_id: String,
     },
@@ -412,6 +418,62 @@ pub struct MessageSearchState {
     pub loading: bool,
     pub has_more: bool,
     pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ForwardViewerState {
+    pub open: bool,
+    pub res_id: String,
+    pub file_name: String,
+    pub messages: Vec<Message>,
+    pub loading: bool,
+    pub last_error: Option<String>,
+    request_id: u64,
+}
+
+impl ForwardViewerState {
+    pub fn begin_request(&mut self, res_id: String, file_name: Option<String>) -> u64 {
+        self.request_id = self.request_id.wrapping_add(1).max(1);
+        self.open = true;
+        self.res_id = res_id;
+        self.file_name = file_name.unwrap_or_default();
+        self.messages.clear();
+        self.loading = true;
+        self.last_error = None;
+        self.request_id
+    }
+
+    pub fn apply_response(&mut self, request_id: u64, messages: Vec<Message>) {
+        if request_id != self.request_id {
+            return;
+        }
+        self.messages = messages;
+        self.loading = false;
+        self.last_error = None;
+    }
+
+    pub fn open_inline(
+        &mut self,
+        res_id: String,
+        file_name: Option<String>,
+        messages: Vec<Message>,
+    ) {
+        self.request_id = self.request_id.wrapping_add(1).max(1);
+        self.open = true;
+        self.res_id = res_id;
+        self.file_name = file_name.unwrap_or_default();
+        self.messages = messages;
+        self.loading = false;
+        self.last_error = None;
+    }
+
+    pub fn fail(&mut self, request_id: u64, error: String) {
+        if request_id != self.request_id {
+            return;
+        }
+        self.loading = false;
+        self.last_error = Some(error);
+    }
 }
 
 impl Default for MessageSearchState {
@@ -575,7 +637,12 @@ pub struct BridgeState {
     pub forward_selected_message_ids: Vec<String>,
     pub forward_target_picker_open: bool,
     pub forward_target_search_query: String,
+    pub forward_target_room_ids: Vec<RoomId>,
+    pub forward_target_as_merged: bool,
+    pub forward_viewer: ForwardViewerState,
     pub room_search_query: String,
+    /// Friends and groups fetched from this bridge for starting new chats.
+    pub contacts: ContactDirectory,
     /// 当前 bridge 的聊天记录搜索窗口状态。
     pub message_search: MessageSearchState,
 }
@@ -608,7 +675,11 @@ impl BridgeState {
             forward_selected_message_ids: Vec::new(),
             forward_target_picker_open: false,
             forward_target_search_query: String::new(),
+            forward_target_room_ids: Vec::new(),
+            forward_target_as_merged: true,
+            forward_viewer: ForwardViewerState::default(),
             room_search_query: String::new(),
+            contacts: ContactDirectory::default(),
             message_search: MessageSearchState::default(),
         }
     }
@@ -882,12 +953,32 @@ impl BridgeState {
         self.forward_selected_message_ids.clear();
         self.forward_target_picker_open = false;
         self.forward_target_search_query.clear();
+        self.forward_target_room_ids.clear();
+        self.forward_target_as_merged = true;
     }
 
     pub fn replace_forward_selection(&mut self, room_id: RoomId, message_id: String) {
         self.forward_room_id = Some(room_id);
         self.forward_selected_message_ids.clear();
         self.forward_selected_message_ids.push(message_id);
+        self.forward_target_room_ids.clear();
+    }
+
+    pub fn set_forward_target_selected(&mut self, room_id: RoomId, selected: bool) {
+        if selected {
+            if !self.forward_target_room_ids.contains(&room_id) {
+                self.forward_target_room_ids.push(room_id);
+            }
+        } else {
+            self.forward_target_room_ids
+                .retain(|target_room_id| *target_room_id != room_id);
+        }
+    }
+
+    pub fn add_forward_targets(&mut self, room_ids: impl IntoIterator<Item = RoomId>) {
+        for room_id in room_ids {
+            self.set_forward_target_selected(room_id, true);
+        }
     }
 
     pub fn toggle_forward_selection(&mut self, room_id: RoomId, message_id: String) {
@@ -913,8 +1004,9 @@ impl BridgeState {
 
 #[cfg(test)]
 mod tests {
-    use super::ImageViewerState;
+    use super::{BridgeState, ImageViewerState};
     use crate::app::media::ImageSource;
+    use crate::config::ChatGroups;
 
     #[test]
     fn image_viewer_navigates_within_gallery_and_resets_transform() {
@@ -942,5 +1034,20 @@ mod tests {
         assert_eq!(viewer.current_source(), second);
         assert!(viewer.navigate(-1));
         assert_eq!(viewer.current_source(), first);
+    }
+
+    #[test]
+    fn forward_targets_support_multiple_rooms_without_duplicates() {
+        let mut state = BridgeState::new("test".to_string(), ChatGroups::default());
+        state.replace_forward_selection(-100, "m1".to_string());
+
+        state.add_forward_targets([10001, -200, 10001]);
+        assert_eq!(state.forward_target_room_ids, vec![10001, -200]);
+
+        state.set_forward_target_selected(10001, false);
+        assert_eq!(state.forward_target_room_ids, vec![-200]);
+
+        state.replace_forward_selection(-300, "m2".to_string());
+        assert!(state.forward_target_room_ids.is_empty());
     }
 }

@@ -9,6 +9,7 @@ use super::event::BridgeEvent;
 use crate::ica::types::{
     RoomId,
     message::{DeleteMessage, Mention, ReplyMessage, SendMessage},
+    room::Room,
 };
 
 /// icalingua 客户端的兼容版本号
@@ -46,6 +47,10 @@ pub enum IcaCommand {
         duration: u64,
     },
     GetSystemMsg,
+    FetchContacts {
+        request_id: u64,
+    },
+    AddRoom(Room),
     PinRoom {
         room_id: RoomId,
         pin: bool,
@@ -107,6 +112,17 @@ pub enum IcaCommand {
         room_id: RoomId,
         keyword: String,
         offset: usize,
+    },
+    FetchForwardMessages {
+        request_id: u64,
+        res_id: String,
+        file_name: Option<String>,
+    },
+    SendMergedForward {
+        nodes: Vec<JsonValue>,
+        direct_message: bool,
+        origin: Option<i64>,
+        target_room_id: RoomId,
     },
     SocketApiCall {
         event: String,
