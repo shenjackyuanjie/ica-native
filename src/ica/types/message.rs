@@ -244,7 +244,7 @@ impl<'de> Deserialize<'de> for Message {
         let time = json
             .get("time")
             .and_then(|v| v.as_i64())
-            .map(|t| DateTime::from_timestamp_micros(t).unwrap_or(current))
+            .and_then(parse_bridge_timestamp)
             .unwrap_or(current);
         let time_text = time.format("%H:%M:%S").to_string();
 
@@ -371,6 +371,17 @@ impl<'de> Deserialize<'de> for Message {
     }
 }
 
+fn parse_bridge_timestamp(value: i64) -> Option<DateTime<chrono::Utc>> {
+    let magnitude = value.unsigned_abs();
+    if magnitude >= 100_000_000_000_000 {
+        DateTime::from_timestamp_micros(value)
+    } else if magnitude >= 100_000_000_000 {
+        DateTime::from_timestamp_millis(value)
+    } else {
+        DateTime::from_timestamp(value, 0)
+    }
+}
+
 fn retain_raw_message_chain(json: &JsonValue) -> Option<Box<JsonValue>> {
     let raw = json.get("message").unwrap_or(json);
     match raw {
@@ -437,6 +448,28 @@ impl NewMessage {
             room_id: self.room_id,
             message_id: self.msg.msg_id.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::Message;
+
+    #[test]
+    fn message_time_accepts_bridge_millisecond_timestamps() {
+        let message: Message = serde_json::from_value(json!({
+            "_id": "m1",
+            "senderId": 10001,
+            "username": "Alice",
+            "content": "hello",
+            "time": 1_710_000_000_000_i64,
+            "files": [],
+        }))
+        .unwrap();
+
+        assert_eq!(message.time.timestamp(), 1_710_000_000);
     }
 }
 
