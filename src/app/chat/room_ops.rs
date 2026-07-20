@@ -252,6 +252,11 @@ impl IcaApp {
             .active_bridge_state()
             .is_none_or(|state| state.selected_room_id != Some(room_id));
         if selected_room_changed {
+            self.show_mention_picker = false;
+            self.mention_search_query.clear();
+            self.mention_search_focus_requested = false;
+            self.mention_replace_trigger = false;
+            self.mention_selected_index = 0;
             self.group_member_panel.confirmation = None;
         }
         if room_id > 0 {

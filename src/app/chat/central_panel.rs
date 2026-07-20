@@ -182,12 +182,7 @@ impl IcaApp {
                 + if has_reply_banner { 54.0 } else { 0.0 }
                 + if has_pending_image { 144.0 } else { 0.0 }
                 + if has_pending_file { 54.0 } else { 0.0 }
-                + if self.show_face_picker { 220.0 } else { 0.0 }
-                + if self.show_mention_picker && room_id < 0 {
-                    240.0
-                } else {
-                    0.0
-                };
+                + if self.show_face_picker { 220.0 } else { 0.0 };
             let message_list_height = (ui.available_height() - composer_reserved_height).max(120.0);
             let mut pending_action = None;
             let pure_text_mode = self.custom_chat.hide_group_member_avatar;

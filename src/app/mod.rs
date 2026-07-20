@@ -319,6 +319,7 @@ impl IcaApp {
         self.mention_search_query.clear();
         self.mention_search_focus_requested = false;
         self.mention_replace_trigger = false;
+        self.mention_selected_index = 0;
     }
 
     fn poll_socketio_events(&mut self, ctx: &egui::Context) {
@@ -458,17 +459,30 @@ impl eframe::App for IcaApp {
         self.poll_socketio_events(ui.ctx());
         self.tick_auto_sign(ui.ctx());
 
-        // 检测 ESC 键取消选择
-        if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape))
-            && let Some(state) = self.active_bridge_state_mut()
-        {
-            if state.forward_target_picker_open {
-                state.forward_target_picker_open = false;
-            } else if let Some(room_id) = state.selected_room_id {
-                if state.is_forward_selection_active(room_id) {
-                    state.clear_forward_selection();
-                } else {
-                    state.selected_room_id = None;
+        // ESC 优先关闭输入区弹层，再处理会话内的选择状态。
+        if ui.ctx().input(|input| input.key_pressed(egui::Key::Escape)) {
+            if self.show_mention_picker {
+                self.show_mention_picker = false;
+                self.mention_search_query.clear();
+                self.mention_search_focus_requested = false;
+                self.mention_replace_trigger = false;
+                self.mention_selected_index = 0;
+                if let Some(bridge_idx) = self.active_bridge_idx
+                    && let Some(room_id) = self.bridge_states[bridge_idx].selected_room_id
+                {
+                    let composer_id = egui::Id::new(("message_composer", bridge_idx, room_id));
+                    ui.ctx()
+                        .memory_mut(|memory| memory.request_focus(composer_id));
+                }
+            } else if let Some(state) = self.active_bridge_state_mut() {
+                if state.forward_target_picker_open {
+                    state.forward_target_picker_open = false;
+                } else if let Some(room_id) = state.selected_room_id {
+                    if state.is_forward_selection_active(room_id) {
+                        state.clear_forward_selection();
+                    } else {
+                        state.selected_room_id = None;
+                    }
                 }
             }
         }
