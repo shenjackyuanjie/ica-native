@@ -1796,6 +1796,7 @@ dependencies = [
  "rand 0.10.2",
  "reqwest",
  "rfd",
+ "roxmltree",
  "rust_socketio",
  "serde",
  "serde_json",

@@ -8,6 +8,7 @@ pub(super) struct ForwardReference {
     pub res_id: String,
     pub file_name: Option<String>,
     pub inline_messages: Option<Vec<Message>>,
+    pub preview: Vec<String>,
 }
 
 fn marker_value(content: &str, marker: &str) -> Option<String> {
@@ -32,6 +33,76 @@ fn code_res_id(code: &JsonValue) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn push_preview_line(lines: &mut Vec<String>, value: &str) {
+    let value = value.trim();
+    if !value.is_empty() && lines.last().is_none_or(|line| line != value) {
+        lines.push(value.to_string());
+    }
+}
+
+fn json_forward_preview(code: &JsonValue) -> Vec<String> {
+    let Some(value) = code_as_json(code) else {
+        return Vec::new();
+    };
+    let Some(detail) = value.pointer("/meta/detail") else {
+        return Vec::new();
+    };
+    let mut lines = Vec::new();
+    if let Some(source) = detail.get("source").and_then(JsonValue::as_str) {
+        push_preview_line(&mut lines, source);
+    }
+    if let Some(news) = detail.get("news").and_then(JsonValue::as_array) {
+        for item in news {
+            if let Some(text) = item.get("text").and_then(JsonValue::as_str) {
+                push_preview_line(&mut lines, text);
+            }
+        }
+    }
+    lines
+}
+
+fn xml_forward_preview(xml: &str) -> Vec<String> {
+    fn title_lines(document: &roxmltree::Document<'_>) -> Vec<String> {
+        let mut lines = Vec::new();
+        for title in document
+            .descendants()
+            .filter(|node| node.has_tag_name("title"))
+        {
+            if let Some(text) = title.text() {
+                push_preview_line(&mut lines, text);
+            }
+        }
+        lines
+    }
+
+    if let Ok(document) = roxmltree::Document::parse(xml) {
+        return title_lines(&document);
+    }
+    let wrapped = format!("<item>{xml}</item>");
+    roxmltree::Document::parse(&wrapped)
+        .map(|document| title_lines(&document))
+        .unwrap_or_default()
+}
+
+fn forward_preview(code: &JsonValue) -> Vec<String> {
+    let json_preview = json_forward_preview(code);
+    if !json_preview.is_empty() {
+        return json_preview;
+    }
+    code.as_str().map(xml_forward_preview).unwrap_or_default()
+}
+
+pub(super) fn render_forward_preview(ui: &mut egui::Ui, reference: &ForwardReference) {
+    const MAX_VISIBLE_LINES: usize = 4;
+
+    for line in reference.preview.iter().take(MAX_VISIBLE_LINES) {
+        ui.weak(line);
+    }
+    if reference.preview.len() > MAX_VISIBLE_LINES {
+        ui.weak("...");
+    }
+}
+
 fn inline_forward_messages(code: &JsonValue) -> Option<Vec<Message>> {
     let value = code_as_json(code)?;
     let JsonValue::Array(items) = value else {
@@ -53,6 +124,7 @@ pub(super) fn forward_reference(
             res_id,
             file_name: None,
             inline_messages: inline_forward_messages(&message.code),
+            preview: forward_preview(&message.code),
         });
     }
 
@@ -62,6 +134,7 @@ pub(super) fn forward_reference(
         res_id,
         file_name: Some(file_name),
         inline_messages: inline_forward_messages(&message.code),
+        preview: forward_preview(&message.code),
     })
 }
 
@@ -304,11 +377,16 @@ impl IcaApp {
                                     .inner_margin(6.0)
                                     .show(ui, |ui| {
                                         ui.weak(format!("回复 {}", reply.sender_name));
-                                        ui.label(super::format_message_content(&reply.content));
+                                        super::message_card::render_rich_content(
+                                            ui,
+                                            &reply.content,
+                                        );
                                     });
                             }
-                            if !message.content.trim().is_empty() {
-                                ui.label(super::format_message_content(&message.content));
+                            let has_visible_content =
+                                super::message_card::has_visible_rich_content(&message.content);
+                            if has_visible_content {
+                                super::message_card::render_rich_content(ui, &message.content);
                             }
                             for file in &message.files {
                                 if (file.file_type == "image"
@@ -329,9 +407,17 @@ impl IcaApp {
                             }
                             if let Some(reference) =
                                 forward_reference(message, Some(&parent_res_id))
-                                && ui.button("查看内层合并转发").clicked()
                             {
-                                nested_reference = Some(reference);
+                                if !has_visible_content {
+                                    render_forward_preview(ui, &reference);
+                                }
+                                let mut response = ui.button("查看内层合并转发");
+                                if !reference.preview.is_empty() {
+                                    response = response.on_hover_text(reference.preview.join("\n"));
+                                }
+                                if response.clicked() {
+                                    nested_reference = Some(reference);
+                                }
                             }
                         });
                         ui.add_space(6.0);

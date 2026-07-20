@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::app::media::{ImageAction, ImageSource};
 use crate::app::{IcaApp, MessageAction};
 use crate::ica::types::RoomId;
@@ -9,62 +11,154 @@ use super::{
     is_image_file_type, should_probe_gif_after_static_error, try_load_gif_texture,
 };
 
-/// 解析消息内容中的 [Face: id] 标记，返回文本/表情片段
+const AT_OPEN_TAG: &str = "<IcalinguaAt qq=";
+const AT_CLOSE_TAG: &str = "</IcalinguaAt>";
+const FACE_OPEN_TAG: &str = "[Face: ";
+const FORWARD_OPEN_TAG: &str = "[Forward: ";
+const NESTED_FORWARD_OPEN_TAG: &str = "[NestedForward: ";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContentMarker {
+    Face,
+    Mention,
+    Forward,
+    NestedForward,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 enum ContentSegment<'a> {
     Text(&'a str),
     Face(u16),
+    Mention { user_id: i64, text: Cow<'a, str> },
+    Control,
 }
 
-fn parse_face_segments(content: &str) -> Vec<ContentSegment<'_>> {
+fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
     let mut segments = Vec::new();
     let mut remaining = content;
-    while let Some(start) = remaining.find("[Face: ") {
+
+    while !remaining.is_empty() {
+        let Some((start, marker)) = [
+            (remaining.find(FACE_OPEN_TAG), ContentMarker::Face),
+            (remaining.find(AT_OPEN_TAG), ContentMarker::Mention),
+            (remaining.find(FORWARD_OPEN_TAG), ContentMarker::Forward),
+            (
+                remaining.find(NESTED_FORWARD_OPEN_TAG),
+                ContentMarker::NestedForward,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(index, marker)| index.map(|index| (index, marker)))
+        .min_by_key(|(index, _)| *index) else {
+            segments.push(ContentSegment::Text(remaining));
+            break;
+        };
+
         if start > 0 {
             segments.push(ContentSegment::Text(&remaining[..start]));
+            remaining = &remaining[start..];
         }
-        let after = &remaining[start + 7..]; // 跳过 "[Face: "
-        if let Some(end) = after.find(']') {
-            let id_str = &after[..end];
-            if let Ok(id) = id_str.parse::<u16>() {
-                if crate::face_data::has_face(id) {
-                    segments.push(ContentSegment::Face(id));
-                } else {
-                    // 没有对应的表情文件，保留原文
-                    segments.push(ContentSegment::Text(&remaining[..start + 7 + end + 1]));
-                }
+
+        if marker == ContentMarker::Mention {
+            let Some(tag_end) = remaining.find('>') else {
+                segments.push(ContentSegment::Text(remaining));
+                break;
+            };
+            let body = &remaining[tag_end + 1..];
+            let Some(close) = body.find(AT_CLOSE_TAG) else {
+                segments.push(ContentSegment::Text(remaining));
+                break;
+            };
+            let full_len = tag_end + 1 + close + AT_CLOSE_TAG.len();
+            let user_id = remaining[AT_OPEN_TAG.len()..tag_end]
+                .parse::<i64>()
+                .ok()
+                .filter(|user_id| *user_id > 0);
+            let encoded_text = &body[..close];
+            if let Some(user_id) = user_id
+                && !encoded_text.is_empty()
+            {
+                let text = urlencoding::decode(encoded_text).unwrap_or(Cow::Borrowed(encoded_text));
+                segments.push(ContentSegment::Mention { user_id, text });
             } else {
-                segments.push(ContentSegment::Text(&remaining[..start + 7 + end + 1]));
+                segments.push(ContentSegment::Text(&remaining[..full_len]));
             }
-            remaining = &after[end + 1..];
-        } else {
-            segments.push(ContentSegment::Text(remaining));
-            return segments;
+            remaining = &remaining[full_len..];
+            continue;
         }
+
+        if matches!(
+            marker,
+            ContentMarker::Forward | ContentMarker::NestedForward
+        ) {
+            let open_tag = if marker == ContentMarker::Forward {
+                FORWARD_OPEN_TAG
+            } else {
+                NESTED_FORWARD_OPEN_TAG
+            };
+            let after = &remaining[open_tag.len()..];
+            let Some(end) = after.find(']') else {
+                segments.push(ContentSegment::Text(remaining));
+                break;
+            };
+            let full_len = open_tag.len() + end + 1;
+            if after[..end].trim().is_empty() {
+                segments.push(ContentSegment::Text(&remaining[..full_len]));
+            } else {
+                segments.push(ContentSegment::Control);
+            }
+            remaining = &remaining[full_len..];
+            continue;
+        }
+
+        let after = &remaining[FACE_OPEN_TAG.len()..];
+        let Some(end) = after.find(']') else {
+            segments.push(ContentSegment::Text(remaining));
+            break;
+        };
+        let full_len = FACE_OPEN_TAG.len() + end + 1;
+        if let Ok(id) = after[..end].parse::<u16>()
+            && crate::face_data::has_face(id)
+        {
+            segments.push(ContentSegment::Face(id));
+        } else {
+            segments.push(ContentSegment::Text(&remaining[..full_len]));
+        }
+        remaining = &remaining[full_len..];
     }
-    if !remaining.is_empty() {
-        segments.push(ContentSegment::Text(remaining));
-    }
+
     segments
 }
 
-/// 渲染包含 [Face: id] 的消息内容，将表情替换为内联图片
-fn render_rich_content(ui: &mut egui::Ui, content: &str) {
-    if !content.contains("[Face: ") {
-        ui.add(Label::new(content).wrap());
-        return;
+pub(super) fn has_visible_rich_content(content: &str) -> bool {
+    parse_content_segments(content)
+        .iter()
+        .any(|segment| match segment {
+            ContentSegment::Text(text) => !text.trim().is_empty(),
+            ContentSegment::Face(_) | ContentSegment::Mention { .. } => true,
+            ContentSegment::Control => false,
+        })
+}
+
+fn render_rich_content_with_prefix(
+    ui: &mut egui::Ui,
+    prefix: Option<egui::RichText>,
+    content: &str,
+) -> egui::Response {
+    let segments = parse_content_segments(content);
+    let has_special_segment = segments
+        .iter()
+        .any(|segment| !matches!(segment, ContentSegment::Text(_)));
+    if prefix.is_none() && !has_special_segment {
+        return ui.add(Label::new(content).wrap());
     }
 
-    let segments = parse_face_segments(content);
-    let has_face = segments
-        .iter()
-        .any(|s| matches!(s, ContentSegment::Face(_)));
-    if !has_face {
-        // 纯文本，直接用 Label
-        ui.add(Label::new(content).wrap());
-        return;
-    }
     let face_size = 24.0;
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        if let Some(prefix) = prefix {
+            ui.add(Label::new(prefix).wrap());
+        }
         for seg in &segments {
             match seg {
                 ContentSegment::Text(text) => {
@@ -83,9 +177,31 @@ fn render_rich_content(ui: &mut egui::Ui, content: &str) {
                         }
                     }
                 }
+                ContentSegment::Mention { user_id, text } => {
+                    let response = ui.add(
+                        Label::new(
+                            egui::RichText::new(text.as_ref())
+                                .color(ui.visuals().hyperlink_color)
+                                .strong(),
+                        )
+                        .wrap(),
+                    );
+                    if *user_id == 1 {
+                        response.on_hover_text("@全体成员");
+                    } else {
+                        response.on_hover_text(format!("QQ: {user_id}"));
+                    }
+                }
+                ContentSegment::Control => {}
             }
         }
-    });
+    })
+    .response
+}
+
+/// 渲染消息正文中的 QQ 表情和 @ 成员标记。
+pub(super) fn render_rich_content(ui: &mut egui::Ui, content: &str) -> egui::Response {
+    render_rich_content_with_prefix(ui, None, content)
 }
 
 /// 渲染消息中的图片缩略图并返回统一图片动作。
@@ -392,20 +508,21 @@ impl IcaApp {
                                     }
 
                                     if let Some(reply) = &message.reply {
-                                        let formatted_reply_content =
-                                            format_message_content(&reply.content);
                                         let reply_msg_id = reply.msg_id.clone();
                                         if pure_text_mode {
-                                            let label = Label::new(format!(
-                                                "回复 {}: {}",
-                                                reply.sender_name, formatted_reply_content
+                                            let prefix = egui::RichText::new(format!(
+                                                "回复 {}: ",
+                                                reply.sender_name
                                             ))
-                                            .wrap()
-                                            .sense(egui::Sense::click());
-                                            if ui
-                                                .add(label)
-                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                .clicked()
+                                            .color(ui.visuals().weak_text_color());
+                                            if render_rich_content_with_prefix(
+                                                ui,
+                                                Some(prefix),
+                                                &reply.content,
+                                            )
+                                            .interact(egui::Sense::click())
+                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                            .clicked()
                                             {
                                                 action = Some(MessageAction::ScrollToMessage {
                                                     msg_id: reply_msg_id,
@@ -415,12 +532,7 @@ impl IcaApp {
                                             let reply_resp =
                                                 egui::Frame::group(ui.style()).show(ui, |ui| {
                                                     ui.weak(format!("回复 {}", reply.sender_name));
-                                                    ui.add(
-                                                        Label::new(
-                                                            formatted_reply_content.as_ref(),
-                                                        )
-                                                        .wrap(),
-                                                    );
+                                                    render_rich_content(ui, &reply.content);
                                                 });
                                             if reply_resp
                                                 .response
@@ -437,9 +549,11 @@ impl IcaApp {
 
                                     let mut has_body = false;
 
-                                    if !formatted_content.is_empty() {
+                                    let has_visible_content =
+                                        has_visible_rich_content(&message.content);
+                                    if has_visible_content {
                                         has_body = true;
-                                        render_rich_content(ui, formatted_content.as_ref());
+                                        render_rich_content(ui, &message.content);
                                     }
 
                                     if !message.files.is_empty() {
@@ -496,7 +610,15 @@ impl IcaApp {
 
                                     if let Some(reference) = &forward_reference {
                                         has_body = true;
-                                        if ui.button("查看合并转发").clicked() {
+                                        if !has_visible_content {
+                                            super::forward::render_forward_preview(ui, reference);
+                                        }
+                                        let mut response = ui.button("查看合并转发");
+                                        if !reference.preview.is_empty() {
+                                            response = response
+                                                .on_hover_text(reference.preview.join("\n"));
+                                        }
+                                        if response.clicked() {
                                             action = Some(MessageAction::OpenForward {
                                                 res_id: reference.res_id.clone(),
                                                 file_name: reference.file_name.clone(),

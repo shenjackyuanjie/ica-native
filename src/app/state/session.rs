@@ -11,6 +11,30 @@ use crate::ica::{BridgeHandle, IcaCommand};
 
 use super::{AuthState, BridgeState, SelectedChatGroup, SocketState, VisibleRoomIndicesCache};
 
+const STATUS_HISTORY_LIMIT: usize = 100;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusMessageKind {
+    Error,
+    Notice,
+}
+
+impl StatusMessageKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Error => "错误",
+            Self::Notice => "消息",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusMessage {
+    pub timestamp: String,
+    pub kind: StatusMessageKind,
+    pub text: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct ConnectionState {
     pub bridge_key: String,
@@ -20,6 +44,9 @@ pub struct ConnectionState {
     pub is_shut_up: bool,
     pub last_error: Option<String>,
     pub last_notice: Option<String>,
+    pub status_history: Vec<StatusMessage>,
+    observed_error: Option<String>,
+    observed_notice: Option<String>,
     pub last_socket_api_response: Option<String>,
     pub setup_requested: Option<String>,
     pub fatal_error: Option<String>,
@@ -36,10 +63,54 @@ impl ConnectionState {
             is_shut_up: false,
             last_error: None,
             last_notice: None,
+            status_history: Vec::new(),
+            observed_error: None,
+            observed_notice: None,
             last_socket_api_response: None,
             setup_requested: None,
             fatal_error: None,
             last_event: None,
+        }
+    }
+
+    pub fn sync_status_history(&mut self) {
+        if self.last_error != self.observed_error {
+            self.observed_error = self.last_error.clone();
+            if let Some(message) = self.last_error.clone() {
+                self.push_status(StatusMessageKind::Error, message);
+            }
+        }
+        if self.last_notice != self.observed_notice {
+            self.observed_notice = self.last_notice.clone();
+            if let Some(message) = self.last_notice.clone() {
+                self.push_status(StatusMessageKind::Notice, message);
+            }
+        }
+    }
+
+    pub fn clear_error(&mut self) {
+        self.last_error = None;
+        self.observed_error = None;
+    }
+
+    pub fn clear_notice(&mut self) {
+        self.last_notice = None;
+        self.observed_notice = None;
+    }
+
+    pub fn clear_status_history(&mut self) {
+        self.status_history.clear();
+    }
+
+    fn push_status(&mut self, kind: StatusMessageKind, text: String) {
+        self.status_history.push(StatusMessage {
+            timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            kind,
+            text,
+        });
+        if self.status_history.len() > STATUS_HISTORY_LIMIT {
+            let overflow = self.status_history.len() - STATUS_HISTORY_LIMIT;
+            self.status_history.drain(..overflow);
         }
     }
 }

@@ -15,8 +15,10 @@ impl IcaApp {
             let bridge_key = self.bridge_states[active_bridge_idx].bridge_key.clone();
             let socket_state = self.bridge_states[active_bridge_idx].socket_state;
             let auth_state = self.bridge_states[active_bridge_idx].auth_state;
+            self.bridge_states[active_bridge_idx].sync_status_history();
             let last_error = self.bridge_states[active_bridge_idx].last_error.clone();
             let last_notice = self.bridge_states[active_bridge_idx].last_notice.clone();
+            let status_history = self.bridge_states[active_bridge_idx].status_history.clone();
             let is_shut_up = self.bridge_states[active_bridge_idx].is_shut_up;
             let selected_room_id = self.bridge_states[active_bridge_idx].selected_room_id;
 
@@ -80,11 +82,65 @@ impl IcaApp {
                 });
             }
 
+            let mut clear_error = false;
+            let mut clear_notice = false;
+            let mut clear_status_history = false;
             if let Some(last_error) = last_error {
-                ui.colored_label(egui::Color32::LIGHT_RED, last_error);
+                ui.horizontal_wrapped(|ui| {
+                    ui.colored_label(egui::Color32::LIGHT_RED, last_error);
+                    clear_error = ui.small_button("清除").clicked();
+                });
             }
             if let Some(last_notice) = last_notice {
-                ui.weak(last_notice);
+                ui.horizontal_wrapped(|ui| {
+                    ui.weak(last_notice);
+                    clear_notice = ui.small_button("清除").clicked();
+                });
+            }
+            egui::ComboBox::from_id_salt(("bridge_status_history", active_bridge_idx))
+                .selected_text(format!("消息历史 ({})", status_history.len()))
+                .width(ui.available_width().min(560.0))
+                .show_ui(ui, |ui| {
+                    ui.set_min_width((ui.ctx().content_rect().width() - 24.0).clamp(120.0, 360.0));
+                    if status_history.is_empty() {
+                        ui.weak("暂无历史消息");
+                        return;
+                    }
+                    if ui.button("清空历史").clicked() {
+                        clear_status_history = true;
+                        ui.close();
+                        return;
+                    }
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .id_salt(("bridge_status_history_scroll", active_bridge_idx))
+                        .max_height(280.0)
+                        .show(ui, |ui| {
+                            for entry in status_history.iter().rev() {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.monospace(&entry.timestamp);
+                                    let kind = egui::RichText::new(entry.kind.label()).strong();
+                                    if matches!(
+                                        entry.kind,
+                                        crate::app::state::StatusMessageKind::Error
+                                    ) {
+                                        ui.colored_label(egui::Color32::LIGHT_RED, kind);
+                                    } else {
+                                        ui.weak(kind);
+                                    }
+                                    ui.label(&entry.text);
+                                });
+                            }
+                        });
+                });
+            if clear_error {
+                self.bridge_states[active_bridge_idx].clear_error();
+            }
+            if clear_notice {
+                self.bridge_states[active_bridge_idx].clear_notice();
+            }
+            if clear_status_history {
+                self.bridge_states[active_bridge_idx].clear_status_history();
             }
 
             ui.add_space(4.0);

@@ -110,6 +110,14 @@ impl IcaApp {
         ctx.set_fonts(fonts);
     }
 
+    fn setup_interaction_style(ctx: &egui::Context) {
+        ctx.all_styles_mut(|style| {
+            style.visuals.widgets.hovered.expansion = 0.0;
+            style.visuals.widgets.active.expansion = 0.0;
+            style.visuals.widgets.open.expansion = 0.0;
+        });
+    }
+
     /// 生成测试用的聊天室数据
     #[allow(unused)]
     fn test_chat_rooms() -> Vec<Room> {
@@ -222,6 +230,7 @@ impl IcaApp {
 
     pub fn new(cc: &CreationContext<'_>, config_store: ConfigStore) -> Self {
         Self::setup_fonts(&cc.egui_ctx);
+        Self::setup_interaction_style(&cc.egui_ctx);
 
         let config = config_store.snapshot();
         let mut runtime = AppRuntime::new(&cc.egui_ctx, &config);
@@ -365,6 +374,7 @@ impl IcaApp {
                             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                                 state.last_error =
                                     Some(format!("setAllChatGroups 解析失败: {}", e));
+                                state.sync_status_history();
                             }
                         }
                     }
@@ -391,6 +401,7 @@ impl IcaApp {
                 state.last_event = Some(event_kind.name().to_string());
 
                 Self::apply_bridge_event(state, event_kind);
+                state.sync_status_history();
 
                 prev_auth_state != AuthState::Succeeded && state.auth_state == AuthState::Succeeded
             };
