@@ -5,6 +5,7 @@ use crate::app::{IcaApp, MessageAction};
 use crate::ica::types::RoomId;
 
 use egui::{Hyperlink, Image, Label};
+use linkify::{LinkFinder, LinkKind};
 
 use super::{
     format_message_content, forward::forward_reference, image_url_looks_like_gif,
@@ -28,9 +29,61 @@ enum ContentMarker {
 #[derive(Debug, PartialEq, Eq)]
 enum ContentSegment<'a> {
     Text(&'a str),
+    Link { text: &'a str, target: Cow<'a, str> },
     Face(u16),
     Mention { user_id: i64, text: Cow<'a, str> },
     Control,
+}
+
+fn normalize_link_target(link: &str) -> Cow<'_, str> {
+    if link.contains("://") {
+        Cow::Borrowed(link)
+    } else {
+        Cow::Owned(format!("https://{link}"))
+    }
+}
+
+fn push_text_segments<'a>(segments: &mut Vec<ContentSegment<'a>>, text: &'a str) {
+    let mut finder = LinkFinder::new();
+    finder.kinds(&[LinkKind::Url]);
+    finder.url_must_have_scheme(false);
+
+    let mut link_ranges = Vec::new();
+    let mut ascii_start = None;
+    for (index, character) in text.char_indices() {
+        if character.is_ascii() {
+            ascii_start.get_or_insert(index);
+        } else if let Some(start) = ascii_start.take() {
+            link_ranges.extend(
+                finder
+                    .links(&text[start..index])
+                    .map(|link| (start + link.start(), start + link.end())),
+            );
+        }
+    }
+    if let Some(start) = ascii_start {
+        link_ranges.extend(
+            finder
+                .links(&text[start..])
+                .map(|link| (start + link.start(), start + link.end())),
+        );
+    }
+
+    let mut cursor = 0;
+    for (start, end) in link_ranges {
+        if cursor < start {
+            segments.push(ContentSegment::Text(&text[cursor..start]));
+        }
+        let link_text = &text[start..end];
+        segments.push(ContentSegment::Link {
+            text: link_text,
+            target: normalize_link_target(link_text),
+        });
+        cursor = end;
+    }
+    if cursor < text.len() {
+        segments.push(ContentSegment::Text(&text[cursor..]));
+    }
 }
 
 fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
@@ -50,23 +103,23 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
         .into_iter()
         .filter_map(|(index, marker)| index.map(|index| (index, marker)))
         .min_by_key(|(index, _)| *index) else {
-            segments.push(ContentSegment::Text(remaining));
+            push_text_segments(&mut segments, remaining);
             break;
         };
 
         if start > 0 {
-            segments.push(ContentSegment::Text(&remaining[..start]));
+            push_text_segments(&mut segments, &remaining[..start]);
             remaining = &remaining[start..];
         }
 
         if marker == ContentMarker::Mention {
             let Some(tag_end) = remaining.find('>') else {
-                segments.push(ContentSegment::Text(remaining));
+                push_text_segments(&mut segments, remaining);
                 break;
             };
             let body = &remaining[tag_end + 1..];
             let Some(close) = body.find(AT_CLOSE_TAG) else {
-                segments.push(ContentSegment::Text(remaining));
+                push_text_segments(&mut segments, remaining);
                 break;
             };
             let full_len = tag_end + 1 + close + AT_CLOSE_TAG.len();
@@ -81,7 +134,7 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
                 let text = urlencoding::decode(encoded_text).unwrap_or(Cow::Borrowed(encoded_text));
                 segments.push(ContentSegment::Mention { user_id, text });
             } else {
-                segments.push(ContentSegment::Text(&remaining[..full_len]));
+                push_text_segments(&mut segments, &remaining[..full_len]);
             }
             remaining = &remaining[full_len..];
             continue;
@@ -98,12 +151,12 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
             };
             let after = &remaining[open_tag.len()..];
             let Some(end) = after.find(']') else {
-                segments.push(ContentSegment::Text(remaining));
+                push_text_segments(&mut segments, remaining);
                 break;
             };
             let full_len = open_tag.len() + end + 1;
             if after[..end].trim().is_empty() {
-                segments.push(ContentSegment::Text(&remaining[..full_len]));
+                push_text_segments(&mut segments, &remaining[..full_len]);
             } else {
                 segments.push(ContentSegment::Control);
             }
@@ -113,7 +166,7 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
 
         let after = &remaining[FACE_OPEN_TAG.len()..];
         let Some(end) = after.find(']') else {
-            segments.push(ContentSegment::Text(remaining));
+            push_text_segments(&mut segments, remaining);
             break;
         };
         let full_len = FACE_OPEN_TAG.len() + end + 1;
@@ -122,7 +175,7 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
         {
             segments.push(ContentSegment::Face(id));
         } else {
-            segments.push(ContentSegment::Text(&remaining[..full_len]));
+            push_text_segments(&mut segments, &remaining[..full_len]);
         }
         remaining = &remaining[full_len..];
     }
@@ -135,6 +188,7 @@ pub(super) fn has_visible_rich_content(content: &str) -> bool {
         .iter()
         .any(|segment| match segment {
             ContentSegment::Text(text) => !text.trim().is_empty(),
+            ContentSegment::Link { .. } => true,
             ContentSegment::Face(_) | ContentSegment::Mention { .. } => true,
             ContentSegment::Control => false,
         })
@@ -165,6 +219,11 @@ fn render_rich_content_with_prefix(
                     if !text.is_empty() {
                         ui.add(Label::new(*text).wrap());
                     }
+                }
+                ContentSegment::Link { text, target } => {
+                    ui.add(
+                        Hyperlink::from_label_and_url(*text, target.as_ref()).open_in_new_tab(true),
+                    );
                 }
                 ContentSegment::Face(id) => {
                     if let Some(bytes) = crate::face_data::get_face(*id) {
@@ -458,7 +517,6 @@ impl IcaApp {
                         egui::Layout::top_down(content_align),
                         |ui| {
                             let mut render_message_contents = |ui: &mut egui::Ui| {
-                                ui.style_mut().interaction.selectable_labels = false;
                                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                                     ui.horizontal_wrapped(|ui| {
                                         if options.show_sender_name {
@@ -775,5 +833,57 @@ impl IcaApp {
         );
         ui.add_space(if pure_text_mode { 2.0 } else { 4.0 });
         action
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_links_without_swallowing_surrounding_punctuation() {
+        assert_eq!(
+            parse_content_segments("见 https://example.com/docs?q=1，或者稍后再看。"),
+            vec![
+                ContentSegment::Text("见 "),
+                ContentSegment::Link {
+                    text: "https://example.com/docs?q=1",
+                    target: Cow::Borrowed("https://example.com/docs?q=1"),
+                },
+                ContentSegment::Text("，或者稍后再看。"),
+            ]
+        );
+    }
+
+    #[test]
+    fn normalizes_bare_domains_for_browser_opening() {
+        assert_eq!(
+            parse_content_segments("www.example.com/path"),
+            vec![ContentSegment::Link {
+                text: "www.example.com/path",
+                target: Cow::Owned("https://www.example.com/path".to_owned()),
+            }]
+        );
+    }
+
+    #[test]
+    fn link_parsing_preserves_message_markers() {
+        assert_eq!(
+            parse_content_segments(
+                "https://example.com <IcalinguaAt qq=42>%40Alice</IcalinguaAt>[Face: 0]"
+            ),
+            vec![
+                ContentSegment::Link {
+                    text: "https://example.com",
+                    target: Cow::Borrowed("https://example.com"),
+                },
+                ContentSegment::Text(" "),
+                ContentSegment::Mention {
+                    user_id: 42,
+                    text: Cow::Owned("@Alice".to_owned()),
+                },
+                ContentSegment::Face(0),
+            ]
+        );
     }
 }

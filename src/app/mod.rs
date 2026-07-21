@@ -31,6 +31,36 @@ pub use state::*;
 use crate::ica::BridgeEventKind;
 use crate::ica::types::room::Room;
 
+fn clipboard_image_paste_requested(
+    raw_input: &egui::RawInput,
+    system_paste_shortcut_pressed: bool,
+) -> bool {
+    let viewport_focused = raw_input.viewport().focused.unwrap_or(raw_input.focused);
+    if !raw_input.focused || !viewport_focused {
+        return false;
+    }
+
+    let has_text_paste = raw_input
+        .events
+        .iter()
+        .any(|event| matches!(event, egui::Event::Paste(_)));
+    let has_paste_shortcut = raw_input.events.iter().any(|event| {
+        if let egui::Event::Key {
+            key: egui::Key::V,
+            pressed: true,
+            modifiers,
+            ..
+        } = event
+        {
+            raw_input.modifiers.command || modifiers.command
+        } else {
+            false
+        }
+    });
+
+    !has_text_paste && (has_paste_shortcut || system_paste_shortcut_pressed)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectedChatGroup {
     All,
@@ -439,25 +469,10 @@ impl eframe::App for IcaApp {
         }
 
         // 检测 Ctrl+V 但没有文字粘贴事件的情况（剪贴板可能是图片）。
-        let has_paste = raw_input
-            .events
-            .iter()
-            .any(|e| matches!(e, egui::Event::Paste(_)));
-        let paste_shortcut = raw_input.events.iter().any(|e| {
-            if let egui::Event::Key {
-                key: egui::Key::V,
-                pressed: true,
-                modifiers,
-                ..
-            } = e
-            {
-                raw_input.modifiers.command || modifiers.command
-            } else {
-                false
-            }
-        });
+        // 即使窗口失焦也读取一次系统按键状态，避免重新聚焦后消费到陈旧的按下事件。
+        let system_paste_shortcut_pressed = Self::system_paste_shortcut_pressed();
         self.clipboard_paste_failed =
-            !has_paste && (paste_shortcut || Self::system_paste_shortcut_pressed());
+            clipboard_image_paste_requested(raw_input, system_paste_shortcut_pressed);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
