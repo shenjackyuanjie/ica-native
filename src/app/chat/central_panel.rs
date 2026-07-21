@@ -3,6 +3,33 @@ use crate::app::{IcaApp, MessageAction, MessageLayoutCacheKey, MessageRowLayout}
 use super::message_card::MessageRenderOptions;
 use super::{estimate_composer_rows, estimate_message_row_height, message_visible_range};
 
+fn fit_chat_body_heights(
+    available_height: f32,
+    desired_composer_height: f32,
+    section_spacing: f32,
+) -> (f32, f32) {
+    let available_height = available_height.max(0.0);
+    let section_spacing = section_spacing.clamp(0.0, available_height);
+    let content_height = available_height - section_spacing;
+    let composer_height = desired_composer_height.clamp(0.0, content_height);
+    (content_height - composer_height, composer_height)
+}
+
+fn show_constrained_composer<R>(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    height: f32,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::scroll_area::ScrollAreaOutput<R> {
+    egui::ScrollArea::vertical()
+        .id_salt(id)
+        .min_scrolled_height(height)
+        .max_height(height)
+        .auto_shrink([false, false])
+        .stick_to_bottom(true)
+        .show(ui, add_contents)
+}
+
 impl IcaApp {
     pub fn render_central_panel(&mut self, ui: &mut egui::Ui) {
         egui::CentralPanel::default().show(ui, |ui| {
@@ -232,14 +259,19 @@ impl IcaApp {
                 .unwrap_or(1);
             let line_height = ui.text_style_height(&egui::TextStyle::Body);
             let control_height = (line_height * composer_rows as f32 + 12.0).clamp(30.0, 132.0);
-            let composer_reserved_height = control_height
+            let desired_composer_height = control_height
                 + 6.0
                 + if forward_mode_active { 54.0 } else { 0.0 }
                 + if has_reply_banner { 54.0 } else { 0.0 }
                 + if has_pending_image { 144.0 } else { 0.0 }
                 + if has_pending_file { 54.0 } else { 0.0 }
                 + if self.show_face_picker { 220.0 } else { 0.0 };
-            let message_list_height = (ui.available_height() - composer_reserved_height).max(120.0);
+            let (message_list_height, composer_reserved_height) = fit_chat_body_heights(
+                ui.available_height(),
+                desired_composer_height,
+                ui.spacing().item_spacing.y,
+            );
+            let composer_is_constrained = composer_reserved_height < desired_composer_height;
             let mut pending_action = None;
             let pure_text_mode = self.custom_chat.hide_group_member_avatar;
             let message_layout_width =
@@ -276,7 +308,9 @@ impl IcaApp {
                 .id_salt(("message_list", active_bridge_idx, room_id))
                 .vertical_scroll_offset(saved_scroll_offset)
                 .stick_to_bottom(true)
+                .min_scrolled_height(message_list_height)
                 .max_height(message_list_height)
+                .auto_shrink([false, false])
                 .show_viewport(ui, |ui, viewport| {
                     ui.set_min_width(ui.max_rect().width());
 
@@ -700,26 +734,90 @@ impl IcaApp {
                 }
             }
 
-            self.render_composer(
-                ui,
-                super::composer::ComposerParams {
-                    active_bridge_idx,
-                    room_id,
-                    composer_id,
-                    forward_mode_active,
-                    forward_selected_count,
-                    pending_images,
-                    pending_image_count,
-                    has_pending_image,
-                    has_pending_file,
+            let mut composer_params = super::composer::ComposerParams {
+                active_bridge_idx,
+                room_id,
+                composer_id,
+                forward_mode_active,
+                forward_selected_count,
+                pending_images,
+                pending_image_count,
+                has_pending_image,
+                has_pending_file,
+                composer_reserved_height,
+                control_height,
+                composer_rows,
+                request_composer_focus,
+            };
+            if composer_is_constrained {
+                composer_params.composer_reserved_height = desired_composer_height;
+                show_constrained_composer(
+                    ui,
+                    egui::Id::new(("message_composer_scroll", active_bridge_idx, room_id)),
                     composer_reserved_height,
-                    control_height,
-                    composer_rows,
-                    request_composer_focus,
-                },
-            );
+                    |ui| self.render_composer(ui, composer_params),
+                );
+            } else {
+                self.render_composer(ui, composer_params);
+            }
         });
     }
 
     // 合并房间内的头像 / 名称行 / 预览行 为一个方法，减少外部碎片函数
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fit_chat_body_heights, show_constrained_composer};
+
+    #[test]
+    fn growing_composer_shrinks_message_list_without_exceeding_available_height() {
+        let (message_height, composer_height) = fit_chat_body_heights(420.0, 186.0, 3.0);
+
+        assert_eq!(message_height, 231.0);
+        assert_eq!(composer_height, 186.0);
+        assert_eq!(message_height + composer_height + 3.0, 420.0);
+    }
+
+    #[test]
+    fn composer_is_clamped_to_very_short_chat_body() {
+        let (message_height, composer_height) = fit_chat_body_heights(120.0, 186.0, 3.0);
+
+        assert_eq!(message_height, 0.0);
+        assert_eq!(composer_height, 117.0);
+    }
+
+    #[test]
+    fn constrained_composer_keeps_trailing_control_inside_its_viewport() {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(320.0, 120.0),
+            )),
+            ..Default::default()
+        };
+        let mut viewport = egui::Rect::NOTHING;
+        let mut control = egui::Rect::NOTHING;
+
+        for _ in 0..2 {
+            let _ = ctx.run_ui(input.clone(), |ui| {
+                let output = show_constrained_composer(
+                    ui,
+                    egui::Id::new("constrained_composer_test"),
+                    120.0,
+                    |ui| {
+                        ui.allocate_space(egui::vec2(200.0, 180.0));
+                        ui.add_sized([200.0, 30.0], egui::Button::new("发送")).rect
+                    },
+                );
+                viewport = output.inner_rect;
+                control = output.inner;
+            });
+        }
+
+        assert_eq!(viewport.height(), 120.0);
+        assert!(control.top() >= viewport.top());
+        assert!(control.bottom() <= viewport.bottom());
+    }
 }

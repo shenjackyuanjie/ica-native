@@ -26,6 +26,24 @@ enum ContentMarker {
     NestedForward,
 }
 
+fn sender_role_label(role: &str) -> Option<Cow<'_, str>> {
+    let role = role.trim();
+    match role.to_ascii_lowercase().as_str() {
+        "" | "member" | "unknown" => None,
+        "owner" => Some(Cow::Borrowed("群主")),
+        "admin" | "administrator" => Some(Cow::Borrowed("管理员")),
+        _ => Some(Cow::Borrowed(role)),
+    }
+}
+
+fn should_show_group_identity(room_id: RoomId, mirai: &serde_json::Value) -> bool {
+    room_id < 0
+        && mirai
+            .pointer("/eqq/type")
+            .and_then(serde_json::Value::as_str)
+            != Some("tg")
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum ContentSegment<'a> {
     Text(&'a str),
@@ -521,6 +539,33 @@ impl IcaApp {
                                     ui.horizontal_wrapped(|ui| {
                                         if options.show_sender_name {
                                             ui.colored_label(title_color, &message.sender_name);
+                                            if should_show_group_identity(room_id, &message.mirai) {
+                                                if let Some(role) = sender_role_label(&message.role)
+                                                {
+                                                    let role_color = if message.deleted {
+                                                        egui::Color32::GRAY
+                                                    } else if role == "群主" {
+                                                        ui.visuals().warn_fg_color
+                                                    } else if role == "管理员" {
+                                                        ui.visuals().hyperlink_color
+                                                    } else {
+                                                        ui.visuals().weak_text_color()
+                                                    };
+                                                    ui.colored_label(role_color, role.as_ref());
+                                                }
+                                                let group_title = message.title.trim();
+                                                if !group_title.is_empty() {
+                                                    ui.colored_label(
+                                                        if message.deleted {
+                                                            egui::Color32::GRAY
+                                                        } else {
+                                                            ui.visuals().weak_text_color()
+                                                        },
+                                                        group_title,
+                                                    )
+                                                    .on_hover_text("群头衔");
+                                                }
+                                            }
                                         }
                                         ui.weak(&message.time_text);
                                         if message.deleted {
@@ -839,6 +884,30 @@ impl IcaApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn sender_roles_use_group_friendly_labels() {
+        assert_eq!(sender_role_label("owner").as_deref(), Some("群主"));
+        assert_eq!(sender_role_label("admin").as_deref(), Some("管理员"));
+        assert_eq!(
+            sender_role_label("administrator").as_deref(),
+            Some("管理员")
+        );
+        assert_eq!(sender_role_label("member"), None);
+        assert_eq!(sender_role_label("unknown"), None);
+        assert_eq!(sender_role_label(" bot ").as_deref(), Some("bot"));
+    }
+
+    #[test]
+    fn group_identity_is_hidden_for_private_and_telegram_messages() {
+        assert!(should_show_group_identity(-123, &serde_json::Value::Null));
+        assert!(!should_show_group_identity(123, &serde_json::Value::Null));
+        assert!(!should_show_group_identity(
+            -123,
+            &json!({ "eqq": { "type": "tg" } })
+        ));
+    }
 
     #[test]
     fn parses_links_without_swallowing_surrounding_punctuation() {
