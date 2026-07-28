@@ -108,6 +108,10 @@ impl ChatAppearanceSettings {
                 let _ = ui.checkbox(&mut self.hide_group_member_avatar, "");
                 ui.end_row();
 
+                ui.label("高对比度聊天界面");
+                let _ = ui.checkbox(&mut self.high_contrast_chat, "");
+                ui.end_row();
+
                 ui.label("选中会话后清空聊天列表搜索框");
                 let _ = ui.checkbox(clear_on_select, "");
                 ui.end_row();

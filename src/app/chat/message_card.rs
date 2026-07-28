@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use crate::app::media::{ImageAction, ImageSource};
 use crate::app::{IcaApp, MessageAction};
-use crate::ica::types::RoomId;
+use crate::ica::types::{RoomId, files::MessageFile, message::ReplyMessage};
 
 use egui::{Hyperlink, Image, Label};
 use linkify::{LinkFinder, LinkKind};
@@ -216,13 +216,19 @@ fn render_rich_content_with_prefix(
     ui: &mut egui::Ui,
     prefix: Option<egui::RichText>,
     content: &str,
+    high_contrast: bool,
 ) -> egui::Response {
+    let body_text_color = if high_contrast && ui.visuals().dark_mode {
+        egui::Color32::from_rgb(0xf2, 0xf2, 0xf2)
+    } else {
+        ui.visuals().text_color()
+    };
     let segments = parse_content_segments(content);
     let has_special_segment = segments
         .iter()
         .any(|segment| !matches!(segment, ContentSegment::Text(_)));
     if prefix.is_none() && !has_special_segment {
-        return ui.add(Label::new(content).wrap());
+        return ui.add(Label::new(egui::RichText::new(content).color(body_text_color)).wrap());
     }
 
     let face_size = 24.0;
@@ -235,7 +241,9 @@ fn render_rich_content_with_prefix(
             match seg {
                 ContentSegment::Text(text) => {
                     if !text.is_empty() {
-                        ui.add(Label::new(*text).wrap());
+                        ui.add(
+                            Label::new(egui::RichText::new(*text).color(body_text_color)).wrap(),
+                        );
                     }
                 }
                 ContentSegment::Link { text, target } => {
@@ -277,8 +285,20 @@ fn render_rich_content_with_prefix(
 }
 
 /// 渲染消息正文中的 QQ 表情和 @ 成员标记。
-pub(super) fn render_rich_content(ui: &mut egui::Ui, content: &str) -> egui::Response {
-    render_rich_content_with_prefix(ui, None, content)
+pub(super) fn render_rich_content(
+    ui: &mut egui::Ui,
+    content: &str,
+    high_contrast: bool,
+) -> egui::Response {
+    render_rich_content_with_prefix(ui, None, content, high_contrast)
+}
+
+fn reply_image_file(reply: &ReplyMessage) -> Option<&MessageFile> {
+    reply
+        .file
+        .iter()
+        .chain(&reply.files)
+        .find(|file| is_image_file_type(&file.file_type))
 }
 
 /// 渲染消息中的图片缩略图并返回统一图片动作。
@@ -287,9 +307,10 @@ fn render_message_image(
     source: &ImageSource,
     file_type: &str,
     max_width: f32,
+    max_height: f32,
 ) -> Option<ImageAction> {
     if should_try_gif_preview(&source.url, file_type)
-        && let Some(action) = render_gif_message_image(ui, source, max_width)
+        && let Some(action) = render_gif_message_image(ui, source, max_width, max_height)
     {
         return action;
     }
@@ -303,7 +324,7 @@ fn render_message_image(
             let response = ui.add(
                 Image::from_texture(texture)
                     .max_width(max_width)
-                    .max_height(240.0)
+                    .max_height(max_height)
                     .maintain_aspect_ratio(true)
                     .sense(egui::Sense::click()),
             );
@@ -315,7 +336,7 @@ fn render_message_image(
         }
         Err(err) => {
             if should_probe_gif_after_static_error(&err)
-                && let Some(action) = render_gif_message_image(ui, source, max_width)
+                && let Some(action) = render_gif_message_image(ui, source, max_width, max_height)
             {
                 return action;
             }
@@ -338,6 +359,7 @@ fn render_gif_message_image(
     ui: &mut egui::Ui,
     source: &ImageSource,
     max_width: f32,
+    max_height: f32,
 ) -> Option<Option<ImageAction>> {
     match try_load_gif_texture(
         ui.ctx(),
@@ -354,7 +376,7 @@ fn render_gif_message_image(
             let response = ui.add(
                 Image::from_texture(texture)
                     .max_width(max_width)
-                    .max_height(240.0)
+                    .max_height(max_height)
                     .maintain_aspect_ratio(true)
                     .sense(egui::Sense::click()),
             );
@@ -612,16 +634,27 @@ impl IcaApp {
 
                                     if let Some(reply) = &message.reply {
                                         let reply_msg_id = reply.msg_id.clone();
+                                        let reply_image = reply_image_file(reply);
                                         if pure_text_mode {
                                             let prefix = egui::RichText::new(format!(
                                                 "回复 {}: ",
                                                 reply.sender_name
                                             ))
                                             .color(ui.visuals().weak_text_color());
+                                            let content = if reply_image.is_some() {
+                                                Cow::Owned(if reply.content.trim().is_empty() {
+                                                    "[图片]".to_string()
+                                                } else {
+                                                    format!("[图片] {}", reply.content)
+                                                })
+                                            } else {
+                                                Cow::Borrowed(reply.content.as_str())
+                                            };
                                             if render_rich_content_with_prefix(
                                                 ui,
                                                 Some(prefix),
-                                                &reply.content,
+                                                &content,
+                                                self.custom_chat.high_contrast_chat,
                                             )
                                             .interact(egui::Sense::click())
                                             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -632,12 +665,40 @@ impl IcaApp {
                                                 });
                                             }
                                         } else {
+                                            let mut reply_image_action = None;
                                             let reply_resp =
                                                 egui::Frame::group(ui.style()).show(ui, |ui| {
                                                     ui.weak(format!("回复 {}", reply.sender_name));
-                                                    render_rich_content(ui, &reply.content);
+                                                    if let Some(file) = reply_image {
+                                                        if file.url.is_empty() {
+                                                            ui.weak("[图片]");
+                                                        } else {
+                                                            let source = ImageSource::message(
+                                                                file.url.clone(),
+                                                                room_id,
+                                                                reply.msg_id.clone(),
+                                                            );
+                                                            reply_image_action =
+                                                                render_message_image(
+                                                                    ui,
+                                                                    &source,
+                                                                    &file.file_type,
+                                                                    96.0,
+                                                                    96.0,
+                                                                );
+                                                        }
+                                                    }
+                                                    if !reply.content.trim().is_empty() {
+                                                        render_rich_content(
+                                                            ui,
+                                                            &reply.content,
+                                                            self.custom_chat.high_contrast_chat,
+                                                        );
+                                                    }
                                                 });
-                                            if reply_resp
+                                            if let Some(image_action) = reply_image_action {
+                                                action = Some(MessageAction::Image(image_action));
+                                            } else if reply_resp
                                                 .response
                                                 .interact(egui::Sense::click())
                                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -656,7 +717,11 @@ impl IcaApp {
                                         has_visible_rich_content(&message.content);
                                     if has_visible_content {
                                         has_body = true;
-                                        render_rich_content(ui, &message.content);
+                                        render_rich_content(
+                                            ui,
+                                            &message.content,
+                                            self.custom_chat.high_contrast_chat,
+                                        );
                                     }
 
                                     if !message.files.is_empty() {
@@ -682,6 +747,7 @@ impl IcaApp {
                                                                 &source,
                                                                 &file.file_type,
                                                                 image_max_width,
+                                                                240.0,
                                                             )
                                                         {
                                                             action = Some(MessageAction::Image(

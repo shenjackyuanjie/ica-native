@@ -321,6 +321,7 @@ impl IcaApp {
         let mut open = true;
         let mut reload = false;
         let mut nested_reference = None;
+        let high_contrast = self.custom_chat.high_contrast_chat;
         egui::Window::new("合并转发消息")
             .open(&mut open)
             .default_size(egui::vec2(560.0, 680.0))
@@ -380,13 +381,18 @@ impl IcaApp {
                                         super::message_card::render_rich_content(
                                             ui,
                                             &reply.content,
+                                            high_contrast,
                                         );
                                     });
                             }
                             let has_visible_content =
                                 super::message_card::has_visible_rich_content(&message.content);
                             if has_visible_content {
-                                super::message_card::render_rich_content(ui, &message.content);
+                                super::message_card::render_rich_content(
+                                    ui,
+                                    &message.content,
+                                    high_contrast,
+                                );
                             }
                             for file in &message.files {
                                 if (file.file_type == "image"

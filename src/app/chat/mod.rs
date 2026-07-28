@@ -337,6 +337,15 @@ pub(super) fn estimate_message_row_height(
     if let Some(reply) = &message.reply {
         height += line_height + estimate_text_height(&reply.content, content_width, line_height);
         height += if pure_text_mode { 8.0 } else { 24.0 };
+        if !pure_text_mode
+            && reply
+                .file
+                .iter()
+                .chain(&reply.files)
+                .any(|file| is_image_file_type(&file.file_type) && !file.url.is_empty())
+        {
+            height += 104.0;
+        }
     }
 
     if !message.content.is_empty() {

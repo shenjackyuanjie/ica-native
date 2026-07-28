@@ -37,6 +37,8 @@ pub struct ChatAppearanceSettings {
     pub enable_topic_button: bool,
     #[serde(default)]
     pub hide_group_member_avatar: bool,
+    #[serde(default)]
+    pub high_contrast_chat: bool,
     #[serde(default = "default_true")]
     pub auto_read_on_select: bool,
 }
@@ -65,6 +67,7 @@ impl Default for ChatAppearanceSettings {
             disable_file_type_selection: false,
             enable_topic_button: true,
             hide_group_member_avatar: false,
+            high_contrast_chat: false,
             auto_read_on_select: true,
         }
     }

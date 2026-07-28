@@ -99,9 +99,28 @@ pub struct ReplyMessage {
     #[serde(rename = "_id")]
     pub msg_id: String,
     pub content: String,
-    pub files: JsonValue,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<MessageFile>,
+    #[serde(default, deserialize_with = "deserialize_message_files")]
+    pub files: Vec<MessageFile>,
     #[serde(rename = "username")]
     pub sender_name: String,
+}
+
+fn deserialize_message_files<'de, D>(deserializer: D) -> Result<Vec<MessageFile>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = JsonValue::deserialize(deserializer)?;
+    let values = match value {
+        JsonValue::Array(values) => values,
+        JsonValue::Null => return Ok(Vec::new()),
+        value => vec![value],
+    };
+    Ok(values
+        .into_iter()
+        .filter_map(|value| serde_json::from_value(value).ok())
+        .collect())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -408,7 +427,8 @@ impl Message {
             msg_id: self.msg_id.clone(),
             // 但是懒得动上面的了, 就这样吧
             content: self.content.clone(),
-            files: json!([]),
+            file: self.files.last().cloned(),
+            files: self.files.clone(),
             sender_name: self.sender_name.clone(),
         }
     }
