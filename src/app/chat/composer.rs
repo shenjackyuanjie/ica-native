@@ -537,7 +537,14 @@ impl IcaApp {
                                         if entries.is_empty() {
                                             ui.weak("暂无收藏表情，可从消息图片右键添加");
                                         } else {
-                                            let total_rows = entries.len().div_ceil(cols);
+                                            let favorite_face_size = face_size * 2.0;
+                                            let favorite_button_size = button_size * 2.0;
+                                            let favorite_cols = ((content_width + spacing)
+                                                / (favorite_button_size + spacing))
+                                                .max(1.0)
+                                                as usize;
+                                            let total_rows =
+                                                entries.len().div_ceil(favorite_cols);
                                             egui::ScrollArea::vertical()
                                                 .id_salt((
                                                     "favorite_sticker_picker",
@@ -547,15 +554,15 @@ impl IcaApp {
                                                 .max_height(face_panel_height - 36.0)
                                                 .show_rows(
                                                     ui,
-                                                    button_size,
+                                                    favorite_button_size,
                                                     total_rows,
                                                     |ui, row_range| {
                                                         ui.spacing_mut().item_spacing.x = spacing;
                                                         for row in row_range {
                                                             ui.horizontal(|ui| {
-                                                                let start = row * cols;
-                                                                let end =
-                                                                    (start + cols).min(entries.len());
+                                                                let start = row * favorite_cols;
+                                                                let end = (start + favorite_cols)
+                                                                    .min(entries.len());
                                                                 for entry in &entries[start..end] {
                                                                     let path = entry
                                                                         .path
@@ -566,10 +573,14 @@ impl IcaApp {
                                                                         path.trim_start_matches('/')
                                                                     ))
                                                                     .fit_to_exact_size(egui::vec2(
-                                                                        face_size, face_size,
+                                                                        favorite_face_size,
+                                                                        favorite_face_size,
                                                                     ));
                                                                     let button = ui.add_sized(
-                                                                        [button_size, button_size],
+                                                                        [
+                                                                            favorite_button_size,
+                                                                            favorite_button_size,
+                                                                        ],
                                                                         Button::image(image),
                                                                     );
                                                                     let clicked = button.clicked();
