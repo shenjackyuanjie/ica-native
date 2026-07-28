@@ -14,6 +14,10 @@ fn visible_row_range(
     start.min(row_count)..end.min(row_count)
 }
 
+fn visible_draft(draft: Option<&str>) -> Option<&str> {
+    draft.map(str::trim).filter(|draft| !draft.is_empty())
+}
+
 impl IcaApp {
     pub fn render_chat_list_panel(&mut self, ui: &mut egui::Ui) {
         egui::Panel::left("聊天列表")
@@ -160,6 +164,11 @@ impl IcaApp {
                         let room_id = room.room_id;
                         let is_pinned = room.index > 0;
                         let is_selected = selected_room_id == Some(room_id);
+                        let draft = visible_draft(
+                            self.bridge_states[active_bridge_idx]
+                                .conversation(room_id)
+                                .map(|conversation| conversation.draft.as_str()),
+                        );
 
                         let y = list_rect.top() + idx as f32 * row_height;
                         let row_rect = egui::Rect::from_min_size(
@@ -193,7 +202,7 @@ impl IcaApp {
                         };
                         ui.painter().rect_filled(row_rect, 4.0, bg_color);
 
-                        self.render_room(ui, content_rect, room);
+                        self.render_room(ui, content_rect, room, draft);
 
                         response.context_menu(|ui| {
                             // 房间名 + ID (disabled header)
@@ -277,7 +286,7 @@ impl IcaApp {
             });
     }
 
-    fn render_room(&self, ui: &mut egui::Ui, rect: egui::Rect, room: &Room) {
+    fn render_room(&self, ui: &mut egui::Ui, rect: egui::Rect, room: &Room, draft: Option<&str>) {
         // 聊天列表是手写虚拟列表：快速滚动时，同一个屏幕 rect 会在 egui
         // 的多次 pass 之间对应到不同 room。这里刻意不用 Label/Button 等子
         // widget，只保留外层 row 的 interact id，内部全部 painter 绘制，避免
@@ -402,33 +411,58 @@ impl IcaApp {
             preview_right = badge_rect.left() - 8.0;
         }
 
-        // 群聊预览前缀显示发送者名称；preview_x 会继续向右推进，
-        // 后面的消息内容只占用剩下的空间。
+        // 草稿优先于最后一条消息显示，避免群聊发送者前缀看起来像草稿作者。
+        // 蓝色标记用于从列表中快速识别仍有未发送内容的会话。
         let mut preview_x = text_left;
-        if is_group
-            && let Some(username) = &room.last_message.username
-            && !username.is_empty()
-        {
-            let username_color = if dark_mode {
-                egui::Color32::from_rgb(0x52, 0xa3, 0xe8)
-            } else {
-                egui::Color32::from_rgb(0x19, 0x76, 0xd2)
-            };
+        let preview_content = if let Some(draft) = draft {
             let galley = painter.layout_no_wrap(
-                format!("{username}:"),
-                egui::FontId::proportional(12.0),
-                username_color,
+                "[草稿]".to_owned(),
+                egui::FontId::proportional(11.0),
+                egui::Color32::WHITE,
             );
-            painter.galley(
+            let padding = egui::vec2(4.0, 1.0);
+            let badge_rect = egui::Rect::from_min_size(
                 egui::pos2(preview_x, preview_y),
-                galley.clone(),
-                username_color,
+                galley.size() + padding * 2.0,
             );
-            preview_x += galley.size().x + 4.0;
-        }
+            painter.rect_filled(
+                badge_rect,
+                badge_rect.height() / 2.0,
+                egui::Color32::from_rgb(0x00, 0x6c, 0xff),
+            );
+            painter.galley(badge_rect.min + padding, galley, egui::Color32::WHITE);
+            preview_x = badge_rect.right() + 5.0;
+            Some(draft)
+        } else {
+            // 群聊预览前缀显示发送者名称；preview_x 会继续向右推进，
+            // 后面的消息内容只占用剩下的空间。
+            if is_group
+                && let Some(username) = &room.last_message.username
+                && !username.is_empty()
+            {
+                let username_color = if dark_mode {
+                    egui::Color32::from_rgb(0x52, 0xa3, 0xe8)
+                } else {
+                    egui::Color32::from_rgb(0x19, 0x76, 0xd2)
+                };
+                let galley = painter.layout_no_wrap(
+                    format!("{username}:"),
+                    egui::FontId::proportional(12.0),
+                    username_color,
+                );
+                painter.galley(
+                    egui::pos2(preview_x, preview_y),
+                    galley.clone(),
+                    username_color,
+                );
+                preview_x += galley.size().x + 4.0;
+            }
+            room.last_message.content.as_deref()
+        };
+
         // 消息内容也通过 painter clip 截断。这里用 layout_no_wrap 是为了保持
         // 单行预览，和旧的 TextWrapMode::Truncate 行为一致。
-        if let Some(content) = &room.last_message.content
+        if let Some(content) = preview_content
             && !content.is_empty()
             && preview_x < preview_right
         {
