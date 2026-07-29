@@ -265,7 +265,11 @@ impl<'de> Deserialize<'de> for Message {
             .and_then(|v| v.as_i64())
             .and_then(parse_bridge_timestamp)
             .unwrap_or(current);
-        let time_text = time.format("%H:%M:%S").to_string();
+        // 消息时间在模型中统一保存为 UTC，显示时转换到系统本地时区。
+        let time_text = time
+            .with_timezone(&chrono::Local)
+            .format("%H:%M:%S")
+            .to_string();
 
         // 身份
         let role = json

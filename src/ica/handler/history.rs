@@ -15,18 +15,8 @@ use crate::ica::event::BridgeEvent;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-use super::{ack_payload_first, ack_payload_values};
+use super::{ack_payload_first, ack_payload_values, normalize_ack_list};
 use crate::ica::command::emit_ui_event;
-
-fn normalize_ack_list(mut values: Vec<JsonValue>) -> JsonValue {
-    if values.len() == 1 {
-        return match values.remove(0) {
-            JsonValue::Array(items) => JsonValue::Array(items),
-            value => JsonValue::Array(vec![value]),
-        };
-    }
-    JsonValue::Array(values)
-}
 
 /// 构造 Icalingua++ 用于“从最新位置拉取历史”的占位消息 ID。
 ///

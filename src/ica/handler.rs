@@ -46,6 +46,16 @@ fn ack_payload_first(payload: &Payload) -> Option<JsonValue> {
     ack_payload_values(payload).into_iter().next()
 }
 
+fn normalize_ack_list(mut values: Vec<JsonValue>) -> JsonValue {
+    if values.len() == 1 {
+        return match values.remove(0) {
+            JsonValue::Array(items) => JsonValue::Array(items),
+            value => JsonValue::Array(vec![value]),
+        };
+    }
+    JsonValue::Array(values)
+}
+
 async fn send_message(
     message: SendMessage,
     client: &Client,
@@ -344,7 +354,7 @@ pub(super) async fn handle_command(
                                     "roomId": room_id,
                                     "keyword": keyword,
                                     "offset": offset,
-                                    "messages": ack_payload_values(&payload),
+                                    "messages": normalize_ack_list(ack_payload_values(&payload)),
                                 }),
                             );
                         })
