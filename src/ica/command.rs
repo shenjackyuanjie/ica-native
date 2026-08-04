@@ -13,7 +13,7 @@ use crate::ica::types::{
 };
 
 /// icalingua 客户端的兼容版本号
-pub const ICA_PROTOCOL_VERSION: &str = "2.26.0";
+pub const ICA_PROTOCOL_VERSION: &str = "2.26.2";
 pub const GROUP_BAN_MAX_DURATION: u64 = 30 * 24 * 60 * 60;
 /// 自动重连最多尝试 5 次。
 pub(super) const MAX_RECONNECT_ATTEMPTS: usize = 5;
