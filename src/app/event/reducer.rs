@@ -231,6 +231,9 @@ impl IcaApp {
                                 // 将旧消息放在前面
                                 new_msgs.append(existing);
                                 *existing = new_msgs;
+                                // prepend 会改变新旧消息交界处是否需要日期分隔框，
+                                // 缓存高度包含分隔框，因此这里必须整体失效。
+                                state.conversation_mut(room_id).message_row_heights.clear();
                                 state.invalidate_message_rows(room_id);
                                 // 标记需要调整 scroll offset
                                 state.conversation_mut(room_id).prepend_scroll_fix = true;

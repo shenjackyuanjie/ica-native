@@ -189,6 +189,8 @@ pub struct Message {
     pub time: DateTime<chrono::Utc>,
     /// 渲染用时间文本，避免每帧重复格式化。
     pub time_text: String,
+    /// 渲染用本地日期文本，用于相邻消息跨日期时显示日期分隔框。
+    pub date_text: String,
     /// 身份
     pub role: String,
     /// 文件
@@ -266,10 +268,9 @@ impl<'de> Deserialize<'de> for Message {
             .and_then(parse_bridge_timestamp)
             .unwrap_or(current);
         // 消息时间在模型中统一保存为 UTC，显示时转换到系统本地时区。
-        let time_text = time
-            .with_timezone(&chrono::Local)
-            .format("%H:%M:%S")
-            .to_string();
+        let local_time = time.with_timezone(&chrono::Local);
+        let time_text = local_time.format("%H:%M:%S").to_string();
+        let date_text = local_time.format("%Y/%m/%d").to_string();
 
         // 身份
         let role = json
@@ -374,6 +375,7 @@ impl<'de> Deserialize<'de> for Message {
             code,
             time,
             time_text,
+            date_text,
             role,
             files,
             reply,

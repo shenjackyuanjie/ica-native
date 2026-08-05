@@ -540,6 +540,7 @@ mod tests {
             code,
             time: Utc::now(),
             time_text: "12:00:00".to_string(),
+            date_text: "2026/08/05".to_string(),
             role: String::new(),
             files: Vec::new(),
             reply: None,

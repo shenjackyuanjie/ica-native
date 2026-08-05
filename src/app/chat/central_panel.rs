@@ -3,6 +3,45 @@ use crate::app::{IcaApp, MessageAction, MessageLayoutCacheKey, MessageRowLayout}
 use super::message_card::MessageRenderOptions;
 use super::{estimate_composer_rows, estimate_message_row_height, message_visible_range};
 
+const DATE_SEPARATOR_ESTIMATED_HEIGHT: f32 = 42.0;
+
+fn should_show_date_separator(previous_date: Option<&str>, current_date: &str) -> bool {
+    previous_date.is_some_and(|previous_date| previous_date != current_date)
+}
+
+fn render_date_separator(ui: &mut egui::Ui, date: &str) {
+    ui.add_space(6.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), 0.0),
+        egui::Layout::top_down(egui::Align::Center),
+        |ui| {
+            let background = if ui.visuals().dark_mode {
+                egui::Color32::from_rgba_premultiplied(0, 0, 0, 77)
+            } else {
+                egui::Color32::from_rgb(0xe5, 0xef, 0xfa)
+            };
+            let text_color = if ui.visuals().dark_mode {
+                egui::Color32::from_rgb(0xbe, 0xc5, 0xcc)
+            } else {
+                egui::Color32::from_rgb(0x50, 0x5a, 0x62)
+            };
+            egui::Frame::NONE
+                .fill(background)
+                .corner_radius(4.0)
+                .inner_margin(egui::Margin::symmetric(12, 4))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(date)
+                            .size(12.0)
+                            .strong()
+                            .color(text_color),
+                    );
+                });
+        },
+    );
+    ui.add_space(4.0);
+}
+
 fn fit_chat_body_heights(
     available_height: f32,
     desired_composer_height: f32,
@@ -274,8 +313,9 @@ impl IcaApp {
             let composer_is_constrained = composer_reserved_height < desired_composer_height;
             let mut pending_action = None;
             let pure_text_mode = self.custom_chat.hide_group_member_avatar;
+            let message_row_width = ui.available_width().max(48.0);
             let message_layout_width =
-                (ui.available_width() - if forward_mode_active { 24.0 } else { 0.0 }).max(48.0);
+                (message_row_width - if forward_mode_active { 24.0 } else { 0.0 }).max(48.0);
             let message_layout_key = MessageLayoutCacheKey {
                 width: message_layout_width,
                 pure_text_mode,
@@ -304,72 +344,99 @@ impl IcaApp {
                 .and_then(|conversation| conversation.message_scroll_offset)
                 .unwrap_or(0.0);
             let mut measured_message_heights = Vec::<(String, f32)>::new();
+
+            let needs_row_layout = {
+                let bridge_state = &self.bridge_states[active_bridge_idx];
+                let conversation = bridge_state.conversation(room_id);
+                let message_count =
+                    conversation.map_or(0, |conversation| conversation.messages.len());
+                conversation.is_none_or(|conversation| {
+                    conversation.message_row_layouts.len() != message_count
+                })
+            };
+            if needs_row_layout {
+                let rows = {
+                    let bridge_state = &self.bridge_states[active_bridge_idx];
+                    let conversation = bridge_state.conversation(room_id);
+                    let messages = conversation.map(|conversation| &conversation.messages);
+                    let cached_heights =
+                        conversation.map(|conversation| &conversation.message_row_heights);
+                    let row_width = message_row_width;
+                    let mut rows = Vec::with_capacity(messages.map_or(0, Vec::len));
+
+                    // 首屏从最新消息向旧消息估算，先得到底部附近需要的布局；
+                    // 随后再补 top 坐标，屏幕上的阅读顺序仍保持旧 -> 新。
+                    if let Some(messages) = messages {
+                        for idx in (0..messages.len()).rev() {
+                            let message = &messages[idx];
+                            let previous_message =
+                                idx.checked_sub(1).and_then(|idx| messages.get(idx));
+                            let show_sender_name = !pure_text_mode
+                                || previous_message
+                                    .is_none_or(|previous| previous.sender_id != message.sender_id);
+                            let show_separator_before = pure_text_mode
+                                && previous_message.is_some_and(|previous| {
+                                    previous.sender_id != message.sender_id
+                                });
+                            let show_date_separator = should_show_date_separator(
+                                previous_message.map(|message| message.date_text.as_str()),
+                                &message.date_text,
+                            );
+                            let height = cached_heights
+                                .and_then(|heights| heights.get(&message.msg_id))
+                                .copied()
+                                .unwrap_or_else(|| {
+                                    estimate_message_row_height(
+                                        message,
+                                        row_width,
+                                        line_height,
+                                        pure_text_mode,
+                                        forward_mode_active,
+                                        show_sender_name,
+                                        show_separator_before,
+                                    ) + if show_date_separator {
+                                        DATE_SEPARATOR_ESTIMATED_HEIGHT
+                                    } else {
+                                        0.0
+                                    }
+                                });
+
+                            rows.push(MessageRowLayout { top: 0.0, height });
+                        }
+                        rows.reverse();
+                    }
+
+                    let mut total_height = 0.0;
+                    for row in &mut rows {
+                        row.top = total_height;
+                        total_height += row.height;
+                    }
+                    rows
+                };
+                self.bridge_states[active_bridge_idx]
+                    .conversation_mut(room_id)
+                    .message_row_layouts = rows;
+            }
+
+            let initial_scroll_offset = if should_scroll_to_bottom {
+                let content_height = self.bridge_states[active_bridge_idx]
+                    .conversation(room_id)
+                    .and_then(|conversation| conversation.message_row_layouts.last())
+                    .map_or(0.0, |row| row.top + row.height);
+                (content_height - message_list_height).max(0.0)
+            } else {
+                saved_scroll_offset
+            };
             let scroll_output = egui::ScrollArea::vertical()
                 .id_salt(("message_list", active_bridge_idx, room_id))
-                .vertical_scroll_offset(saved_scroll_offset)
+                .vertical_scroll_offset(initial_scroll_offset)
+                .animated(!should_scroll_to_bottom)
                 .stick_to_bottom(true)
                 .min_scrolled_height(message_list_height)
                 .max_height(message_list_height)
                 .auto_shrink([false, false])
                 .show_viewport(ui, |ui, viewport| {
                     ui.set_min_width(ui.max_rect().width());
-
-                    let needs_row_layout = {
-                        let bridge_state = &self.bridge_states[active_bridge_idx];
-                        let conversation = bridge_state.conversation(room_id);
-                        let message_count =
-                            conversation.map_or(0, |conversation| conversation.messages.len());
-                        conversation.is_none_or(|conversation| {
-                            conversation.message_row_layouts.len() != message_count
-                        })
-                    };
-                    if needs_row_layout {
-                        let rows = {
-                            let bridge_state = &self.bridge_states[active_bridge_idx];
-                            let conversation = bridge_state.conversation(room_id);
-                            let messages = conversation.map(|conversation| &conversation.messages);
-                            let cached_heights =
-                                conversation.map(|conversation| &conversation.message_row_heights);
-                            let row_width = ui.available_width().max(48.0);
-                            let line_height = ui.text_style_height(&egui::TextStyle::Body);
-                            let mut rows = Vec::with_capacity(messages.map_or(0, Vec::len));
-                            let mut total_height = 0.0;
-                            let mut previous_sender_id = None;
-
-                            for message in messages.into_iter().flatten() {
-                                let show_sender_name = !pure_text_mode
-                                    || previous_sender_id != Some(message.sender_id);
-                                let show_separator_before = pure_text_mode
-                                    && previous_sender_id.is_some()
-                                    && previous_sender_id != Some(message.sender_id);
-                                let height = cached_heights
-                                    .and_then(|heights| heights.get(&message.msg_id))
-                                    .copied()
-                                    .unwrap_or_else(|| {
-                                        estimate_message_row_height(
-                                            message,
-                                            row_width,
-                                            line_height,
-                                            pure_text_mode,
-                                            forward_mode_active,
-                                            show_sender_name,
-                                            show_separator_before,
-                                        )
-                                    });
-
-                                rows.push(MessageRowLayout {
-                                    top: total_height,
-                                    height,
-                                });
-                                total_height += height;
-                                previous_sender_id = Some(message.sender_id);
-                            }
-                            rows
-                        };
-                        self.bridge_states[active_bridge_idx]
-                            .conversation_mut(room_id)
-                            .message_row_layouts = rows;
-                    }
 
                     match self.bridge_states[active_bridge_idx]
                         .conversation(room_id)
@@ -422,6 +489,12 @@ impl IcaApp {
                                 let show_separator_before = pure_text_mode
                                     && previous_sender_id.is_some()
                                     && previous_sender_id != Some(message.sender_id);
+                                let show_date_separator = should_show_date_separator(
+                                    idx.checked_sub(1).map(|previous_idx| {
+                                        messages[previous_idx].date_text.as_str()
+                                    }),
+                                    &message.date_text,
+                                );
                                 let forward_selected = forward_mode_active
                                     && forward_selected_ids
                                         .iter()
@@ -430,6 +503,9 @@ impl IcaApp {
                                     scroll_to_target.as_deref() == Some(&message.msg_id);
                                 let before_y = ui.cursor().min.y;
                                 ui.scope(|ui| {
+                                    if show_date_separator {
+                                        render_date_separator(ui, &message.date_text);
+                                    }
                                     if let Some(action) = self.render_message_card(
                                         ui,
                                         room_id,
@@ -476,10 +552,6 @@ impl IcaApp {
                         None => {
                             ui.weak("正在向 bridge 请求历史消息...");
                         }
-                    }
-
-                    if should_scroll_to_bottom {
-                        ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
                     }
                 });
 
@@ -774,7 +846,17 @@ impl IcaApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{fit_chat_body_heights, show_constrained_composer};
+    use super::{fit_chat_body_heights, should_show_date_separator, show_constrained_composer};
+
+    #[test]
+    fn date_separator_only_appears_when_the_date_changes() {
+        assert!(!should_show_date_separator(None, "2025/07/09"));
+        assert!(!should_show_date_separator(
+            Some("2025/07/09"),
+            "2025/07/09"
+        ));
+        assert!(should_show_date_separator(Some("2025/07/09"), "2025/07/10"));
+    }
 
     #[test]
     fn growing_composer_shrinks_message_list_without_exceeding_available_height() {
