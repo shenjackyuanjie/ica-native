@@ -38,7 +38,9 @@ pub struct IcaCfg {
     #[serde(default)]
     pub ui_setting: UiSetting,
     /// 聊天分组
-    #[serde(default)]
+    ///
+    /// 仅作为运行时状态存在：分组由 bridge 下发并同步回 bridge，不属于本地配置。
+    #[serde(skip)]
     pub chat_groups: ChatGroups,
     /// 定制聊天界面选项
     #[serde(default)]

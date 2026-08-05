@@ -552,7 +552,6 @@ impl IcaApp {
                 state.chat_groups = groups_clone;
                 state.invalidate_visible_room_indices();
             }
-            self.save_chat_groups();
             if let Some(bridge_idx) = self.active_bridge_idx {
                 self.sync_chat_groups_to_bridge(bridge_idx, &groups_before);
             }

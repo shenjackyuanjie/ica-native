@@ -159,22 +159,20 @@ impl IcaApp {
             state.selected_chat_group = selected_chat_group;
             state.invalidate_visible_room_indices();
         }
-        if let Some(group_idx) = updated_group {
-            self.save_chat_groups();
-            if let Some(bridge_idx) = active_bridge_idx
-                && let Some(group) = self.bridge_states[bridge_idx]
-                    .chat_groups
-                    .groups
-                    .get(group_idx)
-                    .cloned()
-            {
-                self.send_update_chat_group(
-                    bridge_idx,
-                    &group.name,
-                    &group.rooms,
-                    group.include_all_personal,
-                );
-            }
+        if let Some(group_idx) = updated_group
+            && let Some(bridge_idx) = active_bridge_idx
+            && let Some(group) = self.bridge_states[bridge_idx]
+                .chat_groups
+                .groups
+                .get(group_idx)
+                .cloned()
+        {
+            self.send_update_chat_group(
+                bridge_idx,
+                &group.name,
+                &group.rooms,
+                group.include_all_personal,
+            );
         }
     }
 

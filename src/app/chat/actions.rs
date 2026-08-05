@@ -302,18 +302,6 @@ impl IcaApp {
         }
     }
 
-    pub fn save_chat_groups(&mut self) {
-        let Some(groups) = self
-            .active_bridge_state()
-            .map(|state| state.chat_groups.clone())
-        else {
-            return;
-        };
-        self.update_config(|cfg| {
-            cfg.chat_groups = groups;
-        });
-    }
-
     pub(super) fn send_add_chat_group(
         &self,
         bridge_idx: usize,
