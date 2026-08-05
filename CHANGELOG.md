@@ -2,6 +2,15 @@
 
 本文件记录 ica-native 的变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格。
 
+## [0.1.12]
+
+### Changed
+- 适配 Icalingua 2.26 的 `sendMessage` Socket.IO 协议，图片统一通过 `media[]` 发送；多图消息不再编码成旧的 `raw` 消息负载。
+
+### Fixed
+- 修复图片发送仍使用旧 `b64img` 字段导致单图及多图消息无法发送的问题。
+- 修复合并转发查看对 2.26 JSON/XML 资源信息解析不完整的问题，支持资源 ID、文件名以及嵌套转发的 fallback 资源 ID。
+
 ## [0.1.11]
 
 ### Added
