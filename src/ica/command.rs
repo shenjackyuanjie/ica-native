@@ -117,6 +117,7 @@ pub enum IcaCommand {
         request_id: u64,
         res_id: String,
         file_name: Option<String>,
+        fallback_res_id: Option<String>,
     },
     SendMergedForward {
         nodes: Vec<JsonValue>,

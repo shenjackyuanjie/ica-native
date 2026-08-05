@@ -791,6 +791,7 @@ impl IcaApp {
                                             action = Some(MessageAction::OpenForward {
                                                 res_id: reference.res_id.clone(),
                                                 file_name: reference.file_name.clone(),
+                                                fallback_res_id: reference.fallback_res_id.clone(),
                                                 inline_messages: reference.inline_messages.clone(),
                                             });
                                         }
@@ -883,6 +884,7 @@ impl IcaApp {
                                     action = Some(MessageAction::OpenForward {
                                         res_id: reference.res_id.clone(),
                                         file_name: reference.file_name.clone(),
+                                        fallback_res_id: reference.fallback_res_id.clone(),
                                         inline_messages: reference.inline_messages.clone(),
                                     });
                                     ui.close();

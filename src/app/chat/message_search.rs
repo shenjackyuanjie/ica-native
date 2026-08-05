@@ -218,9 +218,10 @@ impl IcaApp {
             MessageAction::OpenForward {
                 res_id,
                 file_name,
+                fallback_res_id,
                 inline_messages,
             } => {
-                self.open_forward_reference(res_id, file_name, inline_messages);
+                self.open_forward_reference(res_id, file_name, fallback_res_id, inline_messages);
             }
             MessageAction::Image(ImageAction::Open(source)) => {
                 let sources = image_sources_for_messages(search_room_id, search_messages);

@@ -7,6 +7,7 @@ use crate::ica::{IcaCommand, types::message::Message};
 pub(super) struct ForwardReference {
     pub res_id: String,
     pub file_name: Option<String>,
+    pub fallback_res_id: Option<String>,
     pub inline_messages: Option<Vec<Message>>,
     pub preview: Vec<String>,
 }
@@ -31,6 +32,51 @@ fn code_res_id(code: &JsonValue) -> Option<String> {
         .pointer("/meta/detail/resid")?
         .as_str()
         .map(ToString::to_string)
+}
+
+fn code_file_name(code: &JsonValue) -> Option<String> {
+    code_as_json(code)?
+        .pointer("/meta/detail/uniseq")
+        .and_then(JsonValue::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToString::to_string)
+}
+
+fn xml_forward_resource(code: &JsonValue) -> (Option<String>, Option<String>) {
+    let Some(xml) = code
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return (None, None);
+    };
+    let document = match roxmltree::Document::parse(xml) {
+        Ok(document) => document,
+        Err(_) => return (None, None),
+    };
+    let node = document
+        .descendants()
+        .find(|node| node.attribute("m_resid").is_some() || node.attribute("m_fileName").is_some());
+    let Some(node) = node else {
+        return (None, None);
+    };
+    (
+        node.attribute("m_resid")
+            .filter(|value| !value.trim().is_empty())
+            .map(ToString::to_string),
+        node.attribute("m_fileName")
+            .filter(|value| !value.trim().is_empty())
+            .map(ToString::to_string),
+    )
+}
+
+fn forward_resource(code: &JsonValue) -> (Option<String>, Option<String>) {
+    let res_id = code_res_id(code);
+    let file_name = code_file_name(code);
+    if res_id.is_some() || file_name.is_some() {
+        return (res_id, file_name);
+    }
+    xml_forward_resource(code)
 }
 
 fn push_preview_line(lines: &mut Vec<String>, value: &str) {
@@ -119,21 +165,32 @@ pub(super) fn forward_reference(
     message: &Message,
     parent_res_id: Option<&str>,
 ) -> Option<ForwardReference> {
+    let (code_res_id, code_file_name) = forward_resource(&message.code);
+    let inline_messages = inline_forward_messages(&message.code);
     if let Some(res_id) = marker_value(&message.content, "[Forward: ") {
         return Some(ForwardReference {
-            res_id,
+            res_id: code_res_id.unwrap_or(res_id),
             file_name: None,
-            inline_messages: inline_forward_messages(&message.code),
+            fallback_res_id: None,
+            inline_messages,
             preview: forward_preview(&message.code),
         });
     }
 
-    let file_name = marker_value(&message.content, "[NestedForward: ")?;
-    let res_id = code_res_id(&message.code).or_else(|| parent_res_id.map(ToString::to_string))?;
+    let marker_file_name = marker_value(&message.content, "[NestedForward: ")?;
+    let res_id = parent_res_id
+        .map(ToString::to_string)
+        .or_else(|| code_res_id.clone())?;
+    let fallback_res_id = parent_res_id
+        .is_some()
+        .then_some(code_res_id)
+        .flatten()
+        .filter(|fallback| fallback != &res_id);
     Some(ForwardReference {
         res_id,
-        file_name: Some(file_name),
-        inline_messages: inline_forward_messages(&message.code),
+        file_name: code_file_name.or(Some(marker_file_name)),
+        fallback_res_id,
+        inline_messages,
         preview: forward_preview(&message.code),
     })
 }
@@ -239,6 +296,7 @@ impl IcaApp {
         &mut self,
         res_id: String,
         file_name: Option<String>,
+        fallback_res_id: Option<String>,
         inline_messages: Option<Vec<Message>>,
     ) {
         let Some(bridge_idx) = self.active_bridge_idx else {
@@ -250,7 +308,7 @@ impl IcaApp {
                 .open_inline(res_id, file_name, messages);
             return;
         }
-        self.request_forward_messages(bridge_idx, res_id, file_name);
+        self.request_forward_messages(bridge_idx, res_id, file_name, fallback_res_id);
     }
 
     fn request_forward_messages(
@@ -258,19 +316,23 @@ impl IcaApp {
         bridge_idx: usize,
         res_id: String,
         file_name: Option<String>,
+        fallback_res_id: Option<String>,
     ) {
         if res_id.trim().is_empty() {
             self.bridge_states[bridge_idx].forward_viewer.last_error =
                 Some("Res ID 不能为空".to_string());
             return;
         }
-        let request_id = self.bridge_states[bridge_idx]
-            .forward_viewer
-            .begin_request(res_id.clone(), file_name.clone());
+        let request_id = self.bridge_states[bridge_idx].forward_viewer.begin_request(
+            res_id.clone(),
+            file_name.clone(),
+            fallback_res_id.clone(),
+        );
         if let Err(error) = self.bridge_states[bridge_idx].send(IcaCommand::FetchForwardMessages {
             request_id,
             res_id,
             file_name,
+            fallback_res_id,
         }) {
             self.bridge_states[bridge_idx]
                 .forward_viewer
@@ -443,12 +505,17 @@ impl IcaApp {
                 bridge_idx,
                 res_id,
                 (!file_name.is_empty()).then_some(file_name),
+                self.bridge_states[bridge_idx]
+                    .forward_viewer
+                    .fallback_res_id
+                    .clone(),
             );
         }
         if let Some(reference) = nested_reference {
             self.open_forward_reference(
                 reference.res_id,
                 reference.file_name,
+                reference.fallback_res_id,
                 reference.inline_messages,
             );
         }
@@ -501,6 +568,34 @@ mod tests {
         let nested = forward_reference(&nested, Some("PARENT")).unwrap();
         assert_eq!(nested.res_id, "PARENT");
         assert_eq!(nested.file_name.as_deref(), Some("MultiMsg"));
+    }
+
+    #[test]
+    fn prefers_resource_metadata_and_keeps_nested_fallback() {
+        let remote = message(
+            "[Forward: display-value]",
+            json!({"meta": {"detail": {"resid": "CODE-RES"}}}),
+        );
+        assert_eq!(forward_reference(&remote, None).unwrap().res_id, "CODE-RES");
+
+        let nested = message(
+            "[NestedForward: marker-name]",
+            json!({"meta": {"detail": {"resid": "INNER-RES", "uniseq": "CODE-NAME"}}}),
+        );
+        let reference = forward_reference(&nested, Some("PARENT-RES")).unwrap();
+        assert_eq!(reference.res_id, "PARENT-RES");
+        assert_eq!(reference.fallback_res_id.as_deref(), Some("INNER-RES"));
+        assert_eq!(reference.file_name.as_deref(), Some("CODE-NAME"));
+    }
+
+    #[test]
+    fn parses_xml_forward_resource_metadata() {
+        let message = message(
+            "[Forward: display-value]",
+            JsonValue::String("<msg m_resid=\"XML-RES\" m_fileName=\"MultiMsg\" />".into()),
+        );
+        let reference = forward_reference(&message, None).unwrap();
+        assert_eq!(reference.res_id, "XML-RES");
     }
 
     #[test]

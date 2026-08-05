@@ -17,6 +17,12 @@ use super::ack_payload_values;
 
 const FORWARD_TIMEOUT: Duration = Duration::from_secs(15);
 
+fn is_forward_error_response(values: &[JsonValue]) -> bool {
+    values.len() == 1
+        && values[0].get("_id").and_then(JsonValue::as_i64) == Some(0)
+        && values[0].get("senderId").and_then(JsonValue::as_i64) == Some(0)
+}
+
 pub(super) async fn fetch_forward_messages(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
@@ -24,6 +30,7 @@ pub(super) async fn fetch_forward_messages(
     request_id: u64,
     res_id: String,
     file_name: Option<String>,
+    fallback_res_id: Option<String>,
 ) {
     let ack_received = Arc::new(AtomicBool::new(false));
     let ack_received_cb = ack_received.clone();
@@ -31,6 +38,7 @@ pub(super) async fn fetch_forward_messages(
     let bridge_id = bridge_key.to_string();
     let res_id_for_event = res_id.clone();
     let file_name_for_event = file_name.clone();
+    let fallback_for_callback = fallback_res_id.clone();
     let args = vec![
         json!(res_id),
         file_name
@@ -43,13 +51,62 @@ pub(super) async fn fetch_forward_messages(
             "getForwardMsg",
             args,
             FORWARD_TIMEOUT,
-            move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
+            move |payload: Payload, callback_client: Client| -> BoxFuture<'static, ()> {
                 let ack_received = ack_received_cb.clone();
                 let tx = tx.clone();
                 let bridge_id = bridge_id.clone();
                 let res_id = res_id_for_event.clone();
                 let file_name = file_name_for_event.clone();
+                let fallback_res_id = fallback_for_callback.clone();
                 Box::pin(async move {
+                    let values = ack_payload_values(&payload);
+                    if let Some(fallback_res_id) = fallback_res_id
+                        && is_forward_error_response(&values)
+                    {
+                        let fallback_tx = tx.clone();
+                        let fallback_bridge_id = bridge_id.clone();
+                        let fallback_ack_received = ack_received.clone();
+                        let fallback_result = callback_client
+                            .emit_with_ack(
+                                "getForwardMsg",
+                                vec![json!(fallback_res_id.clone()), JsonValue::Null],
+                                FORWARD_TIMEOUT,
+                                move |payload: Payload, _client: Client| {
+                                    let tx = fallback_tx.clone();
+                                    let bridge_id = fallback_bridge_id.clone();
+                                    let ack_received = fallback_ack_received.clone();
+                                    let res_id = fallback_res_id.clone();
+                                    Box::pin(async move {
+                                        ack_received.store(true, Ordering::SeqCst);
+                                        emit_ui_event(
+                                            &tx,
+                                            &bridge_id,
+                                            "forwardMessagesResponse",
+                                            json!({
+                                                "requestId": request_id,
+                                                "resId": res_id,
+                                                "fileName": JsonValue::Null,
+                                                "messages": ack_payload_values(&payload),
+                                            }),
+                                        );
+                                    })
+                                },
+                            )
+                            .await;
+                        if let Err(error) = fallback_result {
+                            ack_received.store(true, Ordering::SeqCst);
+                            emit_ui_event(
+                                &tx,
+                                &bridge_id,
+                                "forwardMessagesFailed",
+                                json!({
+                                    "requestId": request_id,
+                                    "message": error.to_string(),
+                                }),
+                            );
+                        }
+                        return;
+                    }
                     ack_received.store(true, Ordering::SeqCst);
                     emit_ui_event(
                         &tx,
@@ -59,7 +116,7 @@ pub(super) async fn fetch_forward_messages(
                             "requestId": request_id,
                             "resId": res_id,
                             "fileName": file_name,
-                            "messages": ack_payload_values(&payload),
+                            "messages": values,
                         }),
                     );
                 })

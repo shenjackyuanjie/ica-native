@@ -24,8 +24,8 @@ mod history;
 mod http_send;
 mod message_payload;
 use file_upload::upload_and_send_file;
-use http_send::{http_send_message, http_send_value, request_send_token};
-use message_payload::build_multi_image_raw_payload;
+use http_send::{http_send_message, request_send_token};
+use message_payload::build_multi_image_message;
 
 fn ack_payload_values(payload: &Payload) -> Vec<JsonValue> {
     match payload {
@@ -64,7 +64,7 @@ async fn send_message(
     api_base_url: &str,
 ) {
     let room_id = message.room_id;
-    if message.has_b64img() {
+    if message.has_base64_media() {
         match request_send_token(client).await {
             Ok(token) => {
                 if let Err(e) = http_send_message(api_base_url, &token, &message).await {
@@ -260,43 +260,14 @@ pub(super) async fn handle_command(
             mentions,
             images,
         } => {
-            let encoded_payload = tokio::task::spawn_blocking(move || {
-                build_multi_image_raw_payload(
-                    room_id,
-                    &content,
-                    reply_to.as_ref(),
-                    &mentions,
-                    &images,
-                )
+            let encoded_message = tokio::task::spawn_blocking(move || {
+                build_multi_image_message(room_id, &content, reply_to.as_ref(), &mentions, &images)
             })
             .await;
-            match encoded_payload {
-                Ok(payload) => match request_send_token(client).await {
-                    Ok(token) => {
-                        if let Err(e) = http_send_value(api_base_url, &token, &payload).await {
-                            emit_ui_event(
-                                event_tx,
-                                bridge_key,
-                                "commandFailed",
-                                json!({
-                                    "kind": "sendMultiImageMessage",
-                                    "roomId": room_id,
-                                    "message": e,
-                                }),
-                            );
-                        }
-                    }
-                    Err(e) => emit_ui_event(
-                        event_tx,
-                        bridge_key,
-                        "commandFailed",
-                        json!({
-                            "kind": "sendMultiImageMessage",
-                            "roomId": room_id,
-                            "message": e,
-                        }),
-                    ),
-                },
+            match encoded_message {
+                Ok(message) => {
+                    send_message(message, client, event_tx, bridge_key, api_base_url).await;
+                }
                 Err(e) => emit_ui_event(
                     event_tx,
                     bridge_key,
@@ -378,9 +349,16 @@ pub(super) async fn handle_command(
             request_id,
             res_id,
             file_name,
+            fallback_res_id,
         } => {
             forward::fetch_forward_messages(
-                client, event_tx, bridge_key, request_id, res_id, file_name,
+                client,
+                event_tx,
+                bridge_key,
+                request_id,
+                res_id,
+                file_name,
+                fallback_res_id,
             )
             .await;
         }

@@ -664,9 +664,15 @@ impl IcaApp {
                     .get("requestId")
                     .and_then(JsonValue::as_u64)
                     .unwrap_or_default();
+                let res_id = payload
+                    .get("resId")
+                    .and_then(JsonValue::as_str)
+                    .map(ToString::to_string);
                 match payload.get("messages").map(Vec::<Message>::deserialize) {
                     Some(Ok(messages)) => {
-                        state.forward_viewer.apply_response(request_id, messages);
+                        state
+                            .forward_viewer
+                            .apply_response(request_id, res_id, messages);
                     }
                     Some(Err(error)) => {
                         state

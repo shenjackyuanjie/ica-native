@@ -709,9 +709,15 @@ impl IcaApp {
                     MessageAction::OpenForward {
                         res_id,
                         file_name,
+                        fallback_res_id,
                         inline_messages,
                     } => {
-                        self.open_forward_reference(res_id, file_name, inline_messages);
+                        self.open_forward_reference(
+                            res_id,
+                            file_name,
+                            fallback_res_id,
+                            inline_messages,
+                        );
                     }
                     MessageAction::Image(action) => {
                         self.handle_image_action(ui.ctx(), active_bridge_idx, action);
