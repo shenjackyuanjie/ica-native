@@ -338,6 +338,10 @@ pub fn install_tracking_image_loader(ctx: &Context, settings: ImageCacheSettings
 
     let memory_max_bytes = settings.memory_max_bytes;
     let loader = Arc::new(TrackingImageLoader::new(settings));
+    // 不要为了偶发加载失败给 egui_extras 再开启 image/gif/webp loader：
+    // main 中启用的 file/http/svg 负责取字节和 SVG，本模块的 tracking/gif/texture
+    // loader 已负责位图解码与纹理上传。额外安装重叠 loader 只会产生另一套缓存和解码路径；
+    // 若仍有失败，应优先检查 bytes loader 的网络响应、重试状态和本 worker 队列。
     raw::install(ctx, loader.raw_cache.clone());
     ctx.add_image_loader(loader);
     gif::install(ctx, memory_max_bytes);
