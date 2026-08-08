@@ -11,6 +11,10 @@ icalingua but native
   - Kimi K2.5
   - GPT 5.2
   - GPT 5.5
-  - DeepSeek V4 Flash
+  - GPT 5.6 Sol
+  - GPT 5.6 Luna
+  - DeepSeek V4 Flash Preview
+  - DeepSeek V4 Flash 0731
   - Claude Opus 4.8
+  - Claude Fable 5 (只用了一次)
   - Kimi K2 thinking
