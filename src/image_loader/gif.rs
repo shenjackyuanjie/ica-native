@@ -34,14 +34,14 @@ struct AnimatedImage {
 impl AnimatedImage {
     fn load_gif(data: &[u8]) -> Result<Self, String> {
         let decoder = image::codecs::gif::GifDecoder::new(Cursor::new(data))
-            .map_err(|err| format!("Failed to decode gif: {err}"))?;
+            .map_err(|err| format!("GIF 解码失败: {err}"))?;
 
         let mut frames = Vec::new();
         let mut durations = Vec::new();
         let mut byte_size = size_of::<Self>() as u64;
 
         for frame in decoder.into_frames() {
-            let frame = frame.map_err(|err| format!("Failed to decode gif: {err}"))?;
+            let frame = frame.map_err(|err| format!("GIF 解码失败: {err}"))?;
             let img = frame.buffer();
             let pixels = img.as_flat_samples();
             let image = ColorImage::from_rgba_unmultiplied(
@@ -131,7 +131,7 @@ impl GifState {
 
             self.total_bytes = self.total_bytes.saturating_sub(entry.image.byte_size);
             debug!(
-                "gif cache evict: uri={} bytes={} total_after={} max={}",
+                "淘汰 GIF 缓存: uri={} bytes={} total_after={} max={}",
                 uri,
                 format_bytes(entry.image.byte_size),
                 format_bytes(self.total_bytes),
@@ -208,7 +208,7 @@ impl ImageLoader for BoundedGifLoader {
                 }
 
                 let image = Arc::new(AnimatedImage::load_gif(&bytes).map_err(|err| {
-                    warn!("gif decode failed: uri={} err={}", image_uri, err);
+                    warn!("GIF 解码失败: uri={} err={}", image_uri, err);
                     LoadError::Loading(err)
                 })?);
                 ctx.data_mut(|data| {

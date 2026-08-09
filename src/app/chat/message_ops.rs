@@ -109,7 +109,7 @@ impl IcaApp {
         }
 
         if let Some(e) = send_failed {
-            tracing::warn!("send sendMessage command failed: {}", e);
+            tracing::warn!(error = %e, room_id, "发送 sendMessage 命令失败");
             conversation.draft = content;
             conversation.reply_to = reply_to;
             conversation.mentions = mentions;
@@ -132,9 +132,9 @@ impl IcaApp {
         };
         if let Err(e) = self.bridge_states[bridge_idx].send(IcaCommand::RenewMessage {
             room_id,
-            message_id,
+            message_id: message_id.clone(),
         }) {
-            tracing::warn!("send renewMessage command failed: {}", e);
+            tracing::warn!(error = %e, room_id, message_id, "发送 renewMessage 命令失败");
         }
     }
 
@@ -145,7 +145,7 @@ impl IcaApp {
 
         let message = DeleteMessage::new(room_id, message_id.clone());
         if let Err(e) = self.bridge_states[bridge_idx].send(IcaCommand::DeleteMessage(message)) {
-            tracing::warn!("send deleteMessage command failed: {}", e);
+            tracing::warn!(error = %e, room_id, message_id, "发送 deleteMessage 命令失败");
             if let Some(state) = self.active_bridge_state_mut() {
                 state.last_error = Some(format!("撤回消息命令发送失败: {}", message_id));
             }
@@ -170,7 +170,7 @@ impl IcaApp {
         };
 
         if let Err(e) = self.bridge_states[bridge_idx].send(command) {
-            tracing::warn!("send reveal/hide message command failed: {}", e);
+            tracing::warn!(error = %e, room_id, message_id, "发送显示或隐藏消息命令失败");
             if let Some(state) = self.active_bridge_state_mut() {
                 state.last_error = Some(format!("显示/隐藏消息命令发送失败: {}", message_id));
             }
@@ -223,7 +223,7 @@ impl IcaApp {
             flag: flag.clone(),
             accept,
         }) {
-            tracing::warn!("send handleRequest command failed: {}", e);
+            tracing::warn!(error = %e, request_type, flag = %flag, "发送 handleRequest 命令失败");
             if let Some(state) = self.active_bridge_state_mut() {
                 state.last_error = Some(format!("验证消息操作发送失败: {}", flag));
             }

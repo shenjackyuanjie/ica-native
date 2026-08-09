@@ -562,13 +562,14 @@ impl IcaApp {
             return;
         };
 
+        let event = event.into();
         let command = IcaCommand::SocketApiCall {
-            event: event.into(),
+            event: event.clone(),
             args,
             expect_ack,
         };
         if let Err(e) = self.bridge_states[bridge_idx].send(command) {
-            tracing::warn!("send socket api command failed: {}", e);
+            tracing::warn!(error = %e, event = %event, "发送 Socket API 命令失败");
             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                 state.last_error = Some("Socket API 命令发送失败".to_string());
             }

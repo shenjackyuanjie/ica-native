@@ -30,15 +30,15 @@ impl BridgeEvent {
     pub fn from_wire_value(value: JsonValue) -> Result<Self, String> {
         let object = value
             .as_object()
-            .ok_or_else(|| "bridge event must be an object".to_string())?;
+            .ok_or_else(|| "bridge 事件必须是对象".to_string())?;
         let bridge_key = object
             .get("bridge")
             .and_then(JsonValue::as_str)
-            .ok_or_else(|| "bridge event is missing bridge".to_string())?;
+            .ok_or_else(|| "bridge 事件缺少 bridge 字段".to_string())?;
         let name = object
             .get("event")
             .and_then(JsonValue::as_str)
-            .ok_or_else(|| "bridge event is missing event".to_string())?;
+            .ok_or_else(|| "bridge 事件缺少 event 字段".to_string())?;
         Ok(Self::from_protocol(
             bridge_key,
             name,

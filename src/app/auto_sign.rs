@@ -326,7 +326,7 @@ impl IcaApp {
 
                 if !self.auto_sign.rooms.is_empty() {
                     ui.separator();
-                    ui.weak(format!("Bridge: {}", self.auto_sign.bridge_key));
+                    ui.weak(format!("当前 bridge：{}", self.auto_sign.bridge_key));
                     egui::ScrollArea::vertical()
                         .id_salt("auto_sign_rooms")
                         .max_height(120.0)

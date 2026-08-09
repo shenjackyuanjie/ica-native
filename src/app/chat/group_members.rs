@@ -331,6 +331,7 @@ impl IcaApp {
             if let Err(error) = result
                 && let Some(state) = self.active_bridge_state_mut()
             {
+                tracing::warn!(error = %error, "发送群管理请求失败");
                 state.last_error = Some(format!("群管理请求发送失败: {error}"));
             }
         }

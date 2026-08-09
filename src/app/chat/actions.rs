@@ -36,7 +36,7 @@ impl IcaApp {
             room_id,
             content: chain,
         }) {
-            tracing::warn!("send raw sendMessage command failed: {}", e);
+            tracing::warn!(error = %e, room_id, "发送原始 sendMessage 命令失败");
             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                 state.last_error = Some(format!("原样发送命令发送失败: {}", room_id));
             }
@@ -116,7 +116,7 @@ impl IcaApp {
         );
 
         if let Err(e) = self.bridge_states[bridge_idx].send(IcaCommand::SendMessage(outgoing)) {
-            tracing::warn!("send cloned sendMessage command failed: {}", e);
+            tracing::warn!(error = %e, room_id = target_room_id, "发送克隆消息的 sendMessage 命令失败");
             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                 state.last_error = Some(format!("消息发送失败: {}", target_room_id));
             }
@@ -398,7 +398,7 @@ impl IcaApp {
         state.bump_rooms_revision();
 
         if let Err(e) = self.bridge_states[bridge_idx].send(IcaCommand::PinRoom { room_id, pin }) {
-            tracing::warn!("send pinRoom command failed: {}", e);
+            tracing::warn!(error = %e, room_id, "发送 pinRoom 命令失败");
             if let Some(room) = self.bridge_states[bridge_idx]
                 .rooms
                 .iter_mut()
@@ -422,7 +422,7 @@ impl IcaApp {
         }
         state.bump_rooms_revision();
         if let Err(e) = self.bridge_states[bridge_idx].send(IcaCommand::RemoveChat(room_id)) {
-            tracing::warn!("send removeChat command failed: {}", e);
+            tracing::warn!(error = %e, room_id, "发送 removeChat 命令失败");
         }
     }
 
@@ -430,7 +430,7 @@ impl IcaApp {
         if let Err(e) =
             self.bridge_states[bridge_idx].send(IcaCommand::IgnoreChat { room_id, room_name })
         {
-            tracing::warn!("send ignoreChat command failed: {}", e);
+            tracing::warn!(error = %e, room_id, "发送 ignoreChat 命令失败");
         }
     }
 
@@ -449,7 +449,7 @@ impl IcaApp {
 
         let online_mode = self.online_mode;
         if let Err(e) = self.bridge_states[bridge_idx].send(IcaCommand::SetOnlineStatus(status)) {
-            tracing::warn!("send setOnlineStatus command failed: {}", e);
+            tracing::warn!(error = %e, status, "发送 setOnlineStatus 命令失败");
             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                 state.last_error = Some("在线状态命令发送失败".to_string());
             }
@@ -463,7 +463,7 @@ impl IcaApp {
             return;
         };
         if let Err(e) = self.bridge_states[bridge_idx].send(IcaCommand::SendGroupSign { room_id }) {
-            tracing::warn!("send sendGroupSign command failed: {}", e);
+            tracing::warn!(error = %e, room_id, "发送 sendGroupSign 命令失败");
             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                 state.last_error = Some("群签到命令发送失败".to_string());
             }
@@ -477,7 +477,7 @@ impl IcaApp {
         if let Err(e) =
             self.bridge_states[bridge_idx].send(IcaCommand::SendGroupPoke { room_id, target_id })
         {
-            tracing::warn!("send sendGroupPoke command failed: {}", e);
+            tracing::warn!(error = %e, room_id, target_id, "发送 sendGroupPoke 命令失败");
             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                 state.last_error = Some("戳一戳命令发送失败".to_string());
             }

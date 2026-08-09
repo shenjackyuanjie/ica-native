@@ -91,7 +91,7 @@ impl StickerStore {
     pub fn root(&self) -> PathBuf {
         self.inner
             .read()
-            .expect("sticker store poisoned")
+            .expect("收藏表情存储锁被污染")
             .root
             .clone()
     }
@@ -99,7 +99,7 @@ impl StickerStore {
     pub fn fallback_notice(&self) -> Option<String> {
         self.inner
             .read()
-            .expect("sticker store poisoned")
+            .expect("收藏表情存储锁被污染")
             .fallback_notice
             .clone()
     }
@@ -107,7 +107,7 @@ impl StickerStore {
     pub fn entries(&self) -> Vec<StickerEntry> {
         self.inner
             .read()
-            .expect("sticker store poisoned")
+            .expect("收藏表情存储锁被污染")
             .entries
             .clone()
     }
@@ -173,7 +173,7 @@ impl StickerStore {
             entries.sort_by(|left, right| left.name.cmp(&right.name));
         }
         let count = entries.len();
-        self.inner.write().expect("sticker store poisoned").entries = entries;
+        self.inner.write().expect("收藏表情存储锁被污染").entries = entries;
         Ok(count)
     }
 
@@ -181,7 +181,7 @@ impl StickerStore {
         let detected = detect_image(bytes)?;
         // Serialize writes performed through this store so two simultaneous
         // favorites cannot choose the same timestamp/hash destination.
-        let state = self.inner.write().expect("sticker store poisoned");
+        let state = self.inner.write().expect("收藏表情存储锁被污染");
         let root = state.root.clone();
         ensure_writable_directory(&root)?;
 

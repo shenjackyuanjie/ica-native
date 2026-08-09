@@ -30,12 +30,12 @@ impl IcaApp {
         state.message_search.start_request(keyword.clone(), offset);
         let command = IcaCommand::SearchMessages {
             room_id,
-            keyword,
+            keyword: keyword.clone(),
             offset,
         };
 
         if let Err(e) = self.bridge_states[bridge_idx].send(command) {
-            tracing::warn!("send searchMessages command failed: {}", e);
+            tracing::warn!(error = %e, room_id, keyword = %keyword, "发送 searchMessages 命令失败");
             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                 state
                     .message_search

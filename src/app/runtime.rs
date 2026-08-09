@@ -23,7 +23,7 @@ impl AppRuntime {
             .worker_threads(config.tokio_rt_work_thread as usize)
             .enable_all()
             .build()
-            .expect("failed to build tokio runtime");
+            .expect("创建 Tokio runtime 失败");
 
         let (bridge_tx, mut bridge_rx) = unbounded_channel::<BridgeEvent>();
         let (event_tx, event_rx) = unbounded_channel::<AppEvent>();
@@ -59,7 +59,7 @@ impl AppRuntime {
             let event_tx = bridge_tx.clone();
             tokio.spawn(async move {
                 if let Err(error) = ica::run_bridge(stop_rx, &bridge, event_tx, command_rx).await {
-                    tracing::error!("socketio bridge {bridge_key} stopped with error: {error}");
+                    tracing::error!(bridge = %bridge_key, error = %error, "Socket.IO bridge 异常停止");
                 }
             });
         }

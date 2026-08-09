@@ -42,7 +42,7 @@ impl IcalinguaInfo {
                         .unwrap_or("1")
                         .parse::<u16>()
                         .unwrap_or_else(|e| {
-                            warn!("client_count parse error: {}|raw: {}", e, info);
+                            warn!("client_count 解析失败: {}|原始数据: {}", e, info);
                             1
                         }),
                 );
@@ -51,31 +51,31 @@ impl IcalinguaInfo {
 
         Self {
             ica_version: ica_version.unwrap_or_else(|| {
-                warn!("ica_version failed to parse");
+                warn!("ica_version 解析失败");
                 "UNKNOWN".to_string()
             }),
             os_info: os_info.unwrap_or_else(|| {
-                warn!("os_info failed to parse");
+                warn!("os_info 解析失败");
                 "UNKNOWN".to_string()
             }),
             resident_set_size: resident_set_size.unwrap_or_else(|| {
-                warn!("resident_set_size failed to parse");
+                warn!("resident_set_size 解析失败");
                 "UNKNOWN".to_string()
             }),
             heap_used: heap_used.unwrap_or_else(|| {
-                warn!("heap_used failed to parse");
+                warn!("heap_used 解析失败");
                 "UNKNOWN".to_string()
             }),
             load: load.unwrap_or_else(|| {
-                warn!("load failed to parse");
+                warn!("load 解析失败");
                 "UNKNOWN".to_string()
             }),
             server_node: server_node.unwrap_or_else(|| {
-                warn!("server_node failed to parse");
+                warn!("server_node 解析失败");
                 "UNKNOWN".to_string()
             }),
             client_count: client_count.unwrap_or_else(|| {
-                warn!("client_count failed to parse");
+                warn!("client_count 解析失败");
                 1
             }),
         }
@@ -94,26 +94,26 @@ pub struct OnlineData {
 impl OnlineData {
     pub fn new_from_json(value: &JsonValue) -> Self {
         let bkn = value["bkn"].as_i64().unwrap_or_else(|| {
-            warn!("bkn not found in online data");
+            warn!("online data 中缺少 bkn");
             -1
         });
         let nick = value["nick"]
             .as_str()
             .unwrap_or_else(|| {
-                warn!("nick not found in online data");
+                warn!("online data 中缺少 nick");
                 "UNKNOWN"
             })
             .to_string();
         let online = value["online"].as_bool().unwrap_or_else(|| {
-            warn!("online not found in online data");
+            warn!("online data 中缺少 online");
             false
         });
         let qqid = value["uin"].as_i64().unwrap_or_else(|| {
-            warn!("uin not found in online data");
+            warn!("online data 中缺少 uin");
             -1
         });
         let sys_info = value["sysInfo"].as_str().unwrap_or_else(|| {
-            warn!("sysInfo not found in online data");
+            warn!("online data 中缺少 sysInfo");
             ""
         });
 

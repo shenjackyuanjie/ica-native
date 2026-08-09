@@ -69,7 +69,7 @@ impl IcaApp {
             let _ = ui.checkbox(&mut self.open_page.custom_chat_ica, "定制聊天界面(ica)");
             let _ = ui.checkbox(&mut self.open_page.custom_chat_extra, "定制聊天界面(extra)");
             let _ = ui.checkbox(&mut self.open_page.online_status, "在线状态");
-            let _ = ui.checkbox(&mut self.open_page.socketio_status, "Socketio 状态");
+            let _ = ui.checkbox(&mut self.open_page.socketio_status, "Socket.IO 状态");
             let contacts_was_open = self.open_page.contacts;
             let _ = ui.checkbox(&mut self.open_page.contacts, "联系人");
             if !contacts_was_open && self.open_page.contacts {

@@ -48,7 +48,7 @@ impl DiskCache {
             .tracked_bytes
             .store(cache.scan_total_bytes(), Ordering::Relaxed);
 
-        info!("disk image cache dir: {:?}", cache.root);
+        info!("图片磁盘缓存目录: {:?}", cache.root);
         Some(cache)
     }
 
@@ -62,21 +62,15 @@ impl DiskCache {
             return;
         }
 
-        let _guard = self
-            .mutation_lock
-            .lock()
-            .expect("disk cache mutation lock poisoned");
+        let _guard = self.mutation_lock.lock().expect("磁盘缓存修改锁被污染");
 
         if let Err(err) = self.save_locked(uri, bytes) {
-            warn!("disk cache write failed: uri={} err={}", uri, err);
+            warn!("写入图片磁盘缓存失败: uri={} err={}", uri, err);
         }
     }
 
     pub fn remove(&self, uri: &str) {
-        let _guard = self
-            .mutation_lock
-            .lock()
-            .expect("disk cache mutation lock poisoned");
+        let _guard = self.mutation_lock.lock().expect("磁盘缓存修改锁被污染");
 
         let path = self.cache_path(uri);
         let old_size = fs::metadata(&path).map_or(0, |metadata| metadata.len());
@@ -87,15 +81,11 @@ impl DiskCache {
                     Ordering::Relaxed,
                     |total| Some(total.saturating_sub(old_size)),
                 );
-                debug!("disk cache removed: {}", path.display());
+                debug!("已删除图片磁盘缓存: {}", path.display());
             }
             Err(err) if err.kind() == io::ErrorKind::NotFound => {}
             Err(err) => {
-                warn!(
-                    "disk cache remove failed: path={} err={}",
-                    path.display(),
-                    err
-                );
+                warn!("删除图片磁盘缓存失败: path={} err={}", path.display(), err);
             }
         }
     }
@@ -144,7 +134,7 @@ impl DiskCache {
             });
 
         debug!(
-            "disk cache saved: uri={} path={} raw_bytes={}",
+            "图片磁盘缓存已保存: uri={} path={} raw_bytes={}",
             uri,
             path.display(),
             format_bytes(bytes.len() as u64)
@@ -219,18 +209,14 @@ impl DiskCache {
                 Ok(()) => {
                     total_bytes = total_bytes.saturating_sub(*size);
                     debug!(
-                        "disk cache evict: removed={} size={} total_after={}",
+                        "已淘汰图片磁盘缓存: removed={} size={} total_after={}",
                         path.display(),
                         format_bytes(*size),
                         format_bytes(total_bytes)
                     );
                 }
                 Err(err) => {
-                    warn!(
-                        "disk cache evict failed: path={} err={}",
-                        path.display(),
-                        err
-                    );
+                    warn!("淘汰图片磁盘缓存失败: path={} err={}", path.display(), err);
                 }
             }
         }

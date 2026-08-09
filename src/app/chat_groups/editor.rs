@@ -93,7 +93,7 @@ impl ChatGroupEditor {
                                     TextEdit::singleline(&mut self.editing_name)
                                         .desired_width(ui.available_width().clamp(100.0, 220.0)),
                                 );
-                                if ui.button("ok").clicked() {
+                                if ui.button("确定").clicked() {
                                     let new_name = self.editing_name.trim().to_string();
                                     if new_name.is_empty() {
                                         self.error_msg = Some("分组名称不能为空".to_string());
@@ -111,13 +111,13 @@ impl ChatGroupEditor {
                                         dirty = true;
                                     }
                                 }
-                                if ui.button("cancel").clicked() {
+                                if ui.button("取消").clicked() {
                                     self.editing_index = None;
                                     self.editing_name.clear();
                                 }
                             } else {
                                 ui.strong(&group_name);
-                                if ui.button("rename").on_hover_text("重命名").clicked() {
+                                if ui.button("重命名").clicked() {
                                     self.editing_index = Some(idx);
                                     self.editing_name = group_name.clone();
                                 }
@@ -125,12 +125,10 @@ impl ChatGroupEditor {
 
                             ui.separator();
 
-                            if idx > 0 && ui.button("up").on_hover_text("上移").clicked() {
+                            if idx > 0 && ui.button("上移").clicked() {
                                 move_up = Some(idx);
                             }
-                            if idx + 1 < group_count
-                                && ui.button("down").on_hover_text("下移").clicked()
-                            {
+                            if idx + 1 < group_count && ui.button("下移").clicked() {
                                 move_down = Some(idx);
                             }
 
@@ -140,7 +138,7 @@ impl ChatGroupEditor {
                                 dirty = true;
                             }
 
-                            if ui.button("del").on_hover_text("删除分组").clicked() {
+                            if ui.button("删除").on_hover_text("删除分组").clicked() {
                                 remove_idx = Some(idx);
                             }
                         });

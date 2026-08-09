@@ -80,7 +80,7 @@ pub struct LoaderState {
 impl LoaderState {
     pub fn new(max_ready_bytes: u64) -> Self {
         let error_capacity =
-            NonZeroUsize::new(MAX_ERROR_ENTRIES).expect("MAX_ERROR_ENTRIES must be non-zero");
+            NonZeroUsize::new(MAX_ERROR_ENTRIES).expect("MAX_ERROR_ENTRIES 必须大于零");
 
         Self {
             max_ready_bytes,
@@ -236,7 +236,7 @@ impl LoaderState {
         ) {
             self.error_bytes = self.error_bytes.saturating_sub(old.message.len() as u64);
             if evicted_uri != uri {
-                debug!("image error cache evict: uri={}", evicted_uri);
+                debug!("淘汰图片错误缓存: uri={}", evicted_uri);
             }
         }
         self.error_bytes = self.error_bytes.saturating_add(message.len() as u64);
@@ -317,7 +317,7 @@ impl LoaderState {
 
             self.ready_bytes = self.ready_bytes.saturating_sub(entry.byte_size);
             debug!(
-                "image ready cache evict: uri={} bytes={} total_after={} max={}",
+                "淘汰已就绪图片缓存: uri={} bytes={} total_after={} max={}",
                 uri,
                 format_bytes(entry.byte_size),
                 format_bytes(self.ready_bytes),
@@ -342,7 +342,7 @@ mod tests {
     fn begin(state: &mut LoaderState, uri: &str, now: Instant) -> u64 {
         match state.prepare_load(uri, now) {
             PrepareLoad::WaitingBytes { generation } => generation,
-            _ => panic!("expected pending image"),
+            _ => panic!("此处应当是等待中的图片"),
         }
     }
 

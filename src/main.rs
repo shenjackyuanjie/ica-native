@@ -110,7 +110,7 @@ fn egui_main() -> anyhow::Result<()> {
             }
         }),
     )
-    .expect("error in eframe::run_native");
+    .expect("eframe::run_native 运行失败");
 
     memory_probe::log("egui_main:exit");
     config_store.save()?;

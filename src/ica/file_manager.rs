@@ -58,7 +58,7 @@ pub(super) async fn call_file_manager(
                         .emit("auth", vec![json!(token), json!("fileMgr")])
                         .await
                     {
-                        tracing::warn!("fileMgr auth emit failed: {}", e);
+                        tracing::warn!(error = %e, "发送 fileMgr 认证事件失败");
                     }
                 })
             },
@@ -140,7 +140,7 @@ pub(super) async fn call_file_manager(
     }
 
     if let Err(e) = file_client.disconnect().await {
-        tracing::warn!("fileMgr disconnect failed: {}", e);
+        tracing::warn!(error = %e, "断开 fileMgr 连接失败");
     }
     Ok(())
 }
@@ -163,7 +163,7 @@ async fn emit_file_manager_with_ack(
                 Box::pin(async move {
                     let values = ack_payload_values(&payload);
                     tracing::debug!(
-                        "fileMgr ack received: event={} ack={}",
+                        "收到 fileMgr ACK: event={} ack={}",
                         event,
                         json_preview(&JsonValue::Array(values.clone()), 512)
                     );

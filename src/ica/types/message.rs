@@ -237,7 +237,7 @@ impl<'de> Deserialize<'de> for Message {
         let msg_id = match json.get("_id") {
             Some(JsonValue::String(value)) => value.clone(),
             Some(JsonValue::Number(value)) => value.to_string(),
-            _ => return Err(de::Error::custom("missing or invalid _id")),
+            _ => return Err(de::Error::custom("缺少或无效的 _id")),
         };
 
         // 发送者 id (Optional)
@@ -247,14 +247,14 @@ impl<'de> Deserialize<'de> for Message {
         let sender_name = json
             .get("username")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| de::Error::custom("missing or invalid username"))?
+            .ok_or_else(|| de::Error::custom("缺少或无效的 username"))?
             .to_string();
 
         // 消息内容
         let content = json
             .get("content")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| de::Error::custom("missing or invalid content"))?
+            .ok_or_else(|| de::Error::custom("缺少或无效的 content"))?
             .to_string();
 
         // xml / json 内容
@@ -276,7 +276,7 @@ impl<'de> Deserialize<'de> for Message {
         let role = json
             .get("role")
             .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
+            .unwrap_or("未知")
             .to_string();
 
         // 文件列表
@@ -304,11 +304,10 @@ impl<'de> Deserialize<'de> for Message {
                 && file.url.trim().is_empty()
             {
                 tracing::warn!(
-                    "image file missing url: msg_id={} sender={} raw_file={}",
+                    "图片文件缺少 URL: msg_id={} sender={} raw_file={}",
                     msg_id,
                     sender_name,
-                    serde_json::to_string(file)
-                        .unwrap_or_else(|_| "<serialize failed>".to_string())
+                    serde_json::to_string(file).unwrap_or_else(|_| "<序列化失败>".to_string())
                 );
             }
         }

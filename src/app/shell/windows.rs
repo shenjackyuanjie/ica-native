@@ -410,11 +410,11 @@ impl IcaApp {
         // Socketio 状态
         let mut socketio_status_open = self.open_page.socketio_status;
         let mut send_socket_api = false;
-        egui::Window::new("Socketio 状态")
+        egui::Window::new("Socket.IO 状态")
             .open(&mut socketio_status_open)
             .collapsible(true)
             .show(&ctx, |ui| {
-                ui.heading("Socketio 状态");
+                ui.heading("Socket.IO 状态");
                 if self.bridge_states.is_empty() {
                     ui.weak("当前没有启用的 bridge");
                     return;
@@ -425,7 +425,7 @@ impl IcaApp {
                         ui.horizontal(|ui| {
                             ui.strong(&state.bridge_key);
                             ui.separator();
-                            ui.label(format!("Socket: {}", state.socket_state));
+                            ui.label(format!("连接状态：{}", state.socket_state));
                             ui.label(format!("认证: {}", state.auth_state));
                         });
                         ui.label(format!("房间数: {}", state.rooms.len()));

@@ -172,17 +172,14 @@ pub async fn run_bridge(
             Ok(client) => {
                 tracing::info!(
                     "{}",
-                    format!(
-                        "socketio connected time: {:?}",
-                        start_connect_time.elapsed()
-                    )
+                    format!("Socket.IO 连接耗时: {:?}", start_connect_time.elapsed())
                 );
                 reconnect_attempt = 0;
                 emit_ui_event(&event_tx, &bridge_key, "socketConnected", JsonValue::Null);
                 client
             }
             Err(e) => {
-                tracing::error!("socketio connect failed: {}", e);
+                tracing::error!(error = %e, "Socket.IO 连接失败");
                 emit_ui_event(
                     &event_tx,
                     &bridge_key,
@@ -238,10 +235,10 @@ pub async fn run_bridge(
                 _ = &mut stop_alrm => {
                     match client.disconnect().await {
                         Ok(_) => {
-                            tracing::info!("Disconnected: {}", bridge_key);
+                            tracing::info!(bridge = %bridge_key, "Socket.IO bridge 已断开");
                         }
                         Err(e) => {
-                            tracing::warn!("Failed to disconnect {}: {}", bridge_key, e);
+                            tracing::warn!(bridge = %bridge_key, error = %e, "断开 Socket.IO bridge 失败");
                         }
                     }
                     emit_ui_event(&event_tx, &bridge_key, "socketDisconnected", JsonValue::Null);

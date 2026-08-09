@@ -110,7 +110,7 @@ impl TrackingImageLoader {
             let mut state = self.state.lock();
             if !state.mark_decoding(&uri, generation, size_hint) {
                 debug!(
-                    "skip decode schedule: stale or already-decoding uri={} generation={}",
+                    "跳过图片解码调度：请求已过期或正在解码 uri={} generation={}",
                     uri, generation
                 );
                 return Ok(());
@@ -130,7 +130,7 @@ impl TrackingImageLoader {
                 };
                 if !should_decode {
                     debug!(
-                        "skip stale decode before work starts: uri={} generation={}",
+                        "任务开始前发现图片解码请求已过期，跳过处理 uri={} generation={}",
                         uri, generation
                     );
                     return;
@@ -156,7 +156,7 @@ impl TrackingImageLoader {
 
                         if !committed {
                             debug!(
-                                "discard stale decode result: uri={} generation={}",
+                                "丢弃已过期的图片解码结果 uri={} generation={}",
                                 uri, generation
                             );
                             return;
@@ -184,13 +184,13 @@ impl TrackingImageLoader {
 
                         if !committed {
                             debug!(
-                                "discard stale decode error: uri={} generation={}",
+                                "丢弃已过期的图片解码错误 uri={} generation={}",
                                 uri, generation
                             );
                             return;
                         }
 
-                        warn!("image decode failed: uri={} err={}", uri, err);
+                        warn!("图片解码失败: uri={} err={}", uri, err);
 
                         // 磁盘命中的文件如果已经坏了，就顺手删掉，避免每次启动都反复踩雷。
                         if loaded_from_disk && let Some(disk_cache) = disk_cache.as_ref() {
@@ -237,7 +237,7 @@ impl ImageLoader for TrackingImageLoader {
 
         let generation = match self.state.lock().prepare_load(uri, Instant::now()) {
             PrepareLoad::Ready(image) => {
-                debug!("image cache hit: uri={}", uri);
+                debug!("图片内存缓存命中: uri={}", uri);
                 return Ok(ImagePoll::Ready { image });
             }
             PrepareLoad::Decoding { size } => {
@@ -249,21 +249,21 @@ impl ImageLoader for TrackingImageLoader {
             PrepareLoad::WaitingBytes { generation, .. } => generation,
         };
 
-        debug!("image cache miss or bytes-pending: uri={}", uri);
+        debug!("图片内存缓存未命中或正在等待字节: uri={}", uri);
 
         // 先尝试磁盘缓存，减少网络请求和底层 bytes loader 压力。
         if let Some(disk_cache) = self.disk_cache.as_ref()
             && let Some(raw_bytes) = disk_cache.load(uri)
         {
             debug!(
-                "disk cache hit: uri={} raw_bytes={}",
+                "图片磁盘缓存命中: uri={} raw_bytes={}",
                 uri,
                 format_bytes(raw_bytes.len() as u64)
             );
 
             let bytes: Bytes = raw_bytes.into();
             if !should_handle_loaded_bytes(None, &bytes) {
-                warn!("drop unsupported disk cache entry: uri={}", uri);
+                warn!("删除不支持的图片磁盘缓存项: uri={}", uri);
                 disk_cache.remove(uri);
                 let _ = self.state.lock().cancel_pending(uri, generation);
                 return Err(LoadError::NotSupported);
@@ -312,13 +312,13 @@ impl ImageLoader for TrackingImageLoader {
         let uri = normalize_uri(uri);
         // 这里只清理内存态；磁盘缓存保留为跨会话优化。
         self.state.lock().forget(uri);
-        debug!("image cache forget: uri={}", uri);
+        debug!("移除图片缓存: uri={}", uri);
     }
 
     fn forget_all(&self) {
         // 同上：forget_all 只清内存态，不主动清空磁盘缓存。
         self.state.lock().forget_all();
-        debug!("image cache cleared");
+        debug!("图片缓存已清空");
     }
 
     fn byte_size(&self) -> usize {
@@ -346,7 +346,7 @@ pub fn install_tracking_image_loader(ctx: &Context, settings: ImageCacheSettings
     ctx.add_image_loader(loader);
     gif::install(ctx, memory_max_bytes);
     texture::install(ctx, memory_max_bytes);
-    info!("installed TrackingImageLoader (state-machine + worker-pool)");
+    info!("已安装 TrackingImageLoader（状态机 + 线程池）");
 }
 
 /// Returns original encoded bytes retained by the tracking loader.

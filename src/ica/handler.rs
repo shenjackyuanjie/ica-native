@@ -101,7 +101,7 @@ async fn send_message(
             json!({
                 "kind": "sendMessage",
                 "roomId": room_id,
-                "message": "sendMessage failed",
+                "message": "sendMessage 失败",
             }),
         );
     }
@@ -294,7 +294,7 @@ pub(super) async fn handle_command(
                     json!({
                         "kind": "sendRawMessage",
                         "roomId": room_id,
-                        "message": "sendRawMessage failed",
+                        "message": "sendRawMessage 失败",
                     }),
                 );
             }
@@ -590,7 +590,7 @@ pub(super) async fn handle_command(
                     json!({
                         "kind": "sendGroupSign",
                         "roomId": room_id,
-                        "message": "sendGroupSign failed",
+                        "message": "sendGroupSign 失败",
                     }),
                 );
             }
@@ -605,14 +605,14 @@ pub(super) async fn handle_command(
                         "kind": "sendGroupPoke",
                         "roomId": room_id,
                         "targetId": target_id,
-                        "message": "sendGroupPoke failed",
+                        "message": "sendGroupPoke 失败",
                     }),
                 );
             }
         }
         IcaCommand::StopFetchingHistory => {
             if let Err(e) = client.emit("stopFetchingHistory", json!(null)).await {
-                tracing::warn!("send stopFetchingHistory failed: {}", e);
+                tracing::warn!(error = %e, "发送 stopFetchingHistory 事件失败");
             }
         }
         IcaCommand::HideMessage {
@@ -697,7 +697,7 @@ pub(super) async fn handle_command(
                     json!({
                         "kind": "deleteMessage",
                         "messageId": message_id,
-                        "message": "deleteMessage failed",
+                        "message": "deleteMessage 失败",
                     }),
                 );
             }

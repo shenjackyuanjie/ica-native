@@ -98,7 +98,7 @@ impl IcaApp {
                     }
                 });
                 ui.horizontal_wrapped(|ui| {
-                    ui.label("offset");
+                    ui.label("偏移量");
                     ui.add_sized(
                         [80.0, 0.0],
                         egui::TextEdit::singleline(&mut self.message_tools.offset),

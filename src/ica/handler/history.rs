@@ -142,7 +142,7 @@ pub(super) async fn fetch_messages(
             });
         }
         Err(e) => {
-            tracing::warn!("fetchMessages failed for {}: {}", bridge_key, e);
+            tracing::warn!(bridge = bridge_key, error = %e, "发送 fetchMessages 请求失败");
             emit_ui_event(
                 event_tx,
                 bridge_key,
@@ -196,7 +196,7 @@ pub(super) async fn fetch_older_messages(
         .await;
 
     if let Err(e) = result {
-        tracing::warn!("fetchOlderMessages failed for {}: {}", bridge_key, e);
+        tracing::warn!(bridge = bridge_key, error = %e, "发送 fetchOlderMessages 请求失败");
         // 通知 UI 加载完成（即使失败也要重置加载状态）
         emit_ui_event(
             event_tx,
@@ -226,7 +226,11 @@ pub(super) async fn fetch_group_members(
     let timeout_tx = event_tx.clone();
     let timeout_bridge_id = bridge_key.to_string();
     let started_at = Instant::now();
-    tracing::debug!(bridge = bridge_key, room_id, "fetchGroupMembers emitted");
+    tracing::debug!(
+        bridge = bridge_key,
+        room_id,
+        "已发送 fetchGroupMembers 请求"
+    );
     match client
         .emit_with_ack(
             "getGroupMembers",
@@ -283,7 +287,7 @@ pub(super) async fn fetch_group_members(
         }
         Err(e) => {
             completed.store(true, Ordering::Release);
-            tracing::warn!(bridge = bridge_key, room_id, error = %e, "fetchGroupMembers failed");
+            tracing::warn!(bridge = bridge_key, room_id, error = %e, "发送 fetchGroupMembers 请求失败");
             emit_ui_event(
                 event_tx,
                 bridge_key,

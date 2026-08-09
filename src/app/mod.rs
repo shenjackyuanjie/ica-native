@@ -307,6 +307,7 @@ impl IcaApp {
                 self.media_notice = Some(message);
             }
             MediaEvent::Failed { operation, error } => {
+                tracing::warn!(operation, error = %error, "媒体后台任务执行失败");
                 self.media_error = Some(format!("{operation}失败：{error}"));
             }
             MediaEvent::StickersRefreshed(count) => {
@@ -325,6 +326,7 @@ impl IcaApp {
                     session.conversation_mut(room_id).pending_images.push(image);
                     self.media_notice = Some("已加入待发送图片".to_string());
                 } else {
+                    tracing::warn!(bridge = %bridge_key, room_id, "收藏表情所属 bridge 已关闭");
                     self.media_error = Some("收藏表情所属 bridge 已关闭".to_string());
                 }
             }
@@ -401,6 +403,11 @@ impl IcaApp {
                             }
                         }
                         Err(e) => {
+                            tracing::warn!(
+                                bridge = %bridge_key,
+                                error = %e,
+                                "setAllChatGroups 解析失败"
+                            );
                             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                                 state.last_error =
                                     Some(format!("setAllChatGroups 解析失败: {}", e));

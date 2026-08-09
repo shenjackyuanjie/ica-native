@@ -31,9 +31,7 @@ where
             .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
             .ok_or_else(|| serde::de::Error::custom("integer is outside i64 range")),
         JsonValue::String(value) => value.parse().map_err(serde::de::Error::custom),
-        _ => Err(serde::de::Error::custom(
-            "expected integer or integer string",
-        )),
+        _ => Err(serde::de::Error::custom("应为整数或整数字符串")),
     }
 }
 

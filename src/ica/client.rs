@@ -45,7 +45,11 @@ async fn sign_with_key(payload: Payload, client: Client, private_key_hex: String
     let salt = match hex::decode(&auth_key) {
         Ok(s) => s,
         Err(e) => {
-            event!(Level::ERROR, "sign_with_key: invalid auth_key hex: {}", e);
+            event!(
+                Level::ERROR,
+                "sign_with_key: auth_key 不是有效的十六进制: {}",
+                e
+            );
             return;
         }
     };
@@ -78,7 +82,7 @@ async fn sign_with_key(payload: Payload, client: Client, private_key_hex: String
             event!(Level::INFO, "sign_with_key: auth signed & sent");
         }
         Err(e) => {
-            event!(Level::ERROR, "sign_with_key: failed to emit auth: {:?}", e);
+            event!(Level::ERROR, "sign_with_key: 发送 auth 事件失败: {:?}", e);
         }
     }
 }
@@ -108,7 +112,7 @@ pub async fn send_message(client: &Client, message: &SendMessage) -> bool {
             true
         }
         Err(e) => {
-            event!(Level::WARN, "send_message failed: {:?}", e);
+            event!(Level::WARN, "send_message 失败: {:?}", e);
             false
         }
     }
@@ -122,7 +126,7 @@ pub async fn send_string_message(client: &Client, message: &JsonValue) -> bool {
             true
         }
         Err(e) => {
-            event!(Level::WARN, "send_message failed: {:?}", e);
+            event!(Level::WARN, "send_message 失败: {:?}", e);
             false
         }
     }
@@ -142,7 +146,7 @@ pub async fn delete_message(client: &Client, message: &DeleteMessage) -> bool {
             true
         }
         Err(e) => {
-            event!(Level::WARN, "delete_message failed: {:?}", e);
+            event!(Level::WARN, "delete_message 失败: {:?}", e);
             false
         }
     }
@@ -164,7 +168,7 @@ pub async fn send_room_sign_in(client: &Client, room_id: RoomId) -> bool {
             true
         }
         Err(e) => {
-            event!(Level::ERROR, "send_group_sign failed: {:?}", e);
+            event!(Level::ERROR, "send_group_sign 失败: {:?}", e);
             false
         }
     }
@@ -179,7 +183,7 @@ pub async fn send_poke(client: &Client, room_id: RoomId, target: UserId) -> bool
             true
         }
         Err(e) => {
-            event!(Level::ERROR, "send_poke failed: {:?}", e);
+            event!(Level::ERROR, "send_poke 失败: {:?}", e);
             false
         }
     }

@@ -77,7 +77,7 @@ mod tests {
                 "timestamp": "12:00"
             }
         }))
-        .expect("Room.at is optional in the bridge contract");
+        .expect("bridge 协议中的 Room.at 是可选字段");
 
         assert_eq!(room.at, At::None);
     }

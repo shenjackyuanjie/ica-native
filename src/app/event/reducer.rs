@@ -58,6 +58,23 @@ impl IcaApp {
         }
     }
 
+    fn log_event_parse_failure(state: &BridgeState, event: &str, error: &str, payload: &JsonValue) {
+        tracing::warn!(
+            target: "ica_native::protocol",
+            bridge = %state.bridge_key,
+            event,
+            error,
+            "bridge 事件解析失败"
+        );
+        tracing::debug!(
+            target: "ica_native::protocol",
+            bridge = %state.bridge_key,
+            event,
+            payload = %Self::json_preview(payload, 2048),
+            "bridge 事件原始数据"
+        );
+    }
+
     fn parse_join_request(
         value: &JsonValue,
         fallback_flag: Option<&str>,
@@ -173,6 +190,12 @@ impl IcaApp {
                             state.bump_rooms_revision();
                         }
                         Err(e) => {
+                            Self::log_event_parse_failure(
+                                state,
+                                "setAllRooms",
+                                &e.to_string(),
+                                value,
+                            );
                             state.last_error = Some(format!("setAllRooms 解析失败: {}", e));
                         }
                     }
@@ -199,12 +222,11 @@ impl IcaApp {
                             state.trim_message_caches(state.selected_room_id);
                         }
                         Err(e) => {
-                            tracing::warn!(
-                                "setMessages parse failed: bridge={} room_id={} err={} raw={}",
-                                state.bridge_key,
-                                room_id,
-                                e,
-                                Self::json_preview(&value["messages"], 512)
+                            Self::log_event_parse_failure(
+                                state,
+                                "setMessages",
+                                &e.to_string(),
+                                value,
                             );
                             state.last_error = Some(format!("setMessages 解析失败: {}", e));
                         }
@@ -243,11 +265,11 @@ impl IcaApp {
                             }
                         }
                         Err(e) => {
-                            tracing::warn!(
-                                "appendOlderMessages parse failed: bridge={} room_id={} err={}",
-                                state.bridge_key,
-                                room_id,
-                                e,
+                            Self::log_event_parse_failure(
+                                state,
+                                "appendOlderMessages",
+                                &e.to_string(),
+                                value,
                             );
                         }
                     }
@@ -286,6 +308,12 @@ impl IcaApp {
                             }
                         }
                         Err(e) => {
+                            Self::log_event_parse_failure(
+                                state,
+                                "addMessage",
+                                &e.to_string(),
+                                value,
+                            );
                             state.last_error = Some(format!("addMessage 解析失败: {}", e));
                         }
                     }
@@ -319,6 +347,7 @@ impl IcaApp {
                             state.upsert_join_request(request);
                         }
                         Err(e) => {
+                            Self::log_event_parse_failure(state, "handleRequest", &e, value);
                             state.last_error = Some(format!("handleRequest 解析失败: {}", e));
                         }
                     }
@@ -332,6 +361,7 @@ impl IcaApp {
                             state.last_notice = Some("收到新的验证消息".to_string());
                         }
                         Err(e) => {
+                            Self::log_event_parse_failure(state, "sendAddRequest", &e, value);
                             state.last_error = Some(format!("sendAddRequest 解析失败: {}", e));
                         }
                     }
@@ -353,6 +383,12 @@ impl IcaApp {
                             state.bump_rooms_revision();
                         }
                         Err(e) => {
+                            Self::log_event_parse_failure(
+                                state,
+                                "updateRoom",
+                                &e.to_string(),
+                                value,
+                            );
                             state.last_error = Some(format!("updateRoom 解析失败: {}", e));
                         }
                     }
@@ -523,12 +559,20 @@ impl IcaApp {
                             state.last_error = None;
                         }
                         Err(e) => {
+                            Self::log_event_parse_failure(state, "setSystemMessages", &e, value);
                             state.last_error = Some(format!("setSystemMessages 解析失败: {}", e));
                         }
                     }
                 }
             }
             "commandFailed" => {
+                tracing::warn!(
+                    target: "ica_native::command",
+                    bridge = %state.bridge_key,
+                    command = payload.get("kind").and_then(JsonValue::as_str),
+                    error = payload.get("message").and_then(JsonValue::as_str),
+                    "bridge 命令执行失败"
+                );
                 if payload.get("kind").and_then(JsonValue::as_str) == Some("fetchMessages")
                     && let Some(room_id) = payload.get("roomId").and_then(JsonValue::as_i64)
                 {
@@ -580,6 +624,12 @@ impl IcaApp {
                             state.contacts.apply_friends(request_id, friends);
                         }
                         Err(error) => {
+                            Self::log_event_parse_failure(
+                                state,
+                                "contactsPartResponse/friends",
+                                &error.to_string(),
+                                items,
+                            );
                             let message = format!("好友列表解析失败: {error}");
                             if state.contacts.fail_part(request_id, part, message.clone()) {
                                 state.last_error = Some(message);
@@ -599,6 +649,12 @@ impl IcaApp {
                             state.contacts.apply_groups(request_id, groups);
                         }
                         Err(error) => {
+                            Self::log_event_parse_failure(
+                                state,
+                                "contactsPartResponse/groups",
+                                &error.to_string(),
+                                items,
+                            );
                             let message = format!("群列表解析失败: {error}");
                             if state.contacts.fail_part(request_id, part, message.clone()) {
                                 state.last_error = Some(message);
@@ -646,12 +702,11 @@ impl IcaApp {
                         state.trim_message_search_results();
                     }
                     Some(Err(e)) => {
-                        tracing::warn!(
-                            "searchMessages parse failed: bridge={} room_id={} err={} raw={}",
-                            state.bridge_key,
-                            room_id,
-                            e,
-                            Self::json_preview(&payload["messages"], 512)
+                        Self::log_event_parse_failure(
+                            state,
+                            "searchMessagesResponse",
+                            &e.to_string(),
+                            payload,
                         );
                         state
                             .message_search

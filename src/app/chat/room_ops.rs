@@ -32,6 +32,7 @@ impl IcaApp {
         if let Err(e) =
             self.bridge_states[bridge_idx].send(IcaCommand::FetchGroupMembers { room_id })
         {
+            tracing::warn!(error = %e, room_id, "发送 FetchGroupMembers 命令失败");
             self.bridge_states[bridge_idx]
                 .conversation_mut(room_id)
                 .loading_group_members = false;
@@ -64,7 +65,7 @@ impl IcaApp {
         }
 
         if let Err(e) = command_tx.send(IcaCommand::FetchMessages(room_id)) {
-            tracing::warn!("send fetchMessages command failed: {}", e);
+            tracing::warn!(error = %e, room_id, "发送 fetchMessages 命令失败");
             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                 // 命令没有进入后台任务时必须撤销占位，否则关闭自动刷新后，后续点击
                 // 会误以为该房间已经请求过，从而失去重试机会。
@@ -89,7 +90,7 @@ impl IcaApp {
             room_id,
             current_loaded_messages,
         }) {
-            tracing::warn!("send fetchHistory command failed: {}", e);
+            tracing::warn!(error = %e, room_id, "发送 fetchHistory 命令失败");
             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                 state.last_error = Some(format!("最新历史拉取命令发送失败: {e}"));
             }
@@ -115,7 +116,7 @@ impl IcaApp {
         conversation.loading_older_messages = true;
 
         if let Err(e) = command_tx.send(IcaCommand::FetchOlderMessages { room_id, offset }) {
-            tracing::warn!("send fetchOlderMessages command failed: {}", e);
+            tracing::warn!(error = %e, room_id, "发送 fetchOlderMessages 命令失败");
             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                 state.conversation_mut(room_id).loading_older_messages = false;
             }
@@ -128,7 +129,7 @@ impl IcaApp {
         };
 
         if let Err(e) = session.send(IcaCommand::GetSystemMsg) {
-            tracing::warn!("send getSystemMsg command failed: {}", e);
+            tracing::warn!(error = %e, "发送 getSystemMsg 命令失败");
         }
     }
 

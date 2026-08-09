@@ -18,7 +18,7 @@ pub fn log(stage: &str) {
         None => tracing::warn!(
             target: "ica_native::memory_probe",
             stage,
-            "failed to read process memory counters"
+            "读取进程内存计数器失败"
         ),
     }
 }

@@ -104,7 +104,7 @@ impl IcaApp {
             expect_ack,
         };
         if let Err(e) = self.bridge_states[bridge_idx].send(command) {
-            tracing::warn!("send file manager command failed: {}", e);
+            tracing::warn!(error = %e, "发送文件管理命令失败");
             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                 state.last_error = Some("文件管理命令发送失败".to_string());
             }
@@ -140,7 +140,7 @@ impl IcaApp {
                     }
                 });
                 ui.horizontal_wrapped(|ui| {
-                    ui.label("fid");
+                    ui.label("文件 ID");
                     ui.add_sized(
                         [260.0, 0.0],
                         egui::TextEdit::singleline(&mut self.file_tools.fid),
@@ -181,7 +181,7 @@ impl IcaApp {
                         [180.0, 0.0],
                         egui::TextEdit::singleline(&mut self.file_tools.dir_fid),
                     );
-                    ui.label("start");
+                    ui.label("起始位置");
                     ui.add_sized(
                         [64.0, 0.0],
                         egui::TextEdit::singleline(&mut self.file_tools.list_start),

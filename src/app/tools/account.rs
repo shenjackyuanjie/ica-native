@@ -92,7 +92,7 @@ impl IcaApp {
                 ui.separator();
                 ui.label("删除登录设备");
                 ui.horizontal_wrapped(|ui| {
-                    ui.label("flag");
+                    ui.label("验证标记");
                     ui.add_sized(
                         [240.0, 0.0],
                         egui::TextEdit::singleline(&mut self.account_tools.delete_device_flag),

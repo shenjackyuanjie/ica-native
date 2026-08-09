@@ -65,7 +65,7 @@ pub struct IcaCfg {
 
 impl Display for IcaCfg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let text = toml::to_string_pretty(self).expect("faild to fmt self");
+        let text = toml::to_string_pretty(self).expect("配置序列化为 TOML 失败");
         f.write_str(&text)
     }
 }

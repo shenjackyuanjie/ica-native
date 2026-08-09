@@ -42,7 +42,7 @@ mod tests {
             "size": 3_000_000_000_i64,
             "name": "archive.bin"
         }))
-        .expect("history file should deserialize");
+        .expect("历史消息文件应当可以反序列化");
 
         assert!(file.url.is_empty());
         assert_eq!(file.size, Some(3_000_000_000));

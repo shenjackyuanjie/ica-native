@@ -128,7 +128,7 @@ mod tests {
             "rooms": [],
             "includeAllPersonal": true,
         }))
-        .expect("protocol chat group should deserialize");
+        .expect("协议聊天分组应当可以反序列化");
 
         assert!(group.include_all_personal);
     }
@@ -140,7 +140,7 @@ mod tests {
             "rooms": [],
             "include_all_personal": true,
         }))
-        .expect("legacy local chat group should deserialize");
+        .expect("旧版本地聊天分组应当可以反序列化");
 
         assert!(group.include_all_personal);
     }

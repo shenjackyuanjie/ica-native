@@ -100,8 +100,8 @@ impl IcaApp {
                 ui.horizontal_wrapped(|ui| {
                     ui.heading(room_name);
                     ui.separator();
-                    ui.label(format!("Bridge: {}", bridge_key));
-                    ui.label(format!("Socket: {}", socket_state));
+                    ui.label(format!("当前 bridge：{}", bridge_key));
+                    ui.label(format!("连接状态：{}", socket_state));
                     ui.label(format!("认证: {}", auth_state));
                     if is_shut_up {
                         ui.colored_label(egui::Color32::YELLOW, "禁言中");
@@ -143,7 +143,7 @@ impl IcaApp {
                 ui.horizontal_wrapped(|ui| {
                     ui.heading(&bridge_key);
                     ui.separator();
-                    ui.label(format!("Socket: {}", socket_state));
+                    ui.label(format!("连接状态：{}", socket_state));
                     ui.label(format!("认证: {}", auth_state));
                 });
             }
@@ -229,7 +229,7 @@ impl IcaApp {
                 return;
             }
 
-            let room_id = selected_room_id.expect("selected_room_id checked above");
+            let room_id = selected_room_id.expect("上方已确认 selected_room_id 存在");
             let composer_id = egui::Id::new(("message_composer", active_bridge_idx, room_id));
             let self_id = self.bridge_states[active_bridge_idx].online_data.qqid;
             let mut request_composer_focus = false;
@@ -446,7 +446,7 @@ impl IcaApp {
                             let row_width = ui.available_width().max(48.0);
                             let rows = &self.bridge_states[active_bridge_idx]
                                 .conversation(room_id)
-                                .expect("conversation exists when messages exist")
+                                .expect("存在消息时会话状态也应当存在")
                                 .message_row_layouts;
                             let total_height = rows.last().map_or(0.0, |row| row.top + row.height);
                             let target_index = scroll_to_target.as_deref().and_then(|target_id| {

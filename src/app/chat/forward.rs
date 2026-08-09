@@ -334,6 +334,13 @@ impl IcaApp {
             file_name,
             fallback_res_id,
         }) {
+            tracing::warn!(
+                target: "ica_native::forward",
+                bridge = %self.bridge_states[bridge_idx].bridge_key,
+                request_id,
+                error = %error,
+                "发送查看合并转发命令失败"
+            );
             self.bridge_states[bridge_idx]
                 .forward_viewer
                 .fail(request_id, format!("查看合并转发命令发送失败: {error}"));
@@ -360,6 +367,13 @@ impl IcaApp {
             target_room_id,
         };
         if let Err(error) = self.bridge_states[bridge_idx].send(command) {
+            tracing::warn!(
+                target: "ica_native::forward",
+                bridge = %self.bridge_states[bridge_idx].bridge_key,
+                target_room_id,
+                error = %error,
+                "发送合并转发命令失败"
+            );
             self.bridge_states[bridge_idx].last_error =
                 Some(format!("合并转发命令发送失败: {error}"));
             return false;
@@ -392,7 +406,7 @@ impl IcaApp {
             .show(ctx, |ui| {
                 let viewer = &mut self.bridge_states[bridge_idx].forward_viewer;
                 ui.horizontal(|ui| {
-                    ui.label("Res ID");
+                    ui.label("资源 ID");
                     ui.add_sized(
                         [ui.available_width() - 72.0, 0.0],
                         egui::TextEdit::singleline(&mut viewer.res_id),

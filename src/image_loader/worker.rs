@@ -34,8 +34,7 @@ impl DecodeWorkerPool {
                 .spawn(move || {
                     loop {
                         let job = {
-                            let receiver =
-                                receiver.lock().expect("decode worker receiver poisoned");
+                            let receiver = receiver.lock().expect("图片解码任务接收锁被污染");
                             receiver.recv()
                         };
 
@@ -45,7 +44,7 @@ impl DecodeWorkerPool {
                         }
                     }
                 })
-                .expect("failed to spawn image decode worker");
+                .expect("创建图片解码线程失败");
         }
 
         Self { sender }
