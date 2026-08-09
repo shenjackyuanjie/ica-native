@@ -35,26 +35,24 @@ impl IcaApp {
             let mut dropped_errors = Vec::new();
 
             for file in dropped {
-                let file_name = if !file.name.is_empty() {
-                    file.name.clone()
-                } else if let Some(p) = &file.path {
-                    p.file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string()
-                } else {
-                    "unknown".to_string()
-                };
+                let path = file.path();
+                let file_name = path
+                    .file_name()
+                    .filter(|name| !name.is_empty())
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "未知文件".to_string());
 
-                let data = if let Some(bytes) = file.bytes {
-                    bytes.to_vec()
-                } else if let Some(path) = &file.path {
-                    std::fs::read(path).unwrap_or_default()
-                } else {
-                    Vec::new()
+                let data = match file.bytes() {
+                    Ok(data) => data,
+                    Err(error) => {
+                        tracing::warn!(file_name, error, "读取拖放文件失败");
+                        dropped_errors.push(format!("读取拖放文件“{file_name}”失败: {error}"));
+                        continue;
+                    }
                 };
 
                 if data.is_empty() {
+                    dropped_errors.push(format!("拖放文件“{file_name}”内容为空"));
                     continue;
                 }
 

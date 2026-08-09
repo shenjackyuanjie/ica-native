@@ -889,7 +889,7 @@ mod tests {
         let mut control = egui::Rect::NOTHING;
 
         for _ in 0..2 {
-            let _ = ctx.run_ui(input.clone(), |ui| {
+            let mut frame_output = ctx.run_ui(input.clone(), |ui| {
                 let output = show_constrained_composer(
                     ui,
                     egui::Id::new("constrained_composer_test"),
@@ -902,6 +902,8 @@ mod tests {
                 viewport = output.inner_rect;
                 control = output.inner;
             });
+            // 测试没有渲染后端，显式丢弃本帧生成的字体纹理更新。
+            frame_output.textures_delta.clear();
         }
 
         assert_eq!(viewport.height(), 120.0);

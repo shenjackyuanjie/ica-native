@@ -52,7 +52,7 @@ fn clipboard_image_paste_requested(
             ..
         } = event
         {
-            raw_input.modifiers.command || modifiers.command
+            modifiers.command
         } else {
             false
         }
