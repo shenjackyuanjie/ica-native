@@ -26,6 +26,20 @@ fn is_forward_error_response(values: &[JsonValue]) -> bool {
         && values[0].get("senderId").and_then(JsonValue::as_i64) == Some(0)
 }
 
+/// 合并转发消息应当是对象数组；部分 bridge 会在 ACK 外额外套一层或多层单元素数组。
+fn normalize_forward_values(mut values: Vec<JsonValue>) -> Vec<JsonValue> {
+    loop {
+        if values.len() != 1 {
+            return values;
+        }
+
+        match values.into_iter().next().expect("已确认数组中仅有一个元素") {
+            JsonValue::Array(nested) => values = nested,
+            value => return vec![value],
+        }
+    }
+}
+
 pub(super) async fn fetch_forward_messages(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
@@ -71,7 +85,7 @@ pub(super) async fn fetch_forward_messages(
                 let file_name = file_name_for_event.clone();
                 let fallback_res_id = fallback_for_callback.clone();
                 Box::pin(async move {
-                    let values = ack_payload_values(&payload);
+                    let values = normalize_forward_values(ack_payload_values(&payload));
                     tracing::debug!(
                         target: "ica_native::forward",
                         bridge = %bridge_id,
@@ -107,7 +121,8 @@ pub(super) async fn fetch_forward_messages(
                                     let ack_received = fallback_ack_received.clone();
                                     let res_id = fallback_res_id.clone();
                                     Box::pin(async move {
-                                        let values = ack_payload_values(&payload);
+                                        let values =
+                                            normalize_forward_values(ack_payload_values(&payload));
                                         tracing::debug!(
                                             target: "ica_native::forward",
                                             bridge = %bridge_id,
@@ -217,6 +232,49 @@ pub(super) async fn fetch_forward_messages(
             );
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::normalize_forward_values;
+
+    #[test]
+    fn 保留普通消息数组() {
+        let messages = vec![json!({ "_id": "1" }), json!({ "_id": "2" })];
+
+        assert_eq!(normalize_forward_values(messages.clone()), messages);
+    }
+
+    #[test]
+    fn 保留单条消息对象() {
+        let messages = vec![json!({ "_id": "1" })];
+
+        assert_eq!(normalize_forward_values(messages.clone()), messages);
+    }
+
+    #[test]
+    fn 展开多层单元素数组包装() {
+        let message = json!({ "_id": "284840486|914572", "content": "测试" });
+
+        assert_eq!(
+            normalize_forward_values(vec![json!([[message.clone()]])]),
+            vec![message]
+        );
+    }
+
+    #[test]
+    fn 保留错误响应对象() {
+        let response = vec![json!({ "_id": 0, "senderId": 0 })];
+
+        assert_eq!(normalize_forward_values(response.clone()), response);
+    }
+
+    #[test]
+    fn 展开空数组包装() {
+        assert!(normalize_forward_values(vec![json!([[]])]).is_empty());
+    }
 }
 
 pub(super) async fn send_merged_forward(
