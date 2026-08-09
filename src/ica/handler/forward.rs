@@ -11,7 +11,10 @@ use rust_socketio::{Payload, asynchronous::Client};
 use serde_json::{Value as JsonValue, json};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ica::{command::emit_ui_event, event::BridgeEvent};
+use crate::ica::{
+    command::{emit_ui_event, json_preview},
+    event::BridgeEvent,
+};
 
 use super::ack_payload_values;
 
@@ -32,6 +35,15 @@ pub(super) async fn fetch_forward_messages(
     file_name: Option<String>,
     fallback_res_id: Option<String>,
 ) {
+    tracing::debug!(
+        target: "ica_native::forward",
+        bridge = bridge_key,
+        request_id,
+        res_id,
+        file_name = ?file_name,
+        fallback_res_id = ?fallback_res_id,
+        "正在请求合并转发消息"
+    );
     let ack_received = Arc::new(AtomicBool::new(false));
     let ack_received_cb = ack_received.clone();
     let tx = event_tx.clone();
@@ -60,9 +72,27 @@ pub(super) async fn fetch_forward_messages(
                 let fallback_res_id = fallback_for_callback.clone();
                 Box::pin(async move {
                     let values = ack_payload_values(&payload);
+                    tracing::debug!(
+                        target: "ica_native::forward",
+                        bridge = %bridge_id,
+                        request_id,
+                        res_id = %res_id,
+                        file_name = ?file_name,
+                        value_count = values.len(),
+                        payload = %json_preview(&JsonValue::Array(values.clone()), 2048),
+                        "收到 getForwardMsg 主请求 ACK"
+                    );
                     if let Some(fallback_res_id) = fallback_res_id
                         && is_forward_error_response(&values)
                     {
+                        tracing::debug!(
+                            target: "ica_native::forward",
+                            bridge = %bridge_id,
+                            request_id,
+                            primary_res_id = %res_id,
+                            fallback_res_id = %fallback_res_id,
+                            "主请求返回合并转发错误，准备使用回退资源"
+                        );
                         let fallback_tx = tx.clone();
                         let fallback_bridge_id = bridge_id.clone();
                         let fallback_ack_received = ack_received.clone();
@@ -77,6 +107,19 @@ pub(super) async fn fetch_forward_messages(
                                     let ack_received = fallback_ack_received.clone();
                                     let res_id = fallback_res_id.clone();
                                     Box::pin(async move {
+                                        let values = ack_payload_values(&payload);
+                                        tracing::debug!(
+                                            target: "ica_native::forward",
+                                            bridge = %bridge_id,
+                                            request_id,
+                                            res_id = %res_id,
+                                            value_count = values.len(),
+                                            payload = %json_preview(
+                                                &JsonValue::Array(values.clone()),
+                                                2048,
+                                            ),
+                                            "收到 getForwardMsg 回退请求 ACK"
+                                        );
                                         ack_received.store(true, Ordering::SeqCst);
                                         emit_ui_event(
                                             &tx,
@@ -86,7 +129,7 @@ pub(super) async fn fetch_forward_messages(
                                                 "requestId": request_id,
                                                 "resId": res_id,
                                                 "fileName": JsonValue::Null,
-                                                "messages": ack_payload_values(&payload),
+                                                "messages": values,
                                             }),
                                         );
                                     })
@@ -94,6 +137,13 @@ pub(super) async fn fetch_forward_messages(
                             )
                             .await;
                         if let Err(error) = fallback_result {
+                            tracing::warn!(
+                                target: "ica_native::forward",
+                                bridge = %bridge_id,
+                                request_id,
+                                error = %error,
+                                "发送 getForwardMsg 回退请求失败"
+                            );
                             ack_received.store(true, Ordering::SeqCst);
                             emit_ui_event(
                                 &tx,
@@ -125,6 +175,13 @@ pub(super) async fn fetch_forward_messages(
         .await;
 
     if let Err(error) = result {
+        tracing::warn!(
+            target: "ica_native::forward",
+            bridge = bridge_key,
+            request_id,
+            error = %error,
+            "发送 getForwardMsg 请求失败"
+        );
         emit_ui_event(
             event_tx,
             bridge_key,
@@ -142,6 +199,13 @@ pub(super) async fn fetch_forward_messages(
     tokio::spawn(async move {
         tokio::time::sleep(FORWARD_TIMEOUT).await;
         if !ack_received.load(Ordering::SeqCst) {
+            tracing::warn!(
+                target: "ica_native::forward",
+                bridge = %bridge_id,
+                request_id,
+                timeout_seconds = FORWARD_TIMEOUT.as_secs(),
+                "getForwardMsg 请求超时"
+            );
             emit_ui_event(
                 &tx,
                 &bridge_id,

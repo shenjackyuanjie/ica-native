@@ -225,10 +225,12 @@ pub(super) fn payload_to_json(payload: &Payload) -> JsonValue {
 
 pub(super) fn json_preview(value: &JsonValue, max_chars: usize) -> String {
     let raw = value.to_string();
-    if raw.len() > max_chars {
-        format!("{}...", &raw[..max_chars])
+    let mut chars = raw.chars();
+    let preview = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        format!("{preview}...")
     } else {
-        raw
+        preview
     }
 }
 

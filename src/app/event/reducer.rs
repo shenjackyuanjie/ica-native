@@ -49,10 +49,12 @@ impl IcaApp {
 
     fn json_preview(value: &JsonValue, max_chars: usize) -> String {
         let raw = value.to_string();
-        if raw.len() > max_chars {
-            format!("{}...", &raw[..max_chars])
+        let mut chars = raw.chars();
+        let preview = chars.by_ref().take(max_chars).collect::<String>();
+        if chars.next().is_some() {
+            format!("{preview}...")
         } else {
-            raw
+            preview
         }
     }
 
@@ -671,18 +673,71 @@ impl IcaApp {
                     .get("resId")
                     .and_then(JsonValue::as_str)
                     .map(ToString::to_string);
-                match payload.get("messages").map(Vec::<Message>::deserialize) {
+                let file_name = payload.get("fileName").and_then(JsonValue::as_str);
+                let messages = payload.get("messages");
+                tracing::debug!(
+                    target: "ica_native::forward",
+                    bridge = %state.bridge_key,
+                    request_id,
+                    res_id = ?res_id,
+                    file_name,
+                    message_count = messages.and_then(JsonValue::as_array).map(Vec::len),
+                    messages = %messages
+                        .map(|value| Self::json_preview(value, 2048))
+                        .unwrap_or_else(|| "<缺失>".to_string()),
+                    "收到合并转发消息响应"
+                );
+                match messages.map(Vec::<Message>::deserialize) {
                     Some(Ok(messages)) => {
+                        tracing::debug!(
+                            target: "ica_native::forward",
+                            bridge = %state.bridge_key,
+                            request_id,
+                            message_count = messages.len(),
+                            "合并转发消息响应解析成功"
+                        );
                         state
                             .forward_viewer
                             .apply_response(request_id, res_id, messages);
                     }
                     Some(Err(error)) => {
+                        let invalid_message = payload["messages"].as_array().and_then(|messages| {
+                            messages.iter().enumerate().find_map(|(index, value)| {
+                                serde_json::from_value::<Message>(value.clone())
+                                    .err()
+                                    .map(|error| (index, error, Self::json_preview(value, 1024)))
+                            })
+                        });
+                        if let Some((index, item_error, value)) = &invalid_message {
+                            tracing::debug!(
+                                target: "ica_native::forward",
+                                bridge = %state.bridge_key,
+                                request_id,
+                                message_index = index,
+                                error = %item_error,
+                                message = %value,
+                                "已定位无法解析的合并转发消息"
+                            );
+                        }
+                        tracing::warn!(
+                            target: "ica_native::forward",
+                            bridge = %state.bridge_key,
+                            request_id,
+                            error = %error,
+                            invalid_message_index = invalid_message.as_ref().map(|value| value.0),
+                            "合并转发消息响应解析失败"
+                        );
                         state
                             .forward_viewer
                             .fail(request_id, format!("合并转发内容解析失败: {error}"));
                     }
                     None => {
+                        tracing::warn!(
+                            target: "ica_native::forward",
+                            bridge = %state.bridge_key,
+                            request_id,
+                            "合并转发消息响应缺少 messages 字段"
+                        );
                         state
                             .forward_viewer
                             .fail(request_id, "合并转发响应缺少 messages".to_string());
@@ -694,11 +749,16 @@ impl IcaApp {
                     .get("requestId")
                     .and_then(JsonValue::as_u64)
                     .unwrap_or_default();
-                state.forward_viewer.fail(
+                let message = Self::payload_message(payload)
+                    .unwrap_or_else(|| "查看合并转发失败".to_string());
+                tracing::warn!(
+                    target: "ica_native::forward",
+                    bridge = %state.bridge_key,
                     request_id,
-                    Self::payload_message(payload)
-                        .unwrap_or_else(|| "查看合并转发失败".to_string()),
+                    error = %message,
+                    "合并转发消息请求失败"
                 );
+                state.forward_viewer.fail(request_id, message);
             }
             "forwardSendRequested" => {
                 let count = payload
