@@ -57,7 +57,7 @@ pub struct IcaCfg {
     /// 图片磁盘缓存最大字节数（默认 1GB）
     #[serde(default = "disk_image_cache_max_bytes_default")]
     pub disk_image_cache_max_bytes: u64,
-    /// async runtime workthread count
+    /// 异步 runtime 工作线程数
     /// tokio 运行线程数
     #[serde(default = "tokio_rt_work_thread_default")]
     pub tokio_rt_work_thread: u32,
@@ -204,9 +204,9 @@ impl IcaCfg {
 pub struct IcaBridge {
     /// bridge 名称（用于区分多 bridge）
     pub name: String,
-    /// socketio 服务器的 url
+    /// Socket.IO 服务器 URL
     pub url: String,
-    /// socketio 的 private key (ed25519)
+    /// Socket.IO 的 Ed25519 私钥
     pub private_key: String,
     /// 是否启用该 bridge
     #[serde(default = "ica_bridge_enable_default")]
@@ -427,7 +427,7 @@ pub const DEFAULT_CFG_PATH: &str = "ica_native.toml";
 /// 环境变量名称
 pub const CFG_ENV_VAR: &str = "ICA_NATIVE_CONFIG";
 
-// Former CLI/env/default path resolution lived here. It is now owned by ConfigStore.
+// 旧版的 CLI、环境变量和默认路径解析曾放在这里，现在统一由 ConfigStore 管理。
 /* The former global configuration API intentionally remains unavailable.
 pub fn init_cfg() {
     // 处理 cli 参数

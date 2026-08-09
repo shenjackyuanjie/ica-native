@@ -1,7 +1,7 @@
-//! Administrative account/group/file/message/room/socket tools.
+//! 账号、群、文件、消息、会话和 Socket 管理工具。
 //!
-//! Each tool keeps its state, validation and egui view together because they
-//! form one cohesive, low-level bridge API surface.
+//! 每项工具把状态、校验和 egui 视图放在一起，因为它们共同组成一个完整的
+//! 底层 bridge API 操作界面。
 
 mod account;
 mod file;

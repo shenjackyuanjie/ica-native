@@ -520,7 +520,7 @@ impl eframe::App for IcaApp {
             }
         }
 
-        // Feature views are implemented by `chat` and the top-level `shell`.
+        // 功能视图由 `chat` 和顶层 `shell` 实现。
         self.render_top_panel(ui);
         self.render_left_groups_panel(ui);
         self.render_chat_list_panel(ui);

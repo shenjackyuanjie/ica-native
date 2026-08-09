@@ -1,6 +1,6 @@
 use serde_json::Value as JsonValue;
 
-/// A bridge event tagged with the bridge that produced it.
+/// 携带来源 bridge 标识的事件。
 #[derive(Debug, Clone, PartialEq)]
 pub struct BridgeEvent {
     pub bridge_key: String,
@@ -49,11 +49,11 @@ impl BridgeEvent {
 
 macro_rules! bridge_event_kinds {
     ($( $variant:ident => $name:literal ),+ $(,)?) => {
-        /// All protocol and internal events currently consumed by the application.
+        /// 应用当前会处理的所有协议事件和内部事件。
         #[derive(Debug, Clone, PartialEq)]
         pub enum BridgeEventKind {
             $( $variant(JsonValue), )+
-            /// Forward-compatible protocol event unknown to this build.
+            /// 当前版本尚不认识、但为向前兼容而保留的协议事件。
             Unknown { name: String, payload: JsonValue },
         }
 

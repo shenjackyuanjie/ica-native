@@ -659,7 +659,7 @@ pub struct BridgeState {
     pub forward_target_as_merged: bool,
     pub forward_viewer: ForwardViewerState,
     pub room_search_query: String,
-    /// Friends and groups fetched from this bridge for starting new chats.
+    /// 从当前 bridge 获取、用于发起新会话的好友和群列表。
     pub contacts: ContactDirectory,
     /// 当前 bridge 的聊天记录搜索窗口状态。
     pub message_search: MessageSearchState,

@@ -120,7 +120,7 @@ pub async fn run_bridge(
         };
 
         {
-            // disconnect 只负责通知主循环“这条连接已经断了”，
+            // 断开回调只负责通知主循环“这条连接已经断了”，
             // 真正的 UI 状态更新和重连调度由主循环统一处理。
             let signal_tx = connection_signal_tx.clone();
             builder = builder.on(

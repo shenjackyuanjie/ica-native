@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 
 use super::{CFG_ENV_VAR, DEFAULT_CFG_PATH, IcaCfg};
 
-/// All paths resolved while loading a configuration file.
+/// 加载配置文件时解析出的所有路径。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigPaths {
     config_file: PathBuf,
@@ -29,10 +29,10 @@ impl ConfigPaths {
     }
 }
 
-/// Injectable, cloneable configuration storage.
+/// 可注入、可克隆的配置存储。
 ///
-/// Clones share the same in-memory snapshot and resolved paths. Disk access is
-/// explicit through [`save`](Self::save) and [`reload`](Self::reload).
+/// 克隆实例共享同一份内存快照和已解析路径。磁盘访问只能通过
+/// [`save`](Self::save) 和 [`reload`](Self::reload) 显式执行。
 #[derive(Debug, Clone)]
 pub struct ConfigStore {
     config: Arc<RwLock<IcaCfg>>,

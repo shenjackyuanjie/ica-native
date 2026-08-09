@@ -87,9 +87,9 @@ impl LoaderState {
             next_generation: 1,
             ready_bytes: 0,
             error_bytes: 0,
-            // ready 按总字节数做软限制，因此不直接限制条目数。
+            // 已就绪缓存按总字节数做软限制，因此不直接限制条目数。
             ready: LruCache::unbounded(),
-            // error cache 本身就是按条目数限长，直接用有界 LRU 更清晰。
+            // 错误缓存本身就是按条目数限长，直接用有界 LRU 更清晰。
             errors: LruCache::new(error_capacity),
             pending: HashMap::new(),
         }

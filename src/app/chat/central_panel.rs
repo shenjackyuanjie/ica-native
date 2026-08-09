@@ -599,7 +599,7 @@ impl IcaApp {
                 ui.ctx().request_repaint();
             }
 
-            // prepend 旧消息后调整 scroll offset，避免无限触发加载
+            // 前插旧消息后调整滚动偏移量，避免无限触发加载
             let mut scroll_output = scroll_output;
             {
                 let conversation = self.bridge_states[active_bridge_idx].conversation_mut(room_id);

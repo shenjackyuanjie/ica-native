@@ -112,8 +112,7 @@ impl StickerStore {
             .clone()
     }
 
-    /// Scan only the root directory. Existing Icalingua++ subdirectories are
-    /// intentionally left untouched.
+    /// 只扫描根目录，并有意跳过已有的 Icalingua++ 子目录。
     pub fn refresh(&self, sort_newest_first: bool) -> Result<usize> {
         let root = self.root();
         let mut entries = Vec::new();
@@ -179,8 +178,7 @@ impl StickerStore {
 
     pub fn add_bytes(&self, bytes: &[u8]) -> Result<StickerEntry> {
         let detected = detect_image(bytes)?;
-        // Serialize writes performed through this store so two simultaneous
-        // favorites cannot choose the same timestamp/hash destination.
+        // 串行化经由此存储执行的写入，避免两个并发收藏选择相同的时间戳/哈希目标。
         let state = self.inner.write().expect("收藏表情存储锁被污染");
         let root = state.root.clone();
         ensure_writable_directory(&root)?;

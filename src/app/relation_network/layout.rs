@@ -25,10 +25,10 @@ pub struct RelationLayoutCache {
     pub force_next_tick_at: Option<Instant>,
 }
 
-/// All graph data and parameters consumed by the layout engine.
+/// 布局引擎使用的全部图数据和参数。
 ///
-/// Keeping this type in `layout` prevents the algorithm from depending on
-/// viewport/UI state while still allowing the feature state to own it.
+/// 将此类型放在 `layout` 中，可以避免算法依赖 viewport/UI 状态，
+/// 同时仍允许功能状态持有它。
 #[derive(Debug, Clone)]
 pub struct RelationLayoutModel {
     pub options: RelationGraphOptions,

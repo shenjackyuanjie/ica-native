@@ -4,7 +4,7 @@ use crate::ica::types::message::{Mention, Message, ReplyMessage};
 
 use super::{GroupMember, MessageLayoutCacheKey, MessageRowLayout, PendingFile, PendingImage};
 
-/// All mutable state owned by a single room.
+/// 单个会话拥有的全部可变状态。
 #[derive(Debug, Clone, Default)]
 pub struct ConversationState {
     pub messages: Vec<Message>,

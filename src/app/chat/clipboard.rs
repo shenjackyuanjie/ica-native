@@ -207,7 +207,7 @@ fn system_paste_shortcut_pressed() -> bool {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_V};
 
     // egui-winit consumes Ctrl+V before it reaches RawInput when text paste fails.
-    // The low bit lets us detect the fresh V key press without retrying every frame.
+    // 通过最低位识别 V 键本次是否刚按下，避免每一帧都重复尝试。
     unsafe {
         let ctrl_down = GetAsyncKeyState(VK_CONTROL as i32) < 0;
         let v_pressed_since_last_check = (GetAsyncKeyState(VK_V as i32) & 1) != 0;

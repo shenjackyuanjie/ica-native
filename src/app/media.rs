@@ -382,8 +382,7 @@ async fn load_source_bytes(source: &ImageSource, cached: Option<Arc<[u8]>>) -> R
 
 fn copy_image_to_clipboard(bytes: &[u8]) -> Result<()> {
     let image = image::load_from_memory(bytes).context("图片解码失败")?;
-    // DynamicImage uses the first frame for animated formats, matching system
-    // clipboard capabilities and Icalingua++ behavior.
+    // DynamicImage 对动图格式使用第一帧，与系统剪贴板能力和 Icalingua++ 行为一致。
     let rgba = image.into_rgba8();
     let (width, height) = rgba.dimensions();
     let mut clipboard = arboard::Clipboard::new().context("无法打开系统剪贴板")?;

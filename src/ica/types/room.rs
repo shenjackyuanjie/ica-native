@@ -31,7 +31,7 @@ pub struct Room {
     pub unread_count: u64,
     pub priority: u8,
     pub utime: i64,
-    /// Storage providers still persist this legacy field when adding a room.
+    /// StorageProvider 添加会话时仍会持久化这个旧字段。
     #[serde(default)]
     pub users: JsonValue,
     #[serde(default)]

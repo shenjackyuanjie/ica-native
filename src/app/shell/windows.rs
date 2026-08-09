@@ -407,7 +407,7 @@ impl IcaApp {
                 });
             });
 
-        // Socketio 状态
+        // Socket.IO 状态
         let mut socketio_status_open = self.open_page.socketio_status;
         let mut send_socket_api = false;
         egui::Window::new("Socket.IO 状态")

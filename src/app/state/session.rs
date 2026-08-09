@@ -154,8 +154,8 @@ impl DerefMut for RoomDirectory {
     }
 }
 
-/// A bridge command handle and all state that belongs to that same connection.
-/// Keeping these together prevents index drift between parallel vectors.
+/// bridge 命令句柄及属于同一连接的全部状态。
+/// 将它们放在一起可以避免多个并行 Vec 之间的索引漂移。
 pub struct BridgeSession {
     handle: BridgeHandle,
     state: BridgeState,

@@ -109,7 +109,7 @@ impl DiskCache {
 
         fs::write(&tmp_path, bytes)?;
 
-        // Windows 下 rename 到已存在文件可能失败，所以先删旧文件。
+        // Windows 下重命名到已存在文件可能失败，所以先删旧文件。
         match fs::remove_file(&path) {
             Ok(()) => {}
             Err(err) if err.kind() == io::ErrorKind::NotFound => {}

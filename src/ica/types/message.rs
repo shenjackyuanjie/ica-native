@@ -13,7 +13,7 @@ use crate::ica::types::{MessageId, RoomId, UserId, files::MessageFile};
 pub enum At {
     All,
     Bool(bool),
-    /// dummy
+    /// 占位值
     #[default]
     None,
 }
@@ -203,15 +203,15 @@ pub struct Message {
     pub deleted: bool,
     /// 是否是系统消息
     pub system: bool,
-    /// mirai?
+    /// Mirai 扩展数据
     pub mirai: JsonValue,
-    /// reveal ?
+    /// 是否已主动显示
     pub reveal: bool,
-    /// flash
+    /// 是否为闪照
     pub flash: bool,
     /// "群主授予的头衔"
     pub title: String,
-    /// anonymous id
+    /// 匿名消息 ID
     pub anonymous_id: Option<i64>,
     /// 是否已被隐藏
     pub hide: bool,
@@ -338,14 +338,14 @@ impl<'de> Deserialize<'de> for Message {
             .get("system")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        // mirai
+        // Mirai 扩展数据
         let mirai = json.get("mirai").cloned().unwrap_or(JsonValue::Null);
-        // reveal
+        // 是否已主动显示
         let reveal = json
             .get("reveal")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        // flash
+        // 是否为闪照
         let flash = json.get("flash").and_then(|v| v.as_bool()).unwrap_or(false);
         // "群主授予的头衔"
         let title = json
@@ -353,7 +353,7 @@ impl<'de> Deserialize<'de> for Message {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        // anonymous id
+        // 匿名消息 ID
         let anonymous_id = json.get("anonymousId").and_then(|v| v.as_i64());
         // 是否已被隐藏
         let hide = json.get("hide").and_then(|v| v.as_bool()).unwrap_or(false);

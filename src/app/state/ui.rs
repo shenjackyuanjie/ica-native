@@ -67,7 +67,7 @@ pub struct AppState {
     pub scroll_to_bottom_after_send: bool,
     pub reedit_draft_conflict_mode: ReEditDraftConflictMode,
     pub active_bridge_idx: Option<usize>,
-    /// Bridge handle, stop signal and UI state are stored in one session object.
+    /// bridge 句柄、停止信号和 UI 状态统一存放在一个会话对象中。
     pub bridge_states: Vec<BridgeSession>,
     pub clipboard_paste_failed: bool,
     pub ime_composing: bool,

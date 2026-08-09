@@ -93,7 +93,7 @@ impl TrackingImageLoader {
     /// 把一份待解码字节提交给固定 worker 池。
     ///
     /// 这里最重要的是 `generation`：
-    /// worker 完成后只有在“这还是当前那一代请求”时才允许写回状态，
+    /// 工作线程完成后，只有在“这还是当前那一代请求”时才允许写回状态，
     /// 否则直接丢弃，防止旧结果覆盖新结果。
     fn schedule_decode(
         &self,
@@ -349,7 +349,7 @@ pub fn install_tracking_image_loader(ctx: &Context, settings: ImageCacheSettings
     info!("已安装 TrackingImageLoader（状态机 + 线程池）");
 }
 
-/// Returns original encoded bytes retained by the tracking loader.
+/// 返回 tracking loader 保留的原始编码字节。
 pub fn cached_original_bytes(ctx: &Context, uri: &str) -> Option<Arc<[u8]>> {
     raw::get(ctx, uri)
 }
