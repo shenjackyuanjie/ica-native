@@ -58,6 +58,24 @@ impl IcaApp {
         }
     }
 
+    fn json_shape(value: &JsonValue) -> String {
+        match value {
+            JsonValue::Null => "空值".to_string(),
+            JsonValue::Bool(_) => "布尔值".to_string(),
+            JsonValue::Number(_) => "数字".to_string(),
+            JsonValue::String(_) => "字符串".to_string(),
+            JsonValue::Array(values) => format!("数组(元素数={})", values.len()),
+            JsonValue::Object(object) => format!(
+                "对象(字段=[{}])",
+                object
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        }
+    }
+
     fn log_event_parse_failure(state: &BridgeState, event: &str, error: &str, payload: &JsonValue) {
         tracing::warn!(
             target: "ica_native::protocol",
@@ -734,12 +752,10 @@ impl IcaApp {
                     target: "ica_native::forward",
                     bridge = %state.bridge_key,
                     request_id,
-                    res_id = ?res_id,
-                    file_name,
+                    res_id_present = res_id.is_some(),
+                    res_id_length = res_id.as_ref().map(|value| value.chars().count()),
+                    file_name_present = file_name.is_some(),
                     message_count = messages.and_then(JsonValue::as_array).map(Vec::len),
-                    messages = %messages
-                        .map(|value| Self::json_preview(value, 2048))
-                        .unwrap_or_else(|| "<缺失>".to_string()),
                     "收到合并转发消息响应"
                 );
                 match messages.map(Vec::<Message>::deserialize) {
@@ -760,17 +776,17 @@ impl IcaApp {
                             messages.iter().enumerate().find_map(|(index, value)| {
                                 serde_json::from_value::<Message>(value.clone())
                                     .err()
-                                    .map(|error| (index, error, Self::json_preview(value, 1024)))
+                                    .map(|error| (index, error, Self::json_shape(value)))
                             })
                         });
-                        if let Some((index, item_error, value)) = &invalid_message {
+                        if let Some((index, item_error, shape)) = &invalid_message {
                             tracing::debug!(
                                 target: "ica_native::forward",
                                 bridge = %state.bridge_key,
                                 request_id,
                                 message_index = index,
                                 error = %item_error,
-                                message = %value,
+                                message_shape = %shape,
                                 "已定位无法解析的合并转发消息"
                             );
                         }
