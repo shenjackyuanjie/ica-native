@@ -212,12 +212,25 @@ pub(super) fn has_visible_rich_content(content: &str) -> bool {
         })
 }
 
+struct RichContentRender {
+    response: egui::Response,
+    text_response: Option<egui::Response>,
+}
+
+fn merge_text_response(combined: &mut Option<egui::Response>, response: egui::Response) {
+    if let Some(combined) = combined {
+        *combined |= response;
+    } else {
+        *combined = Some(response);
+    }
+}
+
 fn render_rich_content_with_prefix(
     ui: &mut egui::Ui,
     prefix: Option<egui::RichText>,
     content: &str,
     high_contrast: bool,
-) -> egui::Response {
+) -> RichContentRender {
     let body_text_color = if high_contrast && ui.visuals().dark_mode {
         egui::Color32::from_rgb(0xf2, 0xf2, 0xf2)
     } else {
@@ -228,11 +241,17 @@ fn render_rich_content_with_prefix(
         .iter()
         .any(|segment| !matches!(segment, ContentSegment::Text(_)));
     if prefix.is_none() && !has_special_segment {
-        return ui.add(Label::new(egui::RichText::new(content).color(body_text_color)).wrap());
+        let response =
+            ui.add(Label::new(egui::RichText::new(content).color(body_text_color)).wrap());
+        return RichContentRender {
+            response: response.clone(),
+            text_response: Some(response),
+        };
     }
 
     let face_size = 24.0;
-    ui.horizontal_wrapped(|ui| {
+    let rendered = ui.horizontal_wrapped(|ui| {
+        let mut text_response = None;
         ui.spacing_mut().item_spacing.x = 0.0;
         if let Some(prefix) = prefix {
             ui.add(Label::new(prefix).wrap());
@@ -241,15 +260,17 @@ fn render_rich_content_with_prefix(
             match seg {
                 ContentSegment::Text(text) => {
                     if !text.is_empty() {
-                        ui.add(
+                        let response = ui.add(
                             Label::new(egui::RichText::new(*text).color(body_text_color)).wrap(),
                         );
+                        merge_text_response(&mut text_response, response);
                     }
                 }
                 ContentSegment::Link { text, target } => {
-                    ui.add(
+                    let response = ui.add(
                         Hyperlink::from_label_and_url(*text, target.as_ref()).open_in_new_tab(true),
                     );
+                    merge_text_response(&mut text_response, response);
                 }
                 ContentSegment::Face(id) => {
                     if let Some(bytes) = crate::face_data::get_face(*id) {
@@ -271,17 +292,22 @@ fn render_rich_content_with_prefix(
                         )
                         .wrap(),
                     );
-                    if *user_id == 1 {
-                        response.on_hover_text("@全体成员");
+                    let response = if *user_id == 1 {
+                        response.on_hover_text("@全体成员")
                     } else {
-                        response.on_hover_text(format!("QQ: {user_id}"));
-                    }
+                        response.on_hover_text(format!("QQ: {user_id}"))
+                    };
+                    merge_text_response(&mut text_response, response);
                 }
                 ContentSegment::Control => {}
             }
         }
-    })
-    .response
+        text_response
+    });
+    RichContentRender {
+        response: rendered.response,
+        text_response: rendered.inner,
+    }
 }
 
 /// 渲染消息正文中的 QQ 表情和 @ 成员标记。
@@ -290,7 +316,7 @@ pub(super) fn render_rich_content(
     content: &str,
     high_contrast: bool,
 ) -> egui::Response {
-    render_rich_content_with_prefix(ui, None, content, high_contrast)
+    render_rich_content_with_prefix(ui, None, content, high_contrast).response
 }
 
 fn reply_image_file(reply: &ReplyMessage) -> Option<&MessageFile> {
@@ -504,6 +530,7 @@ impl IcaApp {
             egui::Color32::LIGHT_BLUE
         };
         let mut action = None;
+        let mut body_text_response = None;
         let row_width = ui.available_width();
         let selection_width = if options.forward_mode_active {
             24.0
@@ -656,6 +683,7 @@ impl IcaApp {
                                                 &content,
                                                 self.custom_chat.high_contrast_chat,
                                             )
+                                            .response
                                             .interact(egui::Sense::click())
                                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                                             .clicked()
@@ -717,11 +745,13 @@ impl IcaApp {
                                         has_visible_rich_content(&message.content);
                                     if has_visible_content {
                                         has_body = true;
-                                        render_rich_content(
+                                        let rendered = render_rich_content_with_prefix(
                                             ui,
+                                            None,
                                             &message.content,
                                             self.custom_chat.high_contrast_chat,
                                         );
+                                        body_text_response = rendered.text_response;
                                     }
 
                                     if !message.files.is_empty() {
@@ -818,6 +848,14 @@ impl IcaApp {
                                     },
                                 )
                                 .response;
+
+                            // 可选择文字会优先接收点击；合并其响应后，正文上的右键也能打开消息菜单。
+                            let response =
+                                if let Some(body_text_response) = body_text_response.take() {
+                                    response.union(body_text_response)
+                                } else {
+                                    response
+                                };
 
                             response.context_menu(|ui| {
                                 if message_is_hidden {
