@@ -1,6 +1,7 @@
 use crate::app::media::MediaTask;
 use crate::app::stickers::{StickerEntry, StickerPickerTab};
 use crate::app::{IcaApp, PendingImage};
+use crate::ica::types::message::ReplyMessage;
 use egui::{Button, Image, Label, RichText};
 
 use super::{
@@ -9,6 +10,33 @@ use super::{
 };
 
 const MENTION_RESULTS_MAX_HEIGHT: f32 = 260.0;
+const REPLY_PREVIEW_CHAR_LIMIT: usize = 160;
+
+fn reply_preview_text(reply: &ReplyMessage) -> String {
+    if reply.content.contains("[Forward: ") || reply.content.contains("[NestedForward: ") {
+        return "[合并转发]".to_string();
+    }
+
+    let formatted = format_message_content(&reply.content);
+    let normalized = formatted.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return if reply.file.is_some() || !reply.files.is_empty() {
+            "[图片或附件]".to_string()
+        } else {
+            "[空消息]".to_string()
+        };
+    }
+
+    let mut chars = normalized.chars();
+    let mut preview = chars
+        .by_ref()
+        .take(REPLY_PREVIEW_CHAR_LIMIT)
+        .collect::<String>();
+    if chars.next().is_some() {
+        preview.push('…');
+    }
+    preview
+}
 
 #[derive(Default)]
 struct MentionPickerAction {
@@ -425,8 +453,8 @@ impl IcaApp {
                                 clear_reply = true;
                             }
                         });
-                        let content = format_message_content(&reply.content);
-                        ui.add(Label::new(content.as_ref()).wrap());
+                        let content = reply_preview_text(&reply);
+                        ui.add(Label::new(content).truncate());
                     });
                     ui.add_space(6.0);
                 }
