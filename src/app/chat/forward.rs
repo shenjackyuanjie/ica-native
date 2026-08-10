@@ -1,6 +1,6 @@
 use serde_json::{Value as JsonValue, json};
 
-use crate::app::IcaApp;
+use crate::app::{IcaApp, state::ForwardViewerAction};
 use crate::ica::{IcaCommand, types::message::Message};
 
 #[derive(Debug, Clone)]
@@ -305,6 +305,8 @@ impl IcaApp {
         if let Some(messages) = inline_messages {
             self.bridge_states[bridge_idx]
                 .forward_viewer
+                .lock()
+                .unwrap()
                 .open_inline(res_id, file_name, messages);
             return;
         }
@@ -319,15 +321,18 @@ impl IcaApp {
         fallback_res_id: Option<String>,
     ) {
         if res_id.trim().is_empty() {
-            self.bridge_states[bridge_idx].forward_viewer.last_error =
-                Some("Res ID 不能为空".to_string());
+            self.bridge_states[bridge_idx]
+                .forward_viewer
+                .lock()
+                .unwrap()
+                .last_error = Some("Res ID 不能为空".to_string());
             return;
         }
-        let request_id = self.bridge_states[bridge_idx].forward_viewer.begin_request(
-            res_id.clone(),
-            file_name.clone(),
-            fallback_res_id.clone(),
-        );
+        let request_id = self.bridge_states[bridge_idx]
+            .forward_viewer
+            .lock()
+            .unwrap()
+            .begin_request(res_id.clone(), file_name.clone(), fallback_res_id.clone());
         if let Err(error) = self.bridge_states[bridge_idx].send(IcaCommand::FetchForwardMessages {
             request_id,
             res_id,
@@ -343,6 +348,8 @@ impl IcaApp {
             );
             self.bridge_states[bridge_idx]
                 .forward_viewer
+                .lock()
+                .unwrap()
                 .fail(request_id, format!("查看合并转发命令发送失败: {error}"));
         }
     }
@@ -390,149 +397,188 @@ impl IcaApp {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
         };
-        if !self.bridge_states[bridge_idx].forward_viewer.open {
+        let viewer_state = self.bridge_states[bridge_idx].forward_viewer.clone();
+        let pending_action = viewer_state.lock().unwrap().pending_action.take();
+        match pending_action {
+            Some(ForwardViewerAction::Reload) => {
+                let (res_id, file_name, fallback_res_id) = {
+                    let viewer = viewer_state.lock().unwrap();
+                    (
+                        viewer.res_id.clone(),
+                        viewer.file_name.trim().to_string(),
+                        viewer.fallback_res_id.clone(),
+                    )
+                };
+                self.request_forward_messages(
+                    bridge_idx,
+                    res_id,
+                    (!file_name.is_empty()).then_some(file_name),
+                    fallback_res_id,
+                );
+            }
+            Some(ForwardViewerAction::OpenReference {
+                res_id,
+                file_name,
+                fallback_res_id,
+                inline_messages,
+            }) => {
+                self.open_forward_reference(res_id, file_name, fallback_res_id, inline_messages);
+            }
+            None => {}
+        }
+
+        if !viewer_state.lock().unwrap().open {
             return;
         }
 
-        let mut open = true;
-        let mut reload = false;
-        let mut nested_reference = None;
+        let viewport_id = egui::ViewportId::from_hash_of((
+            "forward_viewer",
+            &self.bridge_states[bridge_idx].bridge_key,
+        ));
+        let parent_viewport_id = ctx.viewport_id();
+        let viewport_builder = egui::ViewportBuilder::default()
+            .with_title("合并转发消息")
+            .with_inner_size([560.0, 680.0])
+            .with_min_inner_size([360.0, 360.0]);
         let high_contrast = self.custom_chat.high_contrast_chat;
-        egui::Window::new("合并转发消息")
-            .open(&mut open)
-            .default_size(egui::vec2(560.0, 680.0))
-            .min_size(egui::vec2(360.0, 360.0))
-            .resizable(true)
-            .show(ctx, |ui| {
-                let viewer = &mut self.bridge_states[bridge_idx].forward_viewer;
-                ui.horizontal(|ui| {
-                    ui.label("资源 ID");
-                    ui.add_sized(
-                        [ui.available_width() - 72.0, 0.0],
-                        egui::TextEdit::singleline(&mut viewer.res_id),
-                    );
-                    if ui
-                        .add_enabled(!viewer.loading, egui::Button::new("加载"))
-                        .clicked()
-                    {
-                        reload = true;
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("文件名");
-                    ui.add_sized(
-                        [ui.available_width(), 0.0],
-                        egui::TextEdit::singleline(&mut viewer.file_name)
-                            .hint_text("可选，嵌套转发需要"),
-                    );
-                });
-                if viewer.loading {
+        let viewport_state = viewer_state.clone();
+        ctx.show_viewport_deferred(
+            viewport_id,
+            viewport_builder,
+            move |viewport_ctx, _class| {
+                if viewport_ctx.input(|input| input.viewport().close_requested()) {
+                    viewport_state.lock().unwrap().open = false;
+                    viewport_ctx.request_repaint_of(parent_viewport_id);
+                    return;
+                }
+
+                egui::CentralPanel::default().show(viewport_ctx, |ui| {
+                    let mut nested_reference = None;
+                    let mut viewer = viewport_state.lock().unwrap();
                     ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label("正在读取合并转发...");
+                        ui.label("资源 ID");
+                        ui.add_sized(
+                            [ui.available_width() - 72.0, 0.0],
+                            egui::TextEdit::singleline(&mut viewer.res_id),
+                        );
+                        if ui
+                            .add_enabled(!viewer.loading, egui::Button::new("加载"))
+                            .clicked()
+                        {
+                            viewer.pending_action = Some(ForwardViewerAction::Reload);
+                        }
                     });
-                }
-                if let Some(error) = &viewer.last_error {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
-                }
-                ui.separator();
-
-                if viewer.messages.is_empty() && !viewer.loading && viewer.last_error.is_none() {
-                    ui.weak("没有转发消息");
-                }
-                let parent_res_id = viewer.res_id.clone();
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for message in &viewer.messages {
-                        egui::Frame::group(ui.style()).show(ui, |ui| {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.strong(&message.sender_name);
-                                ui.weak(format!("{} · {}", message.sender_id, message.time_text));
-                            });
-                            if let Some(reply) = &message.reply {
-                                egui::Frame::NONE
-                                    .fill(ui.visuals().faint_bg_color)
-                                    .inner_margin(6.0)
-                                    .show(ui, |ui| {
-                                        ui.weak(format!("回复 {}", reply.sender_name));
-                                        super::message_card::render_rich_content(
-                                            ui,
-                                            &reply.content,
-                                            high_contrast,
-                                        );
-                                    });
-                            }
-                            let has_visible_content =
-                                super::message_card::has_visible_rich_content(&message.content);
-                            if has_visible_content {
-                                super::message_card::render_rich_content(
-                                    ui,
-                                    &message.content,
-                                    high_contrast,
-                                );
-                            }
-                            for file in &message.files {
-                                if (file.file_type == "image"
-                                    || file.file_type.starts_with("image/"))
-                                    && !file.url.is_empty()
-                                {
-                                    ui.add(
-                                        egui::Image::from_uri(file.url.clone())
-                                            .max_width(ui.available_width().min(420.0))
-                                            .max_height(260.0),
-                                    );
-                                } else if !file.url.is_empty() {
-                                    ui.hyperlink_to(
-                                        file.name.as_deref().unwrap_or("打开附件"),
-                                        &file.url,
-                                    );
-                                }
-                            }
-                            if let Some(reference) =
-                                forward_reference(message, Some(&parent_res_id))
-                            {
-                                if !has_visible_content {
-                                    render_forward_preview(ui, &reference);
-                                }
-                                let mut response = ui.button("查看内层合并转发");
-                                if !reference.preview.is_empty() {
-                                    response = response.on_hover_text(reference.preview.join("\n"));
-                                }
-                                if response.clicked() {
-                                    nested_reference = Some(reference);
-                                }
-                            }
+                    ui.horizontal(|ui| {
+                        ui.label("文件名");
+                        ui.add_sized(
+                            [ui.available_width(), 0.0],
+                            egui::TextEdit::singleline(&mut viewer.file_name)
+                                .hint_text("可选，嵌套转发需要"),
+                        );
+                    });
+                    if viewer.loading {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("正在读取合并转发...");
                         });
-                        ui.add_space(6.0);
+                    }
+                    if let Some(error) = &viewer.last_error {
+                        ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    }
+                    ui.separator();
+
+                    if viewer.messages.is_empty() && !viewer.loading && viewer.last_error.is_none()
+                    {
+                        ui.weak("没有转发消息");
+                    }
+                    let parent_res_id = viewer.res_id.clone();
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for message in &viewer.messages {
+                            egui::Frame::group(ui.style()).show(ui, |ui| {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.strong(&message.sender_name);
+                                    ui.weak(format!(
+                                        "{} · {}",
+                                        message.sender_id, message.time_text
+                                    ));
+                                });
+                                if let Some(reply) = &message.reply {
+                                    egui::Frame::NONE
+                                        .fill(ui.visuals().faint_bg_color)
+                                        .inner_margin(6.0)
+                                        .show(ui, |ui| {
+                                            ui.weak(format!("回复 {}", reply.sender_name));
+                                            super::message_card::render_rich_content(
+                                                ui,
+                                                &reply.content,
+                                                high_contrast,
+                                            );
+                                        });
+                                }
+                                let has_visible_content =
+                                    super::message_card::has_visible_rich_content(&message.content);
+                                if has_visible_content {
+                                    super::message_card::render_rich_content(
+                                        ui,
+                                        &message.content,
+                                        high_contrast,
+                                    );
+                                }
+                                for file in &message.files {
+                                    if (file.file_type == "image"
+                                        || file.file_type.starts_with("image/"))
+                                        && !file.url.is_empty()
+                                    {
+                                        ui.add(
+                                            egui::Image::from_uri(file.url.clone())
+                                                .max_width(ui.available_width().min(420.0))
+                                                .max_height(260.0),
+                                        );
+                                    } else if !file.url.is_empty() {
+                                        ui.hyperlink_to(
+                                            file.name.as_deref().unwrap_or("打开附件"),
+                                            &file.url,
+                                        );
+                                    }
+                                }
+                                if let Some(reference) =
+                                    forward_reference(message, Some(&parent_res_id))
+                                {
+                                    if !has_visible_content {
+                                        render_forward_preview(ui, &reference);
+                                    }
+                                    let mut response = ui.button("查看内层合并转发");
+                                    if !reference.preview.is_empty() {
+                                        response =
+                                            response.on_hover_text(reference.preview.join("\n"));
+                                    }
+                                    if response.clicked() {
+                                        nested_reference = Some(reference);
+                                    }
+                                }
+                            });
+                            ui.add_space(6.0);
+                        }
+                    });
+
+                    if let Some(reference) = nested_reference {
+                        viewer.pending_action = Some(ForwardViewerAction::OpenReference {
+                            res_id: reference.res_id,
+                            file_name: reference.file_name,
+                            fallback_res_id: reference.fallback_res_id,
+                            inline_messages: reference.inline_messages,
+                        });
                     }
                 });
-            });
 
-        self.bridge_states[bridge_idx].forward_viewer.open = open;
-        if reload {
-            let res_id = self.bridge_states[bridge_idx].forward_viewer.res_id.clone();
-            let file_name = self.bridge_states[bridge_idx]
-                .forward_viewer
-                .file_name
-                .trim()
-                .to_string();
-            self.request_forward_messages(
-                bridge_idx,
-                res_id,
-                (!file_name.is_empty()).then_some(file_name),
-                self.bridge_states[bridge_idx]
-                    .forward_viewer
-                    .fallback_res_id
-                    .clone(),
-            );
-        }
-        if let Some(reference) = nested_reference {
-            self.open_forward_reference(
-                reference.res_id,
-                reference.file_name,
-                reference.fallback_res_id,
-                reference.inline_messages,
-            );
-        }
+                if viewport_state.lock().unwrap().pending_action.is_some() {
+                    viewport_ctx.request_repaint_of(parent_viewport_id);
+                }
+            },
+        );
+
+        // bridge 响应会先唤醒主窗口，再由主窗口通知独立查看器刷新内容。
+        ctx.request_repaint_of(viewport_id);
     }
 }
 

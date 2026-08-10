@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::{Deref, DerefMut};
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
@@ -430,7 +430,19 @@ pub struct ForwardViewerState {
     pub messages: Vec<Message>,
     pub loading: bool,
     pub last_error: Option<String>,
+    pub pending_action: Option<ForwardViewerAction>,
     request_id: u64,
+}
+
+#[derive(Debug, Clone)]
+pub enum ForwardViewerAction {
+    Reload,
+    OpenReference {
+        res_id: String,
+        file_name: Option<String>,
+        fallback_res_id: Option<String>,
+        inline_messages: Option<Vec<Message>>,
+    },
 }
 
 impl ForwardViewerState {
@@ -448,6 +460,7 @@ impl ForwardViewerState {
         self.messages.clear();
         self.loading = true;
         self.last_error = None;
+        self.pending_action = None;
         self.request_id
     }
 
@@ -483,6 +496,7 @@ impl ForwardViewerState {
         self.messages = messages;
         self.loading = false;
         self.last_error = None;
+        self.pending_action = None;
     }
 
     pub fn fail(&mut self, request_id: u64, error: String) {
@@ -657,7 +671,7 @@ pub struct BridgeState {
     pub forward_target_search_query: String,
     pub forward_target_room_ids: Vec<RoomId>,
     pub forward_target_as_merged: bool,
-    pub forward_viewer: ForwardViewerState,
+    pub forward_viewer: Arc<Mutex<ForwardViewerState>>,
     pub room_search_query: String,
     /// 从当前 bridge 获取、用于发起新会话的好友和群列表。
     pub contacts: ContactDirectory,
@@ -695,7 +709,7 @@ impl BridgeState {
             forward_target_search_query: String::new(),
             forward_target_room_ids: Vec::new(),
             forward_target_as_merged: true,
-            forward_viewer: ForwardViewerState::default(),
+            forward_viewer: Arc::new(Mutex::new(ForwardViewerState::default())),
             room_search_query: String::new(),
             contacts: ContactDirectory::default(),
             message_search: MessageSearchState::default(),

@@ -769,6 +769,8 @@ impl IcaApp {
                         );
                         state
                             .forward_viewer
+                            .lock()
+                            .unwrap()
                             .apply_response(request_id, res_id, messages);
                     }
                     Some(Err(error)) => {
@@ -800,6 +802,8 @@ impl IcaApp {
                         );
                         state
                             .forward_viewer
+                            .lock()
+                            .unwrap()
                             .fail(request_id, format!("合并转发内容解析失败: {error}"));
                     }
                     None => {
@@ -811,6 +815,8 @@ impl IcaApp {
                         );
                         state
                             .forward_viewer
+                            .lock()
+                            .unwrap()
                             .fail(request_id, "合并转发响应缺少 messages".to_string());
                     }
                 }
@@ -829,7 +835,11 @@ impl IcaApp {
                     error = %message,
                     "合并转发消息请求失败"
                 );
-                state.forward_viewer.fail(request_id, message);
+                state
+                    .forward_viewer
+                    .lock()
+                    .unwrap()
+                    .fail(request_id, message);
             }
             "forwardSendRequested" => {
                 let count = payload
