@@ -1,11 +1,70 @@
 use crate::app::IcaApp;
 use egui::Hyperlink;
 
+const CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
+
+fn changelog_releases() -> impl Iterator<Item = (&'static str, &'static str)> {
+    CHANGELOG.split("\n## ").skip(1).filter_map(|release| {
+        let (title, content) = release.split_once('\n').unwrap_or((release, ""));
+        let title = title.trim();
+        (!title.is_empty()).then_some((title, content.trim_end()))
+    })
+}
+
+fn changelog_section_name(name: &str) -> &str {
+    match name {
+        "Added" => "新增",
+        "Changed" => "变更",
+        "Deprecated" => "弃用",
+        "Removed" => "移除",
+        "Fixed" => "修复",
+        "Security" => "安全",
+        _ => name,
+    }
+}
+
+fn render_release_notes(ui: &mut egui::Ui, content: &str) {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            ui.add_space(3.0);
+        } else if let Some(section) = trimmed.strip_prefix("### ") {
+            ui.add_space(4.0);
+            ui.strong(changelog_section_name(section));
+        } else if let Some(item) = trimmed.strip_prefix("- ") {
+            let nested = line.starts_with(char::is_whitespace);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(if nested { "◦" } else { "•" });
+                ui.add(egui::Label::new(item).wrap());
+            });
+        } else {
+            ui.add(egui::Label::new(trimmed).wrap());
+        }
+    }
+}
+
+fn render_changelog(ui: &mut egui::Ui) {
+    egui::ScrollArea::vertical()
+        .id_salt("about_changelog")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for (index, (title, content)) in changelog_releases().enumerate() {
+                egui::CollapsingHeader::new(title)
+                    .id_salt(("changelog_release", title))
+                    .default_open(index == 0)
+                    .show(ui, |ui| render_release_notes(ui, content));
+            }
+        });
+}
+
 impl IcaApp {
     pub(super) fn render_about_window(&mut self, ctx: &egui::Context) {
         egui::Window::new("关于 Icalingua++ native")
             .open(&mut self.open_page.about)
             .collapsible(true)
+            .default_size([640.0, 680.0])
+            .min_size([420.0, 360.0])
+            .resizable(true)
             .show(ctx, |ui| {
                 ui.heading("Icalingua++ native");
                 ui.separator();
@@ -35,6 +94,10 @@ impl IcaApp {
                     ui.label("egui/eframe 图形界面框架");
                     ui.label("以及社区用户的反馈与支持");
                 });
+                ui.add_space(8.0);
+                ui.separator();
+                ui.heading("更新日志");
+                render_changelog(ui);
             });
     }
 }
