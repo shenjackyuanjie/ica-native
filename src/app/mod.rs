@@ -1,19 +1,20 @@
 use std::collections::HashMap;
 
 use gpui::{
-    App, ClipboardItem, Context, Entity, Focusable, InteractiveElement, KeyBinding, SharedString,
-    Window, div, img, prelude::*, px,
+    App, ClipboardItem, Context, Entity, Focusable, InteractiveElement, KeyBinding, ObjectFit,
+    SharedString, Window, div, img, prelude::*, px, relative,
 };
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 use theme::{ActiveTheme, Appearance, GlobalTheme, SystemAppearance, ThemeRegistry};
+use ui::{Avatar, Color, Icon, IconName, IconSize, Tooltip};
 
 use crate::config::chat_groups::ChatGroup;
 use crate::config::{ChatGroups, ConfigStore, IcaCfg, ThemeMode};
 use crate::ica::types::{
     RoomId,
     contact::{FriendContact, GroupContact},
-    message::{DeleteMessage, Mention, Message, NewMessage, ReplyMessage, SendMessage},
+    message::{At, DeleteMessage, Mention, Message, NewMessage, ReplyMessage, SendMessage},
     online_data::OnlineData,
     room::{JoinRequestRoom, Room},
 };
@@ -23,7 +24,7 @@ mod input;
 pub mod runtime;
 mod stickers;
 
-use input::{InputEvent, TextInput};
+use input::{InputEvent, InputPresentation, TextInput};
 use runtime::AppRuntime;
 use stickers::{StickerEntry, StickerStore};
 
@@ -55,6 +56,17 @@ impl Page {
             Self::Relation => "关系",
             Self::Tools => "工具",
             Self::Settings => "设置",
+        }
+    }
+
+    fn icon(self) -> IconName {
+        match self {
+            Self::Chat => IconName::Chat,
+            Self::Contacts => IconName::Person,
+            Self::Requests => IconName::Bell,
+            Self::Relation => IconName::GitGraph,
+            Self::Tools => IconName::Terminal,
+            Self::Settings => IconName::Settings,
         }
     }
 }
@@ -143,6 +155,16 @@ impl BridgeViewState {
     fn conversation_mut(&mut self, room_id: RoomId) -> &mut Conversation {
         self.conversations.entry(room_id).or_default()
     }
+
+    fn sort_rooms(&mut self) {
+        self.rooms.sort_by(|left, right| {
+            right
+                .index
+                .cmp(&left.index)
+                .then(right.priority.cmp(&left.priority))
+                .then(right.utime.cmp(&left.utime))
+        });
+    }
 }
 
 pub struct IcaApp {
@@ -158,7 +180,6 @@ pub struct IcaApp {
     message_search: Entity<TextInput>,
     show_stickers: bool,
     show_members: bool,
-    light_theme: bool,
     room_panel_width: f32,
     sticker_panel_width: f32,
     sticker_store: StickerStore,
@@ -209,11 +230,17 @@ impl IcaApp {
             .map(|connection| BridgeViewState::new(connection.key.clone()))
             .collect::<Vec<_>>();
         let active_bridge = (!bridges.is_empty()).then_some(0);
-        let composer = cx.new(|cx| TextInput::new("输入消息，Enter 发送", cx));
-        let room_search = cx.new(|cx| TextInput::new("搜索会话", cx));
+        let composer = cx.new(|cx| {
+            TextInput::new("输入消息，Enter 发送", cx)
+                .with_presentation(InputPresentation::Composer)
+        });
+        let room_search = cx
+            .new(|cx| TextInput::new("搜索会话", cx).with_presentation(InputPresentation::Search));
         let tool_event = cx.new(|cx| TextInput::new("Socket.IO 事件名", cx));
         let tool_args = cx.new(|cx| TextInput::new("参数 JSON 数组，例如 []", cx));
-        let message_search = cx.new(|cx| TextInput::new("搜索聊天记录", cx));
+        let message_search = cx.new(|cx| {
+            TextInput::new("搜索聊天记录", cx).with_presentation(InputPresentation::Search)
+        });
         let snapshot = config.snapshot();
         let sticker_store =
             StickerStore::resolve(&snapshot, config.paths()).unwrap_or_else(|error| {
@@ -275,7 +302,6 @@ impl IcaApp {
         });
 
         window.focus(&composer.focus_handle(cx), cx);
-        let light_theme = cx.theme().appearance == Appearance::Light;
         Self {
             runtime,
             config,
@@ -289,7 +315,6 @@ impl IcaApp {
             message_search,
             show_stickers: false,
             show_members: false,
-            light_theme,
             room_panel_width: snapshot.ui_setting.room_panel_width.clamp(140.0, 720.0),
             sticker_panel_width: snapshot.ui_setting.sticker_panel_width.clamp(300.0, 500.0),
             sticker_store,
@@ -435,10 +460,9 @@ impl IcaApp {
             BridgeEventKind::SetAllRooms(_) => {
                 if let Some(value) = Self::first(payload) {
                     match Vec::<Room>::deserialize(value) {
-                        Ok(mut rooms) => {
-                            rooms
-                                .sort_by_key(|room| std::cmp::Reverse((room.priority, room.utime)));
+                        Ok(rooms) => {
                             bridge.rooms = rooms;
+                            bridge.sort_rooms();
                         }
                         Err(error) => {
                             bridge.last_error = Some(format!("会话列表解析失败: {error}"))
@@ -469,6 +493,7 @@ impl IcaApp {
                     } else {
                         bridge.rooms.push(room);
                     }
+                    bridge.sort_rooms();
                 }
             }
             BridgeEventKind::SetMessages(_) => {
@@ -636,7 +661,6 @@ impl IcaApp {
         let name = if light { "One Light" } else { "One Dark" };
         if let Ok(theme) = ThemeRegistry::global(cx).get(name) {
             GlobalTheme::update_theme(cx, theme);
-            self.light_theme = light;
             self.config.update(|config| {
                 config.ui_setting.theme_mode = if light {
                     ThemeMode::Light
@@ -656,7 +680,6 @@ impl IcaApp {
         let name = if light { "One Light" } else { "One Dark" };
         if let Ok(theme) = ThemeRegistry::global(cx).get(name) {
             GlobalTheme::update_theme(cx, theme);
-            self.light_theme = light;
             self.config
                 .update(|config| config.ui_setting.theme_mode = ThemeMode::System);
             if let Err(error) = self.config.save() {
@@ -677,9 +700,13 @@ impl IcaApp {
         div()
             .id(id)
             .px_2()
-            .py_1()
+            .h(px(30.))
+            .flex()
+            .items_center()
+            .justify_center()
             .rounded_md()
             .cursor_pointer()
+            .text_sm()
             .text_color(if selected {
                 colors.text_accent
             } else {
@@ -692,6 +719,83 @@ impl IcaApp {
             })
             .hover(|style| style.bg(colors.ghost_element_hover))
             .child(label.into())
+    }
+
+    fn render_icon_button(
+        &self,
+        id: impl Into<gpui::ElementId>,
+        icon: IconName,
+        selected: bool,
+        cx: &Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let colors = cx.theme().colors().clone();
+        let tooltip = match icon {
+            IconName::MagnifyingGlass => "搜索聊天记录",
+            IconName::HistoryRerun => "加载更早记录",
+            IconName::Person => "群成员",
+            IconName::Pin => "置顶或取消置顶",
+            IconName::Trash => "删除会话",
+            IconName::AtSign => "@全体成员",
+            IconName::Image => "发送图片",
+            IconName::Paperclip => "发送文件",
+            IconName::Sparkle => "收藏表情",
+            IconName::Send => "发送",
+            IconName::Plus => "导入",
+            IconName::Close => "关闭",
+            _ => "操作",
+        };
+        div()
+            .id(id)
+            .size(px(32.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .cursor_pointer()
+            .bg(if selected {
+                colors.element_selected
+            } else {
+                colors.ghost_element_background
+            })
+            .hover(|style| style.bg(colors.ghost_element_hover))
+            .tooltip(Tooltip::text(tooltip))
+            .child(Icon::new(icon).size(IconSize::Small).color(if selected {
+                Color::Accent
+            } else {
+                Color::Muted
+            }))
+    }
+
+    fn render_message_action(
+        &self,
+        id: impl Into<gpui::ElementId>,
+        icon: IconName,
+        cx: &Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let colors = cx.theme().colors().clone();
+        let tooltip = match icon {
+            IconName::ReplyArrowRight => "回复",
+            IconName::Pencil => "重新编辑",
+            IconName::Copy => "复制",
+            IconName::ForwardArrow => "转发",
+            IconName::Trash => "撤回",
+            IconName::Bell => "戳一戳",
+            IconName::MicMute => "禁言 10 分钟",
+            IconName::Close => "关闭",
+            _ => "操作",
+        };
+        div()
+            .id(id)
+            .size(px(24.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_sm()
+            .cursor_pointer()
+            .text_color(colors.text_muted)
+            .hover(|style| style.bg(colors.ghost_element_hover))
+            .tooltip(Tooltip::text(tooltip))
+            .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
     }
 
     fn render_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -707,24 +811,58 @@ impl IcaApp {
         div()
             .flex()
             .flex_col()
-            .w(px(65.))
+            .w(px(72.))
             .h_full()
             .items_center()
-            .py_3()
-            .gap_2()
             .border_r_1()
             .border_color(colors.border)
             .bg(colors.panel_background)
             .child(
                 div()
-                    .text_lg()
+                    .h(px(56.))
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(px(17.))
                     .font_weight(gpui::FontWeight::BOLD)
                     .child("ica"),
             )
             .children(pages.into_iter().enumerate().map(|(index, page)| {
-                self.render_button(("page", index), page.label(), self.page == page, cx)
-                    .w(px(52.))
-                    .text_center()
+                let selected = self.page == page;
+                div()
+                    .id(("page", index))
+                    .w(px(60.))
+                    .h(px(52.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.))
+                    .items_center()
+                    .justify_center()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_size(px(11.))
+                    .text_color(if selected {
+                        colors.text_accent
+                    } else {
+                        colors.text_muted
+                    })
+                    .bg(if selected {
+                        colors.element_selected
+                    } else {
+                        colors.ghost_element_background
+                    })
+                    .hover(|style| style.bg(colors.ghost_element_hover))
+                    .child(
+                        Icon::new(page.icon())
+                            .size(IconSize::Small)
+                            .color(if selected {
+                                Color::Accent
+                            } else {
+                                Color::Muted
+                            }),
+                    )
+                    .child(page.label())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.page = page;
                         if page == Page::Contacts {
@@ -738,20 +876,52 @@ impl IcaApp {
             .child(div().flex_1())
             .children(self.bridges.iter().enumerate().map(|(index, bridge)| {
                 let label = bridge.key.chars().next().unwrap_or('?').to_string();
-                self.render_button(
-                    ("bridge", index),
-                    label,
-                    self.active_bridge == Some(index),
-                    cx,
-                )
-                .w(px(36.))
-                .h(px(36.))
-                .items_center()
-                .justify_center()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.active_bridge = Some(index);
-                    cx.notify();
-                }))
+                let selected = self.active_bridge == Some(index);
+                let avatar = if bridge.online.qqid > 0 {
+                    Avatar::new(format!(
+                        "https://q1.qlogo.cn/g?b=qq&nk={}&s=140",
+                        bridge.online.qqid
+                    ))
+                    .size(px(30.))
+                    .into_any_element()
+                } else {
+                    div()
+                        .size(px(30.))
+                        .rounded_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(colors.element_background)
+                        .text_sm()
+                        .child(label)
+                        .into_any_element()
+                };
+                div()
+                    .id(("bridge", index))
+                    .size(px(40.))
+                    .mb_2()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_lg()
+                    .cursor_pointer()
+                    .border_1()
+                    .border_color(if selected {
+                        colors.border_focused
+                    } else {
+                        colors.border_transparent
+                    })
+                    .bg(if selected {
+                        colors.element_selected
+                    } else {
+                        colors.ghost_element_background
+                    })
+                    .hover(|style| style.bg(colors.ghost_element_hover))
+                    .child(avatar)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.active_bridge = Some(index);
+                        cx.notify();
+                    }))
             }))
     }
 
@@ -793,8 +963,13 @@ impl IcaApp {
                         (
                             room.room_id,
                             room.room_name.clone(),
+                            room.avatar_url(),
                             room.last_message.content.clone().unwrap_or_default(),
+                            room.last_message.username.clone().unwrap_or_default(),
+                            room.last_message.timestamp.clone().unwrap_or_default(),
                             room.unread_count,
+                            room.at,
+                            room.index > 0,
                         )
                     })
                     .collect::<Vec<_>>()
@@ -812,7 +987,10 @@ impl IcaApp {
             .bg(colors.surface_background)
             .child(
                 div()
-                    .p_2()
+                    .h(px(64.))
+                    .px_3()
+                    .flex()
+                    .items_center()
                     .border_b_1()
                     .border_color(colors.border)
                     .child(self.room_search.clone()),
@@ -821,9 +999,10 @@ impl IcaApp {
                 div()
                     .id("room-filters")
                     .flex()
+                    .items_center()
+                    .h(px(38.))
                     .gap_1()
-                    .px_2()
-                    .py_1()
+                    .px_3()
                     .overflow_x_scroll()
                     .child(
                         self.render_button(
@@ -889,44 +1068,129 @@ impl IcaApp {
                     .flex_col()
                     .flex_1()
                     .overflow_y_scroll()
-                    .children(rooms.into_iter().map(|(room_id, name, preview, unread)| {
-                        div()
-                            .id(SharedString::from(format!("room-{room_id}")))
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .px_3()
-                            .py_2()
-                            .border_b_1()
-                            .border_color(colors.border_variant)
-                            .cursor_pointer()
-                            .bg(if selected == Some(room_id) {
-                                colors.element_selected
-                            } else {
-                                colors.ghost_element_background
-                            })
-                            .hover(|style| style.bg(colors.ghost_element_hover))
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.select_room(room_id, cx)),
-                            )
-                            .child(div().flex().justify_between().child(name).when(
-                                unread > 0,
-                                |element| {
-                                    element.child(
-                                        div()
-                                            .text_color(colors.text_accent)
-                                            .child(unread.to_string()),
-                                    )
-                                },
-                            ))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(colors.text_muted)
-                                    .truncate()
-                                    .child(preview),
-                            )
-                    })),
+                    .children(rooms.into_iter().map(
+                        |(
+                            room_id,
+                            name,
+                            avatar_url,
+                            preview,
+                            sender,
+                            timestamp,
+                            unread,
+                            at,
+                            pinned,
+                        )| {
+                            let is_selected = selected == Some(room_id);
+                            let preview =
+                                if room_id < 0 && !sender.is_empty() && !preview.is_empty() {
+                                    format!("{sender}: {preview}")
+                                } else {
+                                    preview
+                                };
+                            let badge_color: gpui::Hsla = match at {
+                                At::All => gpui::rgb(0xd97706).into(),
+                                At::Bool(true) => gpui::rgb(0xdc2626).into(),
+                                _ => colors.text_accent,
+                            };
+                            div()
+                                .id(SharedString::from(format!("room-{room_id}")))
+                                .flex()
+                                .flex_none()
+                                .items_center()
+                                .h(px(68.))
+                                .px_3()
+                                .border_b_1()
+                                .border_color(colors.border_variant)
+                                .cursor_pointer()
+                                .bg(if is_selected {
+                                    colors.element_selected
+                                } else {
+                                    colors.ghost_element_background
+                                })
+                                .hover(|style| style.bg(colors.ghost_element_hover))
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.select_room(room_id, cx)
+                                    }),
+                                )
+                                .child(div().mr_3().child(Avatar::new(avatar_url).size(px(40.))))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .gap(px(3.))
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .h(px(20.))
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .text_size(px(15.))
+                                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                                        .child(name),
+                                                )
+                                                .when(pinned, |element| {
+                                                    element.child(
+                                                        Icon::new(IconName::Pin)
+                                                            .size(IconSize::Indicator)
+                                                            .color(Color::Muted),
+                                                    )
+                                                })
+                                                .when(!timestamp.is_empty(), |element| {
+                                                    element.child(
+                                                        div()
+                                                            .ml_1()
+                                                            .text_size(px(11.))
+                                                            .text_color(colors.text_muted)
+                                                            .child(timestamp),
+                                                    )
+                                                }),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .h(px(18.))
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .text_size(px(12.))
+                                                        .text_color(colors.text_muted)
+                                                        .child(if preview.is_empty() {
+                                                            "暂无消息".to_string()
+                                                        } else {
+                                                            preview
+                                                        }),
+                                                )
+                                                .when(unread > 0, |element| {
+                                                    element.child(
+                                                        div()
+                                                            .ml_2()
+                                                            .min_w(px(20.))
+                                                            .h(px(18.))
+                                                            .px_1()
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .rounded_full()
+                                                            .bg(badge_color)
+                                                            .text_size(px(11.))
+                                                            .text_color(gpui::rgb(0xffffff))
+                                                            .child(unread.min(99).to_string()),
+                                                    )
+                                                }),
+                                        ),
+                                )
+                        },
+                    )),
             )
     }
 
@@ -938,9 +1202,9 @@ impl IcaApp {
                 .rooms
                 .iter()
                 .find(|room| room.room_id == id)
-                .map(|room| (id, room.room_name.clone()))
+                .map(|room| (id, room.room_name.clone(), room.index > 0))
         });
-        let Some((room_id, room_name)) = selected_room else {
+        let Some((room_id, room_name, room_is_pinned)) = selected_room else {
             return div()
                 .flex()
                 .flex_1()
@@ -970,9 +1234,11 @@ impl IcaApp {
                 }
             })
             .unwrap_or((&[], String::new()));
+        let self_id = self.active().map_or(-1, |bridge| bridge.online.qqid);
         let messages = source_messages
             .iter()
-            .map(|message| {
+            .enumerate()
+            .map(|(index, message)| {
                 let raw = message.raw_msg.as_deref().cloned().unwrap_or_else(|| {
                     serde_json::json!({
                         "_id": message.msg_id,
@@ -990,8 +1256,13 @@ impl IcaApp {
                     message.deleted,
                     message.files.clone(),
                     message.as_reply(),
+                    message.reply.clone(),
                     message.content.clone(),
                     raw,
+                    message.system,
+                    index == 0 || source_messages[index - 1].date_text != message.date_text,
+                    message.date_text.clone(),
+                    self_id > 0 && message.sender_id == self_id,
                 )
             })
             .collect::<Vec<_>>();
@@ -1017,15 +1288,37 @@ impl IcaApp {
                     .border_b_1()
                     .border_color(colors.border)
                     .bg(colors.toolbar_background)
-                    .child(div().flex().flex_col().child(room_name).child(
-                        div().text_sm().text_color(colors.text_muted).child(room_id.to_string()),
-                    ))
                     .child(
                         div()
                             .flex()
-                            .gap_2()
-                            .child(div().w(px(180.)).child(self.message_search.clone()))
-                            .child(self.render_button("search-messages", "搜索", !search_keyword.is_empty(), cx).on_click(
+                            .flex_col()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .max_w(px(220.))
+                                    .truncate()
+                                    .text_size(px(17.))
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .child(room_name),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(colors.text_muted)
+                                    .child(if room_id < 0 {
+                                        format!("群聊 · {}", room_id.abs())
+                                    } else {
+                                        format!("QQ {}", room_id)
+                                    }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(div().w(px(170.)).child(self.message_search.clone()))
+                            .child(self.render_icon_button("search-messages", IconName::MagnifyingGlass, !search_keyword.is_empty(), cx).on_click(
                                 cx.listener(move |this, _, _, cx| {
                                     let keyword = this.message_search.read(cx).text().trim().to_string();
                                     if keyword.is_empty() {
@@ -1043,7 +1336,7 @@ impl IcaApp {
                                     cx.notify();
                                 }),
                             ))
-                            .child(self.render_button("older", "更早记录", false, cx).on_click(
+                            .child(self.render_icon_button("older", IconName::HistoryRerun, false, cx).on_click(
                                 cx.listener(move |this, _, _, _| {
                                     let offset = this
                                         .active()
@@ -1052,20 +1345,29 @@ impl IcaApp {
                                     let _ = this.send_command(IcaCommand::FetchOlderMessages { room_id, offset });
                                 }),
                             ))
-                            .child(self.render_button("members", "成员", false, cx).on_click(
+                            .when(room_id < 0, |element| element.child(self.render_icon_button("members", IconName::Person, self.show_members, cx).on_click(
                                 cx.listener(move |this, _, _, cx| {
                                     this.show_members = true;
                                     this.show_stickers = false;
                                     let _ = this.send_command(IcaCommand::FetchGroupMembers { room_id });
                                     cx.notify();
                                 }),
-                            ))
-                            .child(self.render_button("pin-room", "置顶", false, cx).on_click(
-                                cx.listener(move |this, _, _, _| {
-                                    let _ = this.send_command(IcaCommand::PinRoom { room_id, pin: true });
+                            )))
+                            .child(self.render_icon_button("pin-room", IconName::Pin, room_is_pinned, cx).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    let pin = !room_is_pinned;
+                                    if this.send_command(IcaCommand::PinRoom { room_id, pin }).is_ok() {
+                                        if let Some(bridge) = this.active_mut() {
+                                            if let Some(room) = bridge.rooms.iter_mut().find(|room| room.room_id == room_id) {
+                                                room.index = if pin { 1 } else { 0 };
+                                            }
+                                            bridge.sort_rooms();
+                                        }
+                                        cx.notify();
+                                    }
                                 }),
                             ))
-                            .child(self.render_button("remove-room", "移除", false, cx).on_click(
+                            .child(self.render_icon_button("remove-room", IconName::Trash, false, cx).on_click(
                                 cx.listener(move |this, _, _, _| {
                                     let _ = this.send_command(IcaCommand::RemoveChat(room_id));
                                 }),
@@ -1084,111 +1386,227 @@ impl IcaApp {
                     .when(!search_keyword.is_empty(), |element| {
                         element.child(div().text_sm().text_color(colors.text_accent).child(format!("搜索结果：{search_keyword}")))
                     })
-                    .children(messages.into_iter().map(|(id, sender, sender_id, content, time, deleted, files, reply, edit_content, raw)| {
+                    .children(messages.into_iter().map(|(id, sender, sender_id, content, time, deleted, files, reply, quoted_reply, edit_content, raw, system, show_date, date, is_self)| {
                         let file_count = files.len();
-                        let display_content = if deleted { "[消息已撤回]".to_string() } else if content.is_empty() && file_count > 0 { format!("[{file_count} 个附件]") } else { content };
+                        let display_content = if deleted {
+                            "[消息已撤回]".to_string()
+                        } else if content.is_empty() && file_count > 0 {
+                            String::new()
+                        } else if content.is_empty() {
+                            "[空消息]".to_string()
+                        } else {
+                            content
+                        };
+                        if system {
+                            return div()
+                                .w_full()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .when(show_date, |element| {
+                                    element.child(
+                                        div()
+                                            .w_full()
+                                            .flex()
+                                            .justify_center()
+                                            .py_1()
+                                            .text_size(px(11.))
+                                            .text_color(colors.text_muted)
+                                            .child(date),
+                                    )
+                                })
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .flex()
+                                        .justify_center()
+                                        .child(
+                                            div()
+                                                .max_w(relative(0.72))
+                                                .px_3()
+                                                .py_1()
+                                                .rounded_md()
+                                                .bg(colors.element_background)
+                                                .text_size(px(12.))
+                                                .text_color(colors.text_muted)
+                                                .child(display_content),
+                                        ),
+                                )
+                                .into_any_element();
+                        }
+                        let has_display_content = !display_content.is_empty();
                         let copy_content = edit_content.clone();
                         let reedit_content = edit_content;
                         let attachment_message_id = id.clone();
-                        div()
-                            .id(SharedString::from(format!("message-{id}")))
+                        let avatar_url = format!("https://q1.qlogo.cn/g?b=qq&nk={}&s=140", sender_id.abs());
+                        let message_id = id.clone();
+                        let reply_id = id.clone();
+                        let edit_id = id.clone();
+                        let copy_id = id.clone();
+                        let forward_id = id.clone();
+                        let delete_id = id.clone();
+                        let actions = div()
+                            .flex()
+                            .items_center()
+                            .gap(px(2.))
+                            .child(self.render_message_action(SharedString::from(format!("reply-{reply_id}")), IconName::ReplyArrowRight, cx).on_click(
+                                cx.listener(move |this, _, window, cx| {
+                                    if let Some(bridge) = this.active_mut() {
+                                        bridge.conversation_mut(room_id).reply_to = Some(reply.clone());
+                                    }
+                                    window.focus(&this.composer.focus_handle(cx), cx);
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(self.render_message_action(SharedString::from(format!("edit-{edit_id}")), IconName::Pencil, cx).on_click(
+                                cx.listener(move |this, _, window, cx| {
+                                    this.composer.update(cx, |input, cx| input.set_text(reedit_content.clone(), cx));
+                                    window.focus(&this.composer.focus_handle(cx), cx);
+                                }),
+                            ))
+                            .child(self.render_message_action(SharedString::from(format!("copy-{copy_id}")), IconName::Copy, cx).on_click(
+                                cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy_content.clone()))),
+                            ))
+                            .child(self.render_message_action(SharedString::from(format!("forward-{forward_id}")), IconName::ForwardArrow, cx).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    if let Some(bridge) = this.active_mut() {
+                                        bridge.pending_forward = Some((room_id, raw.clone()));
+                                        bridge.last_notice = Some("请选择目标会话完成转发".to_string());
+                                    }
+                                    cx.notify();
+                                }),
+                            ))
+                            .when(is_self && !deleted, |element| {
+                                element.child(self.render_message_action(SharedString::from(format!("delete-{delete_id}")), IconName::Trash, cx).on_click(
+                                    cx.listener(move |this, _, _, _| {
+                                        let _ = this.send_command(IcaCommand::DeleteMessage(DeleteMessage {
+                                            room_id,
+                                            message_id: delete_id.clone(),
+                                        }));
+                                    }),
+                                ))
+                            });
+                        let bubble = div()
                             .flex()
                             .flex_col()
-                            .gap_1()
-                            .p_3()
-                            .rounded_lg()
-                            .border_1()
-                            .border_color(colors.border_variant)
-                            .bg(colors.surface_background)
+                            .min_w(px(120.))
+                            .max_w(relative(0.78))
+                            .gap(px(3.))
                             .child(
                                 div()
                                     .flex()
-                                    .justify_between()
-                                    .child(format!("{sender}  {sender_id}"))
-                                    .child(div().text_sm().text_color(colors.text_muted).child(time)),
+                                    .items_center()
+                                    .gap_1()
+                                    .when(is_self, |element| element.justify_end())
+                                    .when(has_display_content, |element| element.child(
+                                        div()
+                                            .text_size(px(13.))
+                                            .text_color(if deleted { colors.text_muted } else { colors.text_accent })
+                                            .child(if sender_id > 0 { format!("{sender} · {sender_id}") } else { sender }),
+                                    ))
+                                    .child(div().text_size(px(10.)).text_color(colors.text_muted).child(time))
+                                    .child(actions),
                             )
-                            .child(div().text_color(if deleted { colors.text_muted } else { colors.text }).child(display_content))
-                            .when(file_count > 0, |element| element.child(
-                                div().flex().flex_col().gap_1().children(files.into_iter().enumerate().map(|(file_index, file)| {
-                                    let url = file.url.clone();
-                                    let image_url = url.clone();
-                                    let label = file.name.unwrap_or_else(|| {
-                                        if file.file_type.starts_with("image") { "查看图片".to_string() } else { "打开附件".to_string() }
-                                    });
-                                    if file.file_type.starts_with("image") && !image_url.is_empty() {
-                                        img(image_url.clone())
-                                            .id(SharedString::from(format!("attachment-{attachment_message_id}-{file_index}")))
-                                            .w(px(240.))
-                                            .h(px(160.))
-                                            .rounded_md()
-                                            .border_1()
-                                            .border_color(colors.border)
-                                            .cursor_pointer()
-                                            .on_click(move |_, _, cx| cx.open_url(&image_url))
-                                            .into_any_element()
-                                    } else {
-                                        self.render_button(SharedString::from(format!("attachment-{attachment_message_id}-{file_index}")), label, false, cx).on_click(
-                                            cx.listener(move |_, _, _, cx| {
-                                                if !url.is_empty() { cx.open_url(&url); }
-                                            }),
-                                        ).into_any_element()
-                                    }
-                                }))
-                            ))
                             .child(
                                 div()
                                     .flex()
-                                    .gap_2()
-                                    .text_sm()
-                                    .child(self.render_button(SharedString::from(format!("reply-{id}")), "回复", false, cx).on_click(
-                                        cx.listener(move |this, _, window, cx| {
-                                            if let Some(bridge) = this.active_mut() {
-                                                bridge.conversation_mut(room_id).reply_to = Some(reply.clone());
+                                    .flex_col()
+                                    .gap_1()
+                                    .px_3()
+                                    .py_2()
+                                    .rounded_lg()
+                                    .border_1()
+                                    .border_color(if is_self { colors.border_selected } else { colors.border_variant })
+                                    .bg(if is_self { colors.element_selected } else { colors.elevated_surface_background })
+                                    .when_some(quoted_reply, |element, quoted| {
+                                        element.child(
+                                            div()
+                                                .mb_1()
+                                                .pl_2()
+                                                .border_l_2()
+                                                .border_color(colors.border_selected)
+                                                .text_size(px(12.))
+                                                .text_color(colors.text_muted)
+                                                .child(format!("{}：{}", quoted.sender_name, quoted.content)),
+                                        )
+                                    })
+                                    .child(
+                                        div()
+                                            .whitespace_normal()
+                                            .line_height(px(21.))
+                                            .text_size(px(14.))
+                                            .text_color(if deleted { colors.text_muted } else { colors.text })
+                                            .child(display_content),
+                                    )
+                                    .when(file_count > 0, |element| element.child(
+                                        div().flex().flex_col().gap_1().children(files.into_iter().enumerate().map(|(file_index, file)| {
+                                            let url = file.url.clone();
+                                            let image_url = url.clone();
+                                            let label = file.name.unwrap_or_else(|| {
+                                                if file.file_type.starts_with("image") { "查看图片".to_string() } else { "打开附件".to_string() }
+                                            });
+                                            if file.file_type.starts_with("image") && !image_url.is_empty() {
+                                                img(image_url.clone())
+                                                    .id(SharedString::from(format!("attachment-{attachment_message_id}-{file_index}")))
+                                                    .w(px(240.))
+                                                    .h(px(180.))
+                                                    .object_fit(ObjectFit::Contain)
+                                                    .rounded_md()
+                                                    .cursor_pointer()
+                                                    .on_click(move |_, _, cx| cx.open_url(&image_url))
+                                                    .into_any_element()
+                                            } else {
+                                                self.render_button(SharedString::from(format!("attachment-{attachment_message_id}-{file_index}")), label, false, cx).on_click(
+                                                    cx.listener(move |_, _, _, cx| {
+                                                        if !url.is_empty() { cx.open_url(&url); }
+                                                    }),
+                                                ).into_any_element()
                                             }
-                                            window.focus(&this.composer.focus_handle(cx), cx);
-                                            cx.notify();
-                                        }),
-                                    ))
-                                    .child(self.render_button(SharedString::from(format!("edit-{id}")), "重编", false, cx).on_click(
-                                        cx.listener(move |this, _, window, cx| {
-                                            this.composer.update(cx, |input, cx| input.set_text(reedit_content.clone(), cx));
-                                            window.focus(&this.composer.focus_handle(cx), cx);
-                                        }),
-                                    ))
-                                    .child(self.render_button(SharedString::from(format!("copy-{id}")), "复制", false, cx).on_click(
-                                        cx.listener({
-                                            move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy_content.clone()))
-                                        }),
-                                    ))
-                                    .child(self.render_button(SharedString::from(format!("forward-{id}")), "转发", false, cx).on_click(
-                                        cx.listener(move |this, _, _, cx| {
-                                            if let Some(bridge) = this.active_mut() {
-                                                bridge.pending_forward = Some((room_id, raw.clone()));
-                                                bridge.last_notice = Some("请选择目标会话完成转发".to_string());
-                                            }
-                                            cx.notify();
-                                        }),
-                                    ))
-                                    .when(!deleted, |element| {
-                                        let delete_id = id.clone();
-                                        element.child(self.render_button(SharedString::from(format!("delete-{id}")), "撤回", false, cx).on_click(
-                                            cx.listener(move |this, _, _, _| {
-                                                let _ = this.send_command(IcaCommand::DeleteMessage(DeleteMessage {
-                                                    room_id,
-                                                    message_id: delete_id.clone(),
-                                                }));
-                                            }),
-                                        ))
-                                    }),
-                            )
+                                        }))
+                                    )));
+                        let leading_avatar_url = avatar_url.clone();
+                        let row = div()
+                            .id(SharedString::from(format!("message-{message_id}")))
+                            .w_full()
+                            .flex()
+                            .items_end()
+                            .gap_2()
+                            .when(is_self, |element| element.justify_end())
+                            .when(!is_self, |element| {
+                                element.child(Avatar::new(leading_avatar_url).size(px(36.)))
+                            })
+                            .child(bubble)
+                            .when(is_self, |element| {
+                                element.child(Avatar::new(avatar_url).size(px(36.)))
+                            });
+                        div()
+                            .w_full()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .when(show_date, |element| {
+                                element.child(
+                                    div()
+                                        .w_full()
+                                        .flex()
+                                        .justify_center()
+                                        .py_1()
+                                        .text_size(px(11.))
+                                        .text_color(colors.text_muted)
+                                        .child(date),
+                                )
+                            })
+                            .child(row)
+                            .into_any_element()
                     })),
             )
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
-                    .p_3()
+                    .gap_1()
+                    .px_3()
+                    .py_2()
                     .border_t_1()
                     .border_color(colors.border)
                     .bg(colors.panel_background)
@@ -1196,11 +1614,16 @@ impl IcaApp {
                         element.child(
                             div()
                                 .flex()
+                                .items_center()
                                 .justify_between()
-                                .text_sm()
+                                .h(px(28.))
+                                .px_2()
+                                .border_l_2()
+                                .border_color(colors.border_selected)
+                                .text_size(px(12.))
                                 .text_color(colors.text_muted)
                                 .child(reply)
-                                .child(self.render_button("cancel-reply", "取消", false, cx).on_click(
+                                .child(self.render_message_action("cancel-reply", IconName::Close, cx).on_click(
                                     cx.listener(move |this, _, _, cx| {
                                         if let Some(bridge) = this.active_mut() {
                                             bridge.conversation_mut(room_id).reply_to = None;
@@ -1214,8 +1637,8 @@ impl IcaApp {
                         div()
                             .flex()
                             .items_center()
-                            .gap_2()
-                            .child(self.render_button("mention-all", "@全体", false, cx).on_click(
+                            .gap_1()
+                            .when(room_id < 0, |element| element.child(self.render_icon_button("mention-all", IconName::AtSign, false, cx).on_click(
                                 cx.listener(|this, _, window, cx| {
                                     let current = this.composer.read(cx).text().to_string();
                                     let prefix = if current.is_empty() { "" } else { " " };
@@ -1224,10 +1647,10 @@ impl IcaApp {
                                     });
                                     window.focus(&this.composer.focus_handle(cx), cx);
                                 }),
-                            ))
-                            .child(self.render_button("image", "图片", false, cx).on_click(cx.listener(Self::pick_image)))
-                            .child(self.render_button("file", "文件", false, cx).on_click(cx.listener(Self::pick_file)))
-                            .child(self.render_button("sticker", "表情", self.show_stickers, cx).on_click(
+                            )))
+                            .child(self.render_icon_button("image", IconName::Image, false, cx).on_click(cx.listener(Self::pick_image)))
+                            .child(self.render_icon_button("file", IconName::Paperclip, false, cx).on_click(cx.listener(Self::pick_file)))
+                            .child(self.render_icon_button("sticker", IconName::Sparkle, self.show_stickers, cx).on_click(
                                 cx.listener(|this, _, _, cx| {
                                     this.show_stickers = !this.show_stickers;
                                     if this.show_stickers { this.show_members = false; }
@@ -1235,7 +1658,7 @@ impl IcaApp {
                                 }),
                             ))
                             .child(div().flex_1().child(self.composer.clone()))
-                            .child(self.render_button("send", "发送", true, cx).on_click(
+                            .child(self.render_icon_button("send", IconName::Send, true, cx).on_click(
                                 cx.listener(|this, _, _, cx| {
                                     let text = this.composer.read(cx).text().trim().to_string();
                                     if !text.is_empty() && this.send_text(text).is_ok() {
@@ -1363,8 +1786,8 @@ impl IcaApp {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .h(px(48.))
-                    .px_3()
+                    .h(px(64.))
+                    .px_4()
                     .border_b_1()
                     .border_color(colors.border)
                     .child(format!("收藏表情 ({})", entries.len()))
@@ -1373,18 +1796,32 @@ impl IcaApp {
                             .flex()
                             .gap_1()
                             .child(
-                                self.render_button("import-sticker", "导入", false, cx)
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                self.render_icon_button(
+                                    "import-sticker",
+                                    IconName::Plus,
+                                    false,
+                                    cx,
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
                                         this.import_sticker();
                                         cx.notify();
-                                    })),
+                                    },
+                                )),
                             )
                             .child(
-                                self.render_button("close-stickers", "关闭", false, cx)
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                self.render_icon_button(
+                                    "close-stickers",
+                                    IconName::Close,
+                                    false,
+                                    cx,
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
                                         this.show_stickers = false;
                                         cx.notify();
-                                    })),
+                                    },
+                                )),
                             ),
                     ),
             )
@@ -1402,11 +1839,12 @@ impl IcaApp {
                 div()
                     .id("sticker-scroll")
                     .flex()
-                    .flex_col()
+                    .flex_wrap()
+                    .content_start()
                     .flex_1()
                     .overflow_y_scroll()
-                    .p_2()
-                    .gap_1()
+                    .p_3()
+                    .gap_2()
                     .when(entries.is_empty(), |element| {
                         element.child(
                             div().p_3().text_color(colors.text_muted).child(format!(
@@ -1417,7 +1855,33 @@ impl IcaApp {
                     })
                     .children(entries.into_iter().enumerate().map(|(index, entry)| {
                         let selected_entry = entry.clone();
-                        self.render_button(("sticker-entry", index), entry.name, false, cx)
+                        div()
+                            .id(("sticker-entry", index))
+                            .size(px(88.))
+                            .p_1()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .gap_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .hover(|style| style.bg(colors.ghost_element_hover))
+                            .child(
+                                img(entry.path)
+                                    .size(px(68.))
+                                    .object_fit(ObjectFit::Contain)
+                                    .rounded_sm(),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .truncate()
+                                    .text_center()
+                                    .text_size(px(10.))
+                                    .text_color(colors.text_muted)
+                                    .child(entry.name),
+                            )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.send_sticker(&selected_entry);
                                 cx.notify();
@@ -1450,13 +1914,13 @@ impl IcaApp {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .h(px(48.))
-                    .px_3()
+                    .h(px(64.))
+                    .px_4()
                     .border_b_1()
                     .border_color(colors.border)
                     .child(format!("群成员 ({})", members.len()))
                     .child(
-                        self.render_button("close-members", "关闭", false, cx)
+                        self.render_icon_button("close-members", IconName::Close, false, cx)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.show_members = false;
                                 cx.notify();
@@ -1473,40 +1937,66 @@ impl IcaApp {
                     .children(members.into_iter().enumerate().map(|(index, member)| {
                         let poke_id = member.user_id;
                         let mute_id = member.user_id;
+                        let display_name = member.display_name().to_string();
                         div()
                             .id(("member", index))
                             .flex()
-                            .flex_col()
-                            .gap_1()
-                            .p_3()
+                            .items_center()
+                            .h(px(64.))
+                            .px_3()
+                            .gap_2()
                             .border_b_1()
                             .border_color(colors.border_variant)
-                            .child(format!("{} ({})", member.display_name(), member.user_id))
                             .child(
-                                div().text_sm().text_color(colors.text_muted).child(format!(
-                                    "{}  禁言至 {}",
-                                    member.role, member.shutup_time
-                                )),
+                                Avatar::new(format!(
+                                    "https://q1.qlogo.cn/g?b=qq&nk={}&s=140",
+                                    member.user_id.abs()
+                                ))
+                                .size(px(36.)),
                             )
                             .child(
                                 div()
                                     .flex()
-                                    .gap_2()
+                                    .flex_col()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .gap(px(2.))
+                                    .child(div().truncate().text_size(px(14.)).child(display_name))
                                     .child(
-                                        self.render_button(("poke", index), "戳一戳", false, cx)
-                                            .on_click(cx.listener(move |this, _, _, _| {
+                                        div()
+                                            .truncate()
+                                            .text_size(px(11.))
+                                            .text_color(colors.text_muted)
+                                            .child(format!(
+                                                "{} · {} · 禁言至 {}",
+                                                member.user_id, member.role, member.shutup_time
+                                            )),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1()
+                                    .child(
+                                        self.render_message_action(
+                                            ("poke", index),
+                                            IconName::Bell,
+                                            cx,
+                                        )
+                                        .on_click(
+                                            cx.listener(move |this, _, _, _| {
                                                 let _ =
                                                     this.send_command(IcaCommand::SendGroupPoke {
                                                         room_id,
                                                         target_id: poke_id,
                                                     });
-                                            })),
+                                            }),
+                                        ),
                                     )
                                     .child(
-                                        self.render_button(
+                                        self.render_message_action(
                                             ("mute", index),
-                                            "禁言10分钟",
-                                            false,
+                                            IconName::MicMute,
                                             cx,
                                         )
                                         .on_click(
@@ -1527,14 +2017,18 @@ impl IcaApp {
 
     fn render_simple_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
+        let theme_mode = self.config.snapshot().ui_setting.theme_mode;
         let mut root = div()
             .id("page-scroll")
             .flex()
             .flex_col()
             .flex_1()
             .h_full()
-            .p_5()
-            .gap_3()
+            .w_full()
+            .max_w(px(900.))
+            .mx_auto()
+            .p_6()
+            .gap_4()
             .overflow_y_scroll();
         match self.page {
             Page::Contacts => {
@@ -1553,25 +2047,73 @@ impl IcaApp {
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default();
-                root =
-                    root.child(div().text_xl().child("联系人"))
-                        .children(contacts.into_iter().map(|(room_id, name, kind)| {
-                            div()
-                                .id(SharedString::from(format!("contact-{room_id}")))
-                                .flex()
-                                .justify_between()
-                                .p_3()
-                                .rounded_md()
-                                .bg(colors.surface_background)
-                                .cursor_pointer()
-                                .hover(|style| style.bg(colors.element_hover))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.page = Page::Chat;
-                                    this.select_room(room_id, cx);
-                                }))
-                                .child(name)
-                                .child(div().text_sm().text_color(colors.text_muted).child(kind))
-                        }));
+                let contact_count = contacts.len();
+                root = root
+                    .child(
+                        div()
+                            .flex()
+                            .items_end()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .child("联系人"),
+                            )
+                            .child(
+                                div()
+                                    .pb(px(2.))
+                                    .text_size(px(12.))
+                                    .text_color(colors.text_muted)
+                                    .child(format!("{contact_count} 项")),
+                            ),
+                    )
+                    .child(div().border_t_1().border_color(colors.border))
+                    .children(contacts.into_iter().map(|(room_id, name, kind)| {
+                        let avatar_url = if room_id < 0 {
+                            let group_id = room_id.abs();
+                            format!("https://p.qlogo.cn/gh/{group_id}/{group_id}/0")
+                        } else {
+                            format!("https://q1.qlogo.cn/g?b=qq&nk={room_id}&s=140")
+                        };
+                        div()
+                            .id(SharedString::from(format!("contact-{room_id}")))
+                            .flex()
+                            .items_center()
+                            .h(px(58.))
+                            .px_3()
+                            .gap_3()
+                            .border_b_1()
+                            .border_color(colors.border_variant)
+                            .cursor_pointer()
+                            .hover(|style| style.bg(colors.ghost_element_hover))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.page = Page::Chat;
+                                this.select_room(room_id, cx);
+                            }))
+                            .child(Avatar::new(avatar_url).size(px(38.)))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .gap(px(2.))
+                                    .child(div().truncate().text_size(px(14.)).child(name))
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(colors.text_muted)
+                                            .child(room_id.abs().to_string()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(colors.text_muted)
+                                    .child(kind),
+                            )
+                    }));
             }
             Page::Requests => {
                 let requests = self
@@ -1706,22 +2248,32 @@ impl IcaApp {
                             .flex()
                             .gap_2()
                             .child(
-                                self.render_button("system-theme", "跟随系统", false, cx)
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.follow_system_theme(cx)),
-                                    ),
+                                self.render_button(
+                                    "system-theme",
+                                    "跟随系统",
+                                    theme_mode == ThemeMode::System,
+                                    cx,
+                                )
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.follow_system_theme(cx)),
+                                ),
                             )
                             .child(
-                                self.render_button("dark-theme", "One Dark", !self.light_theme, cx)
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.switch_theme(false, cx)),
-                                    ),
+                                self.render_button(
+                                    "dark-theme",
+                                    "One Dark",
+                                    theme_mode == ThemeMode::Dark,
+                                    cx,
+                                )
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.switch_theme(false, cx)),
+                                ),
                             )
                             .child(
                                 self.render_button(
                                     "light-theme",
                                     "One Light",
-                                    self.light_theme,
+                                    theme_mode == ThemeMode::Light,
                                     cx,
                                 )
                                 .on_click(

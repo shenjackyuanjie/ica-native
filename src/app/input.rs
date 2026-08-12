@@ -45,6 +45,15 @@ pub struct TextInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
+    presentation: InputPresentation,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InputPresentation {
+    #[default]
+    Field,
+    Search,
+    Composer,
 }
 
 impl TextInput {
@@ -59,7 +68,13 @@ impl TextInput {
             last_layout: None,
             last_bounds: None,
             is_selecting: false,
+            presentation: InputPresentation::Field,
         }
+    }
+
+    pub fn with_presentation(mut self, presentation: InputPresentation) -> Self {
+        self.presentation = presentation;
+        self
     }
 
     pub fn text(&self) -> &str {
@@ -580,6 +595,8 @@ impl Element for TextElement {
 impl Render for TextInput {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
+        let is_search = self.presentation == InputPresentation::Search;
+        let is_composer = self.presentation == InputPresentation::Composer;
         div()
             .key_context("ChatInput")
             .track_focus(&self.focus_handle)
@@ -604,14 +621,25 @@ impl Render for TextInput {
             .flex()
             .items_center()
             .w_full()
-            .h(px(38.))
-            .px_3()
-            .rounded_md()
+            .h(px(if is_composer {
+                44.
+            } else if is_search {
+                36.
+            } else {
+                38.
+            }))
+            .px(if is_composer { px(16.) } else { px(12.) })
+            .when(is_composer, |element| element.rounded_full())
+            .when(!is_composer, |element| element.rounded_md())
             .border_1()
-            .border_color(colors.border)
+            .border_color(if is_composer {
+                colors.border_variant
+            } else {
+                colors.border
+            })
             .bg(colors.editor_background)
             .text_color(colors.text)
-            .text_size(px(14.))
+            .text_size(px(if is_composer { 15. } else { 14. }))
             .line_height(px(22.))
             .child(TextElement { input: cx.entity() })
     }
