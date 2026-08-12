@@ -1,532 +1,1909 @@
-use std::{
-    ops::{Deref, DerefMut},
-    sync::Arc,
+use std::collections::HashMap;
+
+use gpui::{
+    App, ClipboardItem, Context, Entity, Focusable, InteractiveElement, KeyBinding, SharedString,
+    Window, div, img, prelude::*, px,
 };
+use serde::Deserialize;
+use serde_json::Value as JsonValue;
+use theme::{ActiveTheme, Appearance, GlobalTheme, SystemAppearance, ThemeRegistry};
 
-use crate::assets;
-use crate::config::ConfigStore;
-use eframe::CreationContext;
-use rand::RngExt;
+use crate::config::chat_groups::ChatGroup;
+use crate::config::{ChatGroups, ConfigStore, IcaCfg, ThemeMode};
+use crate::ica::types::{
+    RoomId,
+    contact::{FriendContact, GroupContact},
+    message::{DeleteMessage, Mention, Message, NewMessage, ReplyMessage, SendMessage},
+    online_data::OnlineData,
+    room::{JoinRequestRoom, Room},
+};
+use crate::ica::{BridgeEvent, BridgeEventKind, IcaCommand};
 
-pub mod auto_sign;
-mod chat;
-pub mod chat_groups;
-mod contacts;
-mod event;
-mod media;
-pub mod online_mode;
-pub mod open_page;
-mod relation_network;
-mod runtime;
-pub mod settings;
-mod shell;
-pub mod state;
-pub mod stickers;
-mod tools;
+mod input;
+pub mod runtime;
+mod stickers;
 
-use media::{MediaEvent, MediaTask};
+use input::{InputEvent, TextInput};
 use runtime::AppRuntime;
-pub use state::*;
+use stickers::{StickerEntry, StickerStore};
 
-use crate::ica::BridgeEventKind;
-use crate::ica::types::room::Room;
-
-fn clipboard_image_paste_requested(
-    raw_input: &egui::RawInput,
-    system_paste_shortcut_pressed: bool,
-) -> bool {
-    let viewport_focused = raw_input.viewport().focused.unwrap_or(raw_input.focused);
-    if !raw_input.focused || !viewport_focused {
-        return false;
-    }
-
-    let has_text_paste = raw_input
-        .events
-        .iter()
-        .any(|event| matches!(event, egui::Event::Paste(_)));
-    let has_paste_shortcut = raw_input.events.iter().any(|event| {
-        if let egui::Event::Key {
-            key: egui::Key::V,
-            pressed: true,
-            modifiers,
-            ..
-        } = event
-        {
-            modifiers.command
-        } else {
-            false
-        }
-    });
-
-    !has_text_paste && (has_paste_shortcut || system_paste_shortcut_pressed)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Chat,
+    Contacts,
+    Requests,
+    Relation,
+    Tools,
+    Settings,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SelectedChatGroup {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum RoomFilter {
+    #[default]
     All,
     Private,
+    Group,
     Custom(usize),
+}
+
+impl Page {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Chat => "消息",
+            Self::Contacts => "联系人",
+            Self::Requests => "验证",
+            Self::Relation => "关系",
+            Self::Tools => "工具",
+            Self::Settings => "设置",
+        }
+    }
+}
+
+#[derive(Default)]
+struct Conversation {
+    messages: Vec<Message>,
+    reply_to: Option<ReplyMessage>,
+    requested: bool,
+    no_more_history: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GroupMember {
+    #[serde(default, alias = "userId", alias = "uin")]
+    user_id: i64,
+    #[serde(default)]
+    nickname: String,
+    #[serde(default)]
+    card: String,
+    #[serde(default)]
+    role: String,
+    #[serde(default)]
+    shutup_time: i64,
+}
+
+impl GroupMember {
+    fn display_name(&self) -> &str {
+        if self.card.trim().is_empty() {
+            &self.nickname
+        } else {
+            &self.card
+        }
+    }
+}
+
+struct BridgeViewState {
+    key: String,
+    socket_status: String,
+    auth_status: String,
+    online: OnlineData,
+    rooms: Vec<Room>,
+    chat_groups: ChatGroups,
+    room_filter: RoomFilter,
+    selected_room_id: Option<RoomId>,
+    conversations: HashMap<RoomId, Conversation>,
+    requests: Vec<JoinRequestRoom>,
+    friends: Vec<FriendContact>,
+    groups: Vec<GroupContact>,
+    contacts_request_id: u64,
+    contacts_loading: bool,
+    search_results: Vec<Message>,
+    search_keyword: String,
+    pending_forward: Option<(RoomId, JsonValue)>,
+    group_members: HashMap<RoomId, Vec<GroupMember>>,
+    last_notice: Option<String>,
+    last_error: Option<String>,
+}
+
+impl BridgeViewState {
+    fn new(key: String) -> Self {
+        Self {
+            key,
+            socket_status: "连接中".to_string(),
+            auth_status: "等待认证".to_string(),
+            online: OnlineData::default(),
+            rooms: Vec::new(),
+            chat_groups: ChatGroups::default(),
+            room_filter: RoomFilter::All,
+            selected_room_id: None,
+            conversations: HashMap::new(),
+            requests: Vec::new(),
+            friends: Vec::new(),
+            groups: Vec::new(),
+            contacts_request_id: 0,
+            contacts_loading: false,
+            search_results: Vec::new(),
+            search_keyword: String::new(),
+            pending_forward: None,
+            group_members: HashMap::new(),
+            last_notice: None,
+            last_error: None,
+        }
+    }
+
+    fn conversation_mut(&mut self, room_id: RoomId) -> &mut Conversation {
+        self.conversations.entry(room_id).or_default()
+    }
 }
 
 pub struct IcaApp {
     runtime: AppRuntime,
     config: ConfigStore,
-    state: state::AppState,
+    bridges: Vec<BridgeViewState>,
+    active_bridge: Option<usize>,
+    page: Page,
+    composer: Entity<TextInput>,
+    room_search: Entity<TextInput>,
+    tool_event: Entity<TextInput>,
+    tool_args: Entity<TextInput>,
+    message_search: Entity<TextInput>,
+    show_stickers: bool,
+    show_members: bool,
+    light_theme: bool,
+    room_panel_width: f32,
+    sticker_panel_width: f32,
+    sticker_store: StickerStore,
+    _event_task: gpui::Task<()>,
 }
 
-impl Deref for IcaApp {
-    type Target = state::AppState;
-
-    fn deref(&self) -> &Self::Target {
-        &self.state
-    }
+pub fn bind_keys(cx: &mut App) {
+    use input::*;
+    cx.bind_keys([
+        KeyBinding::new("backspace", Backspace, Some("ChatInput")),
+        KeyBinding::new("delete", Delete, Some("ChatInput")),
+        KeyBinding::new("left", Left, Some("ChatInput")),
+        KeyBinding::new("right", Right, Some("ChatInput")),
+        KeyBinding::new("shift-left", SelectLeft, Some("ChatInput")),
+        KeyBinding::new("shift-right", SelectRight, Some("ChatInput")),
+        KeyBinding::new("cmd-a", SelectAll, Some("ChatInput")),
+        KeyBinding::new("cmd-v", Paste, Some("ChatInput")),
+        KeyBinding::new("cmd-c", Copy, Some("ChatInput")),
+        KeyBinding::new("cmd-x", Cut, Some("ChatInput")),
+        KeyBinding::new("home", Home, Some("ChatInput")),
+        KeyBinding::new("end", End, Some("ChatInput")),
+        KeyBinding::new("enter", Submit, Some("ChatInput")),
+    ]);
 }
 
-impl DerefMut for IcaApp {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.state
+pub fn apply_configured_theme(config: &IcaCfg, cx: &mut App) {
+    let light = match config.ui_setting.theme_mode {
+        ThemeMode::System => SystemAppearance::global(cx).0 == Appearance::Light,
+        ThemeMode::Light => true,
+        ThemeMode::Dark => false,
+    };
+    let name = if light { "One Light" } else { "One Dark" };
+    if let Ok(theme) = ThemeRegistry::global(cx).get(name) {
+        GlobalTheme::update_theme(cx, theme);
     }
 }
 
 impl IcaApp {
-    pub(super) fn update_config(&self, updater: impl FnOnce(&mut crate::config::IcaCfg)) {
-        self.config.update(updater);
-        if let Err(error) = self.config.save() {
-            tracing::error!("保存配置失败: {error}");
-        }
-    }
-
-    fn setup_fonts(ctx: &egui::Context) {
-        let mut fonts = egui::FontDefinitions::default();
-
-        let font_sy_data = egui::FontData::from_static(assets::fonts::FONT_思源黑体);
-        let font_unifont_data = egui::FontData::from_static(assets::fonts::FONT_UNIFONT);
-
-        let sy_font_name = "notosans".to_string();
-        let unifont_name = "unifont".to_string();
-
-        fonts
-            .font_data
-            .insert(sy_font_name.clone(), Arc::new(font_sy_data));
-
-        fonts
-            .font_data
-            .insert(unifont_name.clone(), Arc::new(font_unifont_data));
-
-        fonts
-            .families
-            .entry(egui::FontFamily::Proportional)
-            .or_default()
-            .insert(0, unifont_name.clone());
-
-        fonts
-            .families
-            .entry(egui::FontFamily::Proportional)
-            .or_default()
-            .insert(0, sy_font_name.clone());
-
-        fonts
-            .families
-            .entry(egui::FontFamily::Monospace)
-            .or_default()
-            .push(sy_font_name.clone());
-
-        fonts
-            .families
-            .entry(egui::FontFamily::Monospace)
-            .or_default()
-            .push(unifont_name.clone());
-
-        ctx.set_fonts(fonts);
-    }
-
-    fn setup_interaction_style(ctx: &egui::Context) {
-        ctx.all_styles_mut(|style| {
-            style.visuals.widgets.hovered.expansion = 0.0;
-            style.visuals.widgets.active.expansion = 0.0;
-            style.visuals.widgets.open.expansion = 0.0;
-        });
-    }
-
-    /// 生成测试用的聊天室数据
-    #[allow(unused)]
-    fn test_chat_rooms() -> Vec<Room> {
-        // 生成随机房间数据
-        use rand::Rng;
-        use rand::rng;
-        use rand::seq::SliceRandom;
-        let mut rooms = Vec::with_capacity(50);
-        let room_names = vec![
-            "测试群聊",
-            "开发讨论组",
-            "项目协作",
-            "闲聊灌水",
-            "技术交流",
-            "学习小组",
-            "游戏开黑",
-            "音乐分享",
-            "读书会",
-            "运动健身",
-        ];
-
-        let user_names = vec![
-            "张三",
-            "李四",
-            "王五",
-            "赵六",
-            "钱七",
-            "孙八",
-            "周九",
-            "吴十",
-            "郑十一",
-            "王十二",
-        ];
-
-        let message_templates = vec![
-            "大家好！今天天气不错",
-            "有人在线吗？",
-            "这个功能什么时候能做完？",
-            "晚上一起吃饭吗？",
-            "[图片]",
-            "我刚刚上传了文件",
-            "明天会议几点开始？",
-            "这个问题怎么解决？",
-            "有人玩{}吗？",
-            "推荐一个好看的{}",
-        ];
-
-        let mut rng = rng();
-
-        for i in 0..500 {
-            let room_name_idx = rng.random_range(0..room_names.len());
-            let user_idx = rng.random_range(0..user_names.len());
-            let message_idx = rng.random_range(0..message_templates.len());
-
-            // 随机生成消息内容
-            let mut message = message_templates[message_idx].to_string();
-            if message.contains("{}") {
-                let replacements = ["游戏", "电影", "书", "餐厅", "音乐", "软件"];
-                let replacement = replacements[rng.random_range(0..replacements.len())];
-                message = message.replace("{}", replacement);
-            }
-
-            // 随机添加表情或标签
-            if rng.random_bool(0.3) {
-                message += if rng.random_bool(0.5) {
-                    " 😊"
-                } else {
-                    " #标签"
-                };
-            }
-
-            rooms.push(Room {
-                room_id: if rng.random_bool(0.7) {
-                    -rng.random_range(100_000_000..1_000_000_000)
-                } else {
-                    rng.random_range(100_000_000..1_000_000_000)
-                },
-                room_name: format!("{} {}", room_names[room_name_idx], rng.random_range(1..100)),
-                index: i as i64 + 1,
-                unread_count: rng.random_range(0..100),
-                priority: rng.random_range(1..4),
-                utime: 1700000000 + rng.random_range(0..100000),
-                users: serde_json::json!([
-                    { "_id": 1, "username": "1" },
-                    { "_id": 2, "username": "2" }
-                ]),
-                at: match rng.random_range(0..5) {
-                    0 => crate::ica::types::message::At::All,
-                    1 => crate::ica::types::message::At::Bool(rng.random_bool(0.2)),
-                    _ => crate::ica::types::message::At::None,
-                },
-                last_message: crate::ica::types::message::LastMessage {
-                    content: Some(message),
-                    timestamp: Some(match rng.random_range(0..4) {
-                        0 => "刚刚".to_string(),
-                        1 => format!("{}:{}", rng.random_range(0..24), rng.random_range(0..60)),
-                        2 => "昨天".to_string(),
-                        _ => "前天".to_string(),
-                    }),
-                    username: Some(user_names[user_idx].to_string()),
-                    user_id: Some(rng.random_range(100_000_000..1_000_000_000)),
-                },
+    pub fn new(
+        mut runtime: AppRuntime,
+        config: ConfigStore,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let bridges = runtime
+            .connections()
+            .iter()
+            .map(|connection| BridgeViewState::new(connection.key.clone()))
+            .collect::<Vec<_>>();
+        let active_bridge = (!bridges.is_empty()).then_some(0);
+        let composer = cx.new(|cx| TextInput::new("输入消息，Enter 发送", cx));
+        let room_search = cx.new(|cx| TextInput::new("搜索会话", cx));
+        let tool_event = cx.new(|cx| TextInput::new("Socket.IO 事件名", cx));
+        let tool_args = cx.new(|cx| TextInput::new("参数 JSON 数组，例如 []", cx));
+        let message_search = cx.new(|cx| TextInput::new("搜索聊天记录", cx));
+        let snapshot = config.snapshot();
+        let sticker_store =
+            StickerStore::resolve(&snapshot, config.paths()).unwrap_or_else(|error| {
+                StickerStore::unavailable(config.paths().data_dir().join("stickers"), error)
             });
+        if let Err(error) = sticker_store.refresh(snapshot.custom_chat.sort_stickers_by_time) {
+            tracing::warn!(%error, "刷新收藏表情失败");
         }
 
-        // 打乱房间顺序
-        rooms.shuffle(&mut rng);
-        rooms
-    }
-
-    pub fn new(cc: &CreationContext<'_>, config_store: ConfigStore) -> Self {
-        Self::setup_fonts(&cc.egui_ctx);
-        Self::setup_interaction_style(&cc.egui_ctx);
-
-        let config = config_store.snapshot();
-        let mut runtime = AppRuntime::new(&cc.egui_ctx, &config);
-        let bridge_states = runtime.take_sessions();
-        let sticker_store = stickers::StickerStore::resolve(&config, config_store.paths())
-            .unwrap_or_else(|error| {
-                stickers::StickerStore::unavailable(
-                    config_store.paths().data_dir().join("stickers"),
-                    error,
-                )
-            });
-        let state =
-            state::AppState::new(&config, &config_store, bridge_states, sticker_store.clone());
-        let mut app = Self {
-            runtime,
-            config: config_store,
-            state,
-        };
-        app.media_notice = sticker_store.fallback_notice();
-        app.spawn_media_task(
-            &cc.egui_ctx,
-            MediaTask::RefreshStickers {
-                store: sticker_store,
-                sort_newest_first: config.custom_chat.sort_stickers_by_time,
-            },
-        );
-        app
-    }
-
-    fn spawn_media_task(&self, ctx: &egui::Context, task: MediaTask) {
-        let event_tx = self.runtime.event_sender();
-        let repaint = ctx.clone();
-        self.runtime.spawn(async move {
-            let event = task.run().await;
-            let _ = event_tx.send(event::AppEvent::Media(event));
-            repaint.request_repaint();
-        });
-    }
-
-    fn apply_media_event(&mut self, event: MediaEvent) {
-        match event {
-            MediaEvent::Completed(message) => {
-                self.media_error = None;
-                self.media_notice = Some(message);
+        cx.subscribe(&composer, |this, input, event, cx| match event {
+            InputEvent::Submitted(text) => {
+                if this.send_text(text.clone()).is_ok() {
+                    input.update(cx, |input, cx| input.clear(cx));
+                }
+                cx.notify();
             }
-            MediaEvent::Failed { operation, error } => {
-                tracing::warn!(operation, error = %error, "媒体后台任务执行失败");
-                self.media_error = Some(format!("{operation}失败：{error}"));
+            InputEvent::Changed => cx.notify(),
+        })
+        .detach();
+        cx.subscribe(&room_search, |_, _, _, cx| cx.notify())
+            .detach();
+        cx.subscribe(&tool_event, |_, _, _, cx| cx.notify())
+            .detach();
+        cx.subscribe(&tool_args, |_, _, _, cx| cx.notify()).detach();
+        cx.subscribe(&message_search, |this, input, event, cx| {
+            if let InputEvent::Submitted(keyword) = event {
+                let keyword = keyword.clone();
+                let room_id = this.active().and_then(|bridge| bridge.selected_room_id);
+                if let Some(room_id) = room_id {
+                    if let Some(bridge) = this.active_mut() {
+                        bridge.search_keyword = keyword.clone();
+                        bridge.search_results.clear();
+                    }
+                    let _ = this.send_command(IcaCommand::SearchMessages {
+                        room_id,
+                        keyword,
+                        offset: 0,
+                    });
+                }
+                input.update(cx, |_, _| {});
             }
-            MediaEvent::StickersRefreshed(count) => {
-                tracing::debug!(count, "收藏表情已刷新");
-            }
-            MediaEvent::StickerLoaded {
-                bridge_key,
-                room_id,
-                image,
-            } => {
-                if let Some(session) = self
-                    .bridge_states
-                    .iter_mut()
-                    .find(|session| session.bridge_key == bridge_key)
+            cx.notify();
+        })
+        .detach();
+
+        let mut event_rx = runtime.take_event_receiver();
+        let event_task = cx.spawn(async move |this, cx| {
+            while let Some(event) = event_rx.recv().await {
+                if this
+                    .update(cx, |this, cx| {
+                        this.apply_bridge_event(event);
+                        cx.notify();
+                    })
+                    .is_err()
                 {
-                    session.conversation_mut(room_id).pending_images.push(image);
-                    self.media_notice = Some("已加入待发送图片".to_string());
-                } else {
-                    tracing::warn!(bridge = %bridge_key, room_id, "收藏表情所属 bridge 已关闭");
-                    self.media_error = Some("收藏表情所属 bridge 已关闭".to_string());
+                    break;
                 }
             }
+        });
+
+        window.focus(&composer.focus_handle(cx), cx);
+        let light_theme = cx.theme().appearance == Appearance::Light;
+        Self {
+            runtime,
+            config,
+            bridges,
+            active_bridge,
+            page: Page::Chat,
+            composer,
+            room_search,
+            tool_event,
+            tool_args,
+            message_search,
+            show_stickers: false,
+            show_members: false,
+            light_theme,
+            room_panel_width: snapshot.ui_setting.room_panel_width.clamp(140.0, 720.0),
+            sticker_panel_width: snapshot.ui_setting.sticker_panel_width.clamp(300.0, 500.0),
+            sticker_store,
+            _event_task: event_task,
         }
     }
 
-    pub fn active_bridge_state(&self) -> Option<&BridgeState> {
-        self.active_bridge_idx
-            .and_then(|idx| self.bridge_states.get(idx))
-            .map(|session| session.state())
+    fn active(&self) -> Option<&BridgeViewState> {
+        self.active_bridge.and_then(|index| self.bridges.get(index))
     }
 
-    pub fn active_bridge_state_mut(&mut self) -> Option<&mut BridgeState> {
-        self.active_bridge_idx
-            .and_then(|idx| self.bridge_states.get_mut(idx))
-            .map(|session| session.state_mut())
+    fn active_mut(&mut self) -> Option<&mut BridgeViewState> {
+        self.active_bridge
+            .and_then(|index| self.bridges.get_mut(index))
     }
 
-    pub fn switch_active_bridge(&mut self, bridge_idx: usize) {
-        if self.active_bridge_idx == Some(bridge_idx) || bridge_idx >= self.bridge_states.len() {
+    fn send_command(&mut self, command: IcaCommand) -> Result<(), String> {
+        let index = self.active_bridge.ok_or("没有可用的 bridge")?;
+        self.runtime.connections()[index].handle.send(command)
+    }
+
+    fn select_room(&mut self, room_id: RoomId, cx: &mut Context<Self>) {
+        let pending_forward = self
+            .active_mut()
+            .and_then(|bridge| bridge.pending_forward.take());
+        if let Some((origin, node)) = pending_forward {
+            if let Err(error) = self.send_command(IcaCommand::SendMergedForward {
+                nodes: vec![node],
+                direct_message: room_id > 0,
+                origin: Some(origin),
+                target_room_id: room_id,
+            }) {
+                self.set_error(error);
+            } else if let Some(bridge) = self.active_mut() {
+                bridge.last_notice = Some("已请求转发消息".to_string());
+            }
+        }
+        let should_fetch = self
+            .active()
+            .and_then(|bridge| bridge.conversations.get(&room_id))
+            .is_none_or(|conversation| !conversation.requested);
+        let last_message_id = self
+            .active()
+            .and_then(|bridge| bridge.conversations.get(&room_id))
+            .and_then(|conversation| conversation.messages.last())
+            .map(|message| message.msg_id.clone());
+        if let Some(bridge) = self.active_mut() {
+            bridge.selected_room_id = Some(room_id);
+            if should_fetch {
+                bridge.conversation_mut(room_id).requested = true;
+            }
+            if let Some(room) = bridge.rooms.iter_mut().find(|room| room.room_id == room_id) {
+                room.unread_count = 0;
+            }
+        }
+        if should_fetch && let Err(error) = self.send_command(IcaCommand::FetchMessages(room_id)) {
+            self.set_error(error);
+        }
+        if let Some(message_id) = last_message_id {
+            let _ = self.send_command(IcaCommand::ReportRead {
+                room_id,
+                message_id,
+            });
+        }
+        cx.notify();
+    }
+
+    fn send_text(&mut self, text: String) -> Result<(), String> {
+        let bridge = self.active().ok_or("没有可用的 bridge")?;
+        let room_id = bridge.selected_room_id.ok_or("请先选择会话")?;
+        let reply = bridge
+            .conversations
+            .get(&room_id)
+            .and_then(|conversation| conversation.reply_to.clone());
+        let mentions = if text.contains("@全体成员") {
+            vec![Mention {
+                user_id: 1,
+                text: "全体成员".to_string(),
+            }]
+        } else {
+            Vec::new()
+        };
+        let mut message = SendMessage::new(text, room_id, reply);
+        message.set_mentions(&mentions);
+        self.send_command(IcaCommand::SendMessage(message))?;
+        if let Some(bridge) = self.active_mut() {
+            bridge.conversation_mut(room_id).reply_to = None;
+            bridge.last_notice = Some("消息已提交".to_string());
+        }
+        Ok(())
+    }
+
+    fn set_error(&mut self, error: impl Into<String>) {
+        if let Some(bridge) = self.active_mut() {
+            bridge.last_error = Some(error.into());
+        }
+    }
+
+    fn first(payload: &JsonValue) -> Option<&JsonValue> {
+        payload.as_array().and_then(|values| values.first())
+    }
+
+    fn payload_message(payload: &JsonValue) -> Option<String> {
+        payload
+            .get("message")
+            .and_then(JsonValue::as_str)
+            .map(ToString::to_string)
+            .or_else(|| Self::first(payload)?.as_str().map(ToString::to_string))
+    }
+
+    fn apply_bridge_event(&mut self, event: BridgeEvent) {
+        let Some(index) = self
+            .bridges
+            .iter()
+            .position(|bridge| bridge.key == event.bridge_key)
+        else {
             return;
-        }
-
-        self.active_bridge_idx = Some(bridge_idx);
-        self.ensure_selected_chat_group_valid();
-        self.chat_list_scroll_target = ChatListScrollTarget::Top;
-        self.show_face_picker = false;
-        self.show_mention_picker = false;
-        self.group_member_panel.open = false;
-        self.group_member_panel.confirmation = None;
-        self.mention_search_query.clear();
-        self.mention_search_focus_requested = false;
-        self.mention_replace_trigger = false;
-        self.mention_selected_index = 0;
-    }
-
-    fn poll_socketio_events(&mut self, ctx: &egui::Context) {
-        const MAX_EVENTS_PER_FRAME: usize = 128;
-        let mut processed = 0;
-
-        while processed < MAX_EVENTS_PER_FRAME {
-            let Ok(event) = self.runtime.event_rx.try_recv() else {
-                break;
-            };
-            let event = match event {
-                event::AppEvent::Bridge(event) => event,
-                event::AppEvent::Media(event) => {
-                    self.apply_media_event(event);
-                    continue;
+        };
+        let bridge = &mut self.bridges[index];
+        let payload = event.kind.payload();
+        match &event.kind {
+            BridgeEventKind::SocketConnecting(_) | BridgeEventKind::SocketReconnecting(_) => {
+                bridge.socket_status = "连接中".to_string();
+            }
+            BridgeEventKind::SocketConnected(_) => bridge.socket_status = "已连接".to_string(),
+            BridgeEventKind::SocketDisconnected(_) => bridge.socket_status = "已断开".to_string(),
+            BridgeEventKind::SocketConnectFailed(_)
+            | BridgeEventKind::SocketReconnectExhausted(_) => {
+                bridge.socket_status = "连接失败".to_string();
+                bridge.last_error = Self::payload_message(payload);
+            }
+            BridgeEventKind::RequireAuth(_) => bridge.auth_status = "认证中".to_string(),
+            BridgeEventKind::AuthSucceed(_) => bridge.auth_status = "已认证".to_string(),
+            BridgeEventKind::AuthFailed(_) => {
+                bridge.auth_status = "认证失败".to_string();
+                bridge.last_error = Some("bridge 认证失败".to_string());
+            }
+            BridgeEventKind::OnlineData(_) => {
+                if let Some(value) = Self::first(payload) {
+                    bridge.online = OnlineData::new_from_json(value);
                 }
-            };
-            processed += 1;
-            let bridge_key = event.bridge_key.as_str();
-            let event_kind = &event.kind;
-            let Some(bridge_idx) = self
-                .bridge_states
-                .iter()
-                .position(|state| state.bridge_key == bridge_key)
-            else {
-                continue;
-            };
-
-            if let BridgeEventKind::SetAllChatGroups(payload) = event_kind {
-                if let Some(value) = payload.as_array().and_then(|values| values.first()) {
-                    match <Vec<chat_groups::ChatGroup> as serde::Deserialize>::deserialize(value) {
-                        Ok(groups) => {
-                            let state = self.state.bridge_states[bridge_idx].state_mut();
-                            state.chat_groups.groups = groups;
-                            state.invalidate_visible_room_indices();
-                            if let SelectedChatGroup::Custom(idx) = &state.selected_chat_group
-                                && *idx >= state.chat_groups.groups.len()
-                            {
-                                state.selected_chat_group = SelectedChatGroup::All;
-                            }
+            }
+            BridgeEventKind::SetAllRooms(_) => {
+                if let Some(value) = Self::first(payload) {
+                    match Vec::<Room>::deserialize(value) {
+                        Ok(mut rooms) => {
+                            rooms
+                                .sort_by_key(|room| std::cmp::Reverse((room.priority, room.utime)));
+                            bridge.rooms = rooms;
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                bridge = %bridge_key,
-                                error = %e,
-                                "setAllChatGroups 解析失败"
-                            );
-                            if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
-                                state.last_error =
-                                    Some(format!("setAllChatGroups 解析失败: {}", e));
-                                state.sync_status_history();
-                            }
+                        Err(error) => {
+                            bridge.last_error = Some(format!("会话列表解析失败: {error}"))
                         }
                     }
                 }
-                continue;
             }
-
-            let should_refresh_relation_network = matches!(
-                event_kind,
-                BridgeEventKind::OnlineData(_)
-                    | BridgeEventKind::SetAllRooms(_)
-                    | BridgeEventKind::GroupMembersResponse(_)
-            ) || matches!(
-                event_kind,
-                BridgeEventKind::CommandFailed(payload)
-                    if payload.get("kind").and_then(serde_json::Value::as_str)
-                        == Some("fetchGroupMembers")
-            );
-
-            let should_refresh_system_messages = {
-                let state = &mut self.bridge_states[bridge_idx];
-                let prev_auth_state = state.auth_state;
-
-                state.last_event = Some(event_kind.name().to_string());
-
-                Self::apply_bridge_event(state, event_kind);
-                state.sync_status_history();
-
-                prev_auth_state != AuthState::Succeeded && state.auth_state == AuthState::Succeeded
-            };
-
-            if should_refresh_relation_network {
-                self.refresh_relation_network_after_bridge_update(bridge_idx);
+            BridgeEventKind::SetAllChatGroups(_) => {
+                if let Some(value) = Self::first(payload) {
+                    match Vec::<ChatGroup>::deserialize(value) {
+                        Ok(groups) => bridge.chat_groups = ChatGroups { groups },
+                        Err(error) => {
+                            bridge.last_error = Some(format!("聊天分组解析失败: {error}"))
+                        }
+                    }
+                }
             }
+            BridgeEventKind::UpdateRoom(_) => {
+                if let Some(value) = Self::first(payload)
+                    && let Ok(room) = Room::deserialize(value)
+                {
+                    if let Some(old) = bridge
+                        .rooms
+                        .iter_mut()
+                        .find(|old| old.room_id == room.room_id)
+                    {
+                        *old = room;
+                    } else {
+                        bridge.rooms.push(room);
+                    }
+                }
+            }
+            BridgeEventKind::SetMessages(_) => {
+                if let Some(value) = Self::first(payload) {
+                    let room_id = value["roomId"].as_i64().unwrap_or_default();
+                    match Vec::<Message>::deserialize(&value["messages"]) {
+                        Ok(messages) => bridge.conversation_mut(room_id).messages = messages,
+                        Err(error) => bridge.last_error = Some(format!("消息解析失败: {error}")),
+                    }
+                }
+            }
+            BridgeEventKind::AppendOlderMessages(_) => {
+                if let Some(value) = Self::first(payload) {
+                    let room_id = value["roomId"].as_i64().unwrap_or_default();
+                    match Vec::<Message>::deserialize(&value["messages"]) {
+                        Ok(mut messages) => {
+                            let conversation = bridge.conversation_mut(room_id);
+                            conversation.no_more_history = messages.is_empty();
+                            messages.append(&mut conversation.messages);
+                            conversation.messages = messages;
+                        }
+                        Err(error) => {
+                            bridge.last_error = Some(format!("历史消息解析失败: {error}"))
+                        }
+                    }
+                }
+            }
+            BridgeEventKind::AddMessage(_) => {
+                if let Some(value) = Self::first(payload) {
+                    match NewMessage::deserialize(value) {
+                        Ok(new_message) => {
+                            let room_id = new_message.room_id;
+                            if let Some(room) =
+                                bridge.rooms.iter_mut().find(|room| room.room_id == room_id)
+                            {
+                                room.last_message.content = Some(new_message.msg.content.clone());
+                                room.last_message.username =
+                                    Some(new_message.msg.sender_name.clone());
+                                room.last_message.timestamp =
+                                    Some(new_message.msg.time_text.clone());
+                            }
+                            let messages = &mut bridge.conversation_mut(room_id).messages;
+                            if let Some(old) = messages
+                                .iter_mut()
+                                .find(|message| message.msg_id == new_message.msg.msg_id)
+                            {
+                                *old = new_message.msg;
+                            } else {
+                                messages.push(new_message.msg);
+                            }
+                        }
+                        Err(error) => bridge.last_error = Some(format!("新消息解析失败: {error}")),
+                    }
+                }
+            }
+            BridgeEventKind::DeleteMessage(_) => {
+                if let Some(id) = Self::first(payload).and_then(JsonValue::as_str) {
+                    for conversation in bridge.conversations.values_mut() {
+                        if let Some(message) = conversation
+                            .messages
+                            .iter_mut()
+                            .find(|message| message.msg_id == id)
+                        {
+                            message.deleted = true;
+                        }
+                    }
+                }
+            }
+            BridgeEventKind::SyncRead(_) => {
+                if let Some(room_id) = Self::first(payload).and_then(JsonValue::as_i64)
+                    && let Some(room) = bridge.rooms.iter_mut().find(|room| room.room_id == room_id)
+                {
+                    room.unread_count = 0;
+                }
+            }
+            BridgeEventKind::SetSystemMessages(_) => {
+                if let Some(value) = Self::first(payload)
+                    && let Ok(mut requests) = Vec::<JoinRequestRoom>::deserialize(value)
+                {
+                    requests.sort_by_key(|request| std::cmp::Reverse(request.time));
+                    bridge.requests = requests;
+                }
+            }
+            BridgeEventKind::HandleRequest(_) | BridgeEventKind::SendAddRequest(_) => {
+                if let Some(value) = Self::first(payload)
+                    && let Ok(request) = JoinRequestRoom::deserialize(value)
+                {
+                    bridge.requests.retain(|old| old.flag != request.flag);
+                    bridge.requests.insert(0, request);
+                }
+            }
+            BridgeEventKind::ContactsPartResponse(_) => {
+                let part = payload
+                    .get("part")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or_default();
+                if let Some(items) = payload.get("items") {
+                    match part {
+                        "friends" => {
+                            if let Ok(items) = Vec::<FriendContact>::deserialize(items) {
+                                bridge.friends = items;
+                            }
+                        }
+                        "groups" => {
+                            if let Ok(items) = Vec::<GroupContact>::deserialize(items) {
+                                bridge.groups = items;
+                            }
+                        }
+                        _ => {}
+                    }
+                    bridge.contacts_loading = false;
+                }
+            }
+            BridgeEventKind::SearchMessagesResponse(_) => {
+                let keyword = payload
+                    .get("keyword")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or_default();
+                if keyword == bridge.search_keyword {
+                    match payload.get("messages").map(Vec::<Message>::deserialize) {
+                        Some(Ok(messages)) => bridge.search_results = messages,
+                        Some(Err(error)) => {
+                            bridge.last_error = Some(format!("搜索结果解析失败: {error}"))
+                        }
+                        None => bridge.last_error = Some("搜索响应缺少 messages".to_string()),
+                    }
+                }
+            }
+            BridgeEventKind::GroupMembersResponse(_) => {
+                let room_id = payload
+                    .get("roomId")
+                    .and_then(JsonValue::as_i64)
+                    .unwrap_or_default();
+                match payload.get("members").map(Vec::<GroupMember>::deserialize) {
+                    Some(Ok(mut members)) => {
+                        members
+                            .sort_by(|left, right| left.display_name().cmp(right.display_name()));
+                        bridge.group_members.insert(room_id, members);
+                    }
+                    Some(Err(error)) => {
+                        bridge.last_error = Some(format!("群成员解析失败: {error}"))
+                    }
+                    None => bridge.last_error = Some("群成员响应缺少 members".to_string()),
+                }
+            }
+            BridgeEventKind::NotifyError(_)
+            | BridgeEventKind::MessageError(_)
+            | BridgeEventKind::CommandFailed(_)
+            | BridgeEventKind::Fatal(_) => {
+                bridge.last_error =
+                    Self::payload_message(payload).or_else(|| Some(payload.to_string()));
+            }
+            BridgeEventKind::NotifyMessage(_)
+            | BridgeEventKind::MessageSuccess(_)
+            | BridgeEventKind::SocketApiResponse(_)
+            | BridgeEventKind::FileManagerResponse(_) => {
+                bridge.last_notice =
+                    Self::payload_message(payload).or_else(|| Some(payload.to_string()));
+            }
+            _ => {}
+        }
+    }
 
-            if should_refresh_system_messages {
-                self.request_system_messages(bridge_idx);
+    fn switch_theme(&mut self, light: bool, cx: &mut Context<Self>) {
+        let name = if light { "One Light" } else { "One Dark" };
+        if let Ok(theme) = ThemeRegistry::global(cx).get(name) {
+            GlobalTheme::update_theme(cx, theme);
+            self.light_theme = light;
+            self.config.update(|config| {
+                config.ui_setting.theme_mode = if light {
+                    ThemeMode::Light
+                } else {
+                    ThemeMode::Dark
+                };
+            });
+            if let Err(error) = self.config.save() {
+                tracing::warn!(%error, "保存主题设置失败");
+            }
+            cx.refresh_windows();
+        }
+    }
+
+    fn follow_system_theme(&mut self, cx: &mut Context<Self>) {
+        let light = SystemAppearance::global(cx).0 == Appearance::Light;
+        let name = if light { "One Light" } else { "One Dark" };
+        if let Ok(theme) = ThemeRegistry::global(cx).get(name) {
+            GlobalTheme::update_theme(cx, theme);
+            self.light_theme = light;
+            self.config
+                .update(|config| config.ui_setting.theme_mode = ThemeMode::System);
+            if let Err(error) = self.config.save() {
+                tracing::warn!(%error, "保存主题设置失败");
+            }
+            cx.refresh_windows();
+        }
+    }
+
+    fn render_button(
+        &self,
+        id: impl Into<gpui::ElementId>,
+        label: impl Into<SharedString>,
+        selected: bool,
+        cx: &Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let colors = cx.theme().colors().clone();
+        div()
+            .id(id)
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .cursor_pointer()
+            .text_color(if selected {
+                colors.text_accent
+            } else {
+                colors.text_muted
+            })
+            .bg(if selected {
+                colors.element_selected
+            } else {
+                colors.ghost_element_background
+            })
+            .hover(|style| style.bg(colors.ghost_element_hover))
+            .child(label.into())
+    }
+
+    fn render_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors().clone();
+        let pages = [
+            Page::Chat,
+            Page::Contacts,
+            Page::Requests,
+            Page::Relation,
+            Page::Tools,
+            Page::Settings,
+        ];
+        div()
+            .flex()
+            .flex_col()
+            .w(px(65.))
+            .h_full()
+            .items_center()
+            .py_3()
+            .gap_2()
+            .border_r_1()
+            .border_color(colors.border)
+            .bg(colors.panel_background)
+            .child(
+                div()
+                    .text_lg()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child("ica"),
+            )
+            .children(pages.into_iter().enumerate().map(|(index, page)| {
+                self.render_button(("page", index), page.label(), self.page == page, cx)
+                    .w(px(52.))
+                    .text_center()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.page = page;
+                        if page == Page::Contacts {
+                            this.refresh_contacts();
+                        } else if page == Page::Requests {
+                            let _ = this.send_command(IcaCommand::GetSystemMsg);
+                        }
+                        cx.notify();
+                    }))
+            }))
+            .child(div().flex_1())
+            .children(self.bridges.iter().enumerate().map(|(index, bridge)| {
+                let label = bridge.key.chars().next().unwrap_or('?').to_string();
+                self.render_button(
+                    ("bridge", index),
+                    label,
+                    self.active_bridge == Some(index),
+                    cx,
+                )
+                .w(px(36.))
+                .h(px(36.))
+                .items_center()
+                .justify_center()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.active_bridge = Some(index);
+                    cx.notify();
+                }))
+            }))
+    }
+
+    fn render_room_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors().clone();
+        let query = self.room_search.read(cx).text().trim().to_lowercase();
+        let selected = self.active().and_then(|bridge| bridge.selected_room_id);
+        let room_filter = self
+            .active()
+            .map_or(RoomFilter::All, |bridge| bridge.room_filter);
+        let custom_groups = self
+            .active()
+            .map(|bridge| bridge.chat_groups.groups.clone())
+            .unwrap_or_default();
+        let rooms = self
+            .active()
+            .map(|bridge| {
+                bridge
+                    .rooms
+                    .iter()
+                    .filter(|room| {
+                        let in_filter = match room_filter {
+                            RoomFilter::All => true,
+                            RoomFilter::Private => room.room_id > 0,
+                            RoomFilter::Group => room.room_id < 0,
+                            RoomFilter::Custom(index) => {
+                                custom_groups.get(index).is_some_and(|group| {
+                                    group.rooms.contains(&room.room_id)
+                                        || (group.include_all_personal && room.room_id > 0)
+                                })
+                            }
+                        };
+                        in_filter
+                            && (query.is_empty()
+                                || room.room_name.to_lowercase().contains(&query)
+                                || room.room_id.to_string().contains(&query))
+                    })
+                    .map(|room| {
+                        (
+                            room.room_id,
+                            room.room_name.clone(),
+                            room.last_message.content.clone().unwrap_or_default(),
+                            room.unread_count,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        div()
+            .flex()
+            .flex_col()
+            .w(px(self.room_panel_width))
+            .min_w(px(140.))
+            .max_w(px(720.))
+            .h_full()
+            .border_r_1()
+            .border_color(colors.border)
+            .bg(colors.surface_background)
+            .child(
+                div()
+                    .p_2()
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .child(self.room_search.clone()),
+            )
+            .child(
+                div()
+                    .id("room-filters")
+                    .flex()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    .overflow_x_scroll()
+                    .child(
+                        self.render_button(
+                            "filter-all",
+                            "全部",
+                            room_filter == RoomFilter::All,
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(bridge) = this.active_mut() {
+                                bridge.room_filter = RoomFilter::All;
+                            }
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        self.render_button(
+                            "filter-private",
+                            "私聊",
+                            room_filter == RoomFilter::Private,
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(bridge) = this.active_mut() {
+                                bridge.room_filter = RoomFilter::Private;
+                            }
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        self.render_button(
+                            "filter-group",
+                            "群聊",
+                            room_filter == RoomFilter::Group,
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(bridge) = this.active_mut() {
+                                bridge.room_filter = RoomFilter::Group;
+                            }
+                            cx.notify();
+                        })),
+                    )
+                    .children(custom_groups.into_iter().enumerate().map(|(index, group)| {
+                        self.render_button(
+                            ("filter-custom", index),
+                            group.name,
+                            room_filter == RoomFilter::Custom(index),
+                            cx,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(bridge) = this.active_mut() {
+                                bridge.room_filter = RoomFilter::Custom(index);
+                            }
+                            cx.notify();
+                        }))
+                    })),
+            )
+            .child(
+                div()
+                    .id("room-scroll")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .children(rooms.into_iter().map(|(room_id, name, preview, unread)| {
+                        div()
+                            .id(SharedString::from(format!("room-{room_id}")))
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .px_3()
+                            .py_2()
+                            .border_b_1()
+                            .border_color(colors.border_variant)
+                            .cursor_pointer()
+                            .bg(if selected == Some(room_id) {
+                                colors.element_selected
+                            } else {
+                                colors.ghost_element_background
+                            })
+                            .hover(|style| style.bg(colors.ghost_element_hover))
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.select_room(room_id, cx)),
+                            )
+                            .child(div().flex().justify_between().child(name).when(
+                                unread > 0,
+                                |element| {
+                                    element.child(
+                                        div()
+                                            .text_color(colors.text_accent)
+                                            .child(unread.to_string()),
+                                    )
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(colors.text_muted)
+                                    .truncate()
+                                    .child(preview),
+                            )
+                    })),
+            )
+    }
+
+    fn render_chat(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors().clone();
+        let selected_room = self.active().and_then(|bridge| {
+            let id = bridge.selected_room_id?;
+            bridge
+                .rooms
+                .iter()
+                .find(|room| room.room_id == id)
+                .map(|room| (id, room.room_name.clone()))
+        });
+        let Some((room_id, room_name)) = selected_room else {
+            return div()
+                .flex()
+                .flex_1()
+                .h_full()
+                .items_center()
+                .justify_center()
+                .text_color(colors.text_muted)
+                .child("选择一个会话开始聊天");
+        };
+        let (source_messages, search_keyword) = self
+            .active()
+            .map(|bridge| {
+                if bridge.search_keyword.is_empty() {
+                    (
+                        bridge
+                            .conversations
+                            .get(&room_id)
+                            .map(|conversation| conversation.messages.as_slice())
+                            .unwrap_or(&[]),
+                        String::new(),
+                    )
+                } else {
+                    (
+                        bridge.search_results.as_slice(),
+                        bridge.search_keyword.clone(),
+                    )
+                }
+            })
+            .unwrap_or((&[], String::new()));
+        let messages = source_messages
+            .iter()
+            .map(|message| {
+                let raw = message.raw_msg.as_deref().cloned().unwrap_or_else(|| {
+                    serde_json::json!({
+                        "_id": message.msg_id,
+                        "senderId": message.sender_id,
+                        "username": message.sender_name,
+                        "content": message.content,
+                    })
+                });
+                (
+                    message.msg_id.clone(),
+                    message.sender_name.clone(),
+                    message.sender_id,
+                    message.content.clone(),
+                    message.time_text.clone(),
+                    message.deleted,
+                    message.files.clone(),
+                    message.as_reply(),
+                    message.content.clone(),
+                    raw,
+                )
+            })
+            .collect::<Vec<_>>();
+        let reply = self
+            .active()
+            .and_then(|bridge| bridge.conversations.get(&room_id))
+            .and_then(|conversation| conversation.reply_to.as_ref())
+            .map(|reply| format!("回复 {}：{}", reply.sender_name, reply.content));
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .bg(colors.background)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .h(px(64.))
+                    .px_4()
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .bg(colors.toolbar_background)
+                    .child(div().flex().flex_col().child(room_name).child(
+                        div().text_sm().text_color(colors.text_muted).child(room_id.to_string()),
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(div().w(px(180.)).child(self.message_search.clone()))
+                            .child(self.render_button("search-messages", "搜索", !search_keyword.is_empty(), cx).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    let keyword = this.message_search.read(cx).text().trim().to_string();
+                                    if keyword.is_empty() {
+                                        if let Some(bridge) = this.active_mut() {
+                                            bridge.search_keyword.clear();
+                                            bridge.search_results.clear();
+                                        }
+                                    } else {
+                                        if let Some(bridge) = this.active_mut() {
+                                            bridge.search_keyword = keyword.clone();
+                                            bridge.search_results.clear();
+                                        }
+                                        let _ = this.send_command(IcaCommand::SearchMessages { room_id, keyword, offset: 0 });
+                                    }
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(self.render_button("older", "更早记录", false, cx).on_click(
+                                cx.listener(move |this, _, _, _| {
+                                    let offset = this
+                                        .active()
+                                        .and_then(|bridge| bridge.conversations.get(&room_id))
+                                        .map_or(0, |conversation| conversation.messages.len());
+                                    let _ = this.send_command(IcaCommand::FetchOlderMessages { room_id, offset });
+                                }),
+                            ))
+                            .child(self.render_button("members", "成员", false, cx).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.show_members = true;
+                                    this.show_stickers = false;
+                                    let _ = this.send_command(IcaCommand::FetchGroupMembers { room_id });
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(self.render_button("pin-room", "置顶", false, cx).on_click(
+                                cx.listener(move |this, _, _, _| {
+                                    let _ = this.send_command(IcaCommand::PinRoom { room_id, pin: true });
+                                }),
+                            ))
+                            .child(self.render_button("remove-room", "移除", false, cx).on_click(
+                                cx.listener(move |this, _, _, _| {
+                                    let _ = this.send_command(IcaCommand::RemoveChat(room_id));
+                                }),
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .id("message-scroll")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .p_4()
+                    .gap_3()
+                    .when(!search_keyword.is_empty(), |element| {
+                        element.child(div().text_sm().text_color(colors.text_accent).child(format!("搜索结果：{search_keyword}")))
+                    })
+                    .children(messages.into_iter().map(|(id, sender, sender_id, content, time, deleted, files, reply, edit_content, raw)| {
+                        let file_count = files.len();
+                        let display_content = if deleted { "[消息已撤回]".to_string() } else if content.is_empty() && file_count > 0 { format!("[{file_count} 个附件]") } else { content };
+                        let copy_content = edit_content.clone();
+                        let reedit_content = edit_content;
+                        let attachment_message_id = id.clone();
+                        div()
+                            .id(SharedString::from(format!("message-{id}")))
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .p_3()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(colors.border_variant)
+                            .bg(colors.surface_background)
+                            .child(
+                                div()
+                                    .flex()
+                                    .justify_between()
+                                    .child(format!("{sender}  {sender_id}"))
+                                    .child(div().text_sm().text_color(colors.text_muted).child(time)),
+                            )
+                            .child(div().text_color(if deleted { colors.text_muted } else { colors.text }).child(display_content))
+                            .when(file_count > 0, |element| element.child(
+                                div().flex().flex_col().gap_1().children(files.into_iter().enumerate().map(|(file_index, file)| {
+                                    let url = file.url.clone();
+                                    let image_url = url.clone();
+                                    let label = file.name.unwrap_or_else(|| {
+                                        if file.file_type.starts_with("image") { "查看图片".to_string() } else { "打开附件".to_string() }
+                                    });
+                                    if file.file_type.starts_with("image") && !image_url.is_empty() {
+                                        img(image_url.clone())
+                                            .id(SharedString::from(format!("attachment-{attachment_message_id}-{file_index}")))
+                                            .w(px(240.))
+                                            .h(px(160.))
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(colors.border)
+                                            .cursor_pointer()
+                                            .on_click(move |_, _, cx| cx.open_url(&image_url))
+                                            .into_any_element()
+                                    } else {
+                                        self.render_button(SharedString::from(format!("attachment-{attachment_message_id}-{file_index}")), label, false, cx).on_click(
+                                            cx.listener(move |_, _, _, cx| {
+                                                if !url.is_empty() { cx.open_url(&url); }
+                                            }),
+                                        ).into_any_element()
+                                    }
+                                }))
+                            ))
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .text_sm()
+                                    .child(self.render_button(SharedString::from(format!("reply-{id}")), "回复", false, cx).on_click(
+                                        cx.listener(move |this, _, window, cx| {
+                                            if let Some(bridge) = this.active_mut() {
+                                                bridge.conversation_mut(room_id).reply_to = Some(reply.clone());
+                                            }
+                                            window.focus(&this.composer.focus_handle(cx), cx);
+                                            cx.notify();
+                                        }),
+                                    ))
+                                    .child(self.render_button(SharedString::from(format!("edit-{id}")), "重编", false, cx).on_click(
+                                        cx.listener(move |this, _, window, cx| {
+                                            this.composer.update(cx, |input, cx| input.set_text(reedit_content.clone(), cx));
+                                            window.focus(&this.composer.focus_handle(cx), cx);
+                                        }),
+                                    ))
+                                    .child(self.render_button(SharedString::from(format!("copy-{id}")), "复制", false, cx).on_click(
+                                        cx.listener({
+                                            move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy_content.clone()))
+                                        }),
+                                    ))
+                                    .child(self.render_button(SharedString::from(format!("forward-{id}")), "转发", false, cx).on_click(
+                                        cx.listener(move |this, _, _, cx| {
+                                            if let Some(bridge) = this.active_mut() {
+                                                bridge.pending_forward = Some((room_id, raw.clone()));
+                                                bridge.last_notice = Some("请选择目标会话完成转发".to_string());
+                                            }
+                                            cx.notify();
+                                        }),
+                                    ))
+                                    .when(!deleted, |element| {
+                                        let delete_id = id.clone();
+                                        element.child(self.render_button(SharedString::from(format!("delete-{id}")), "撤回", false, cx).on_click(
+                                            cx.listener(move |this, _, _, _| {
+                                                let _ = this.send_command(IcaCommand::DeleteMessage(DeleteMessage {
+                                                    room_id,
+                                                    message_id: delete_id.clone(),
+                                                }));
+                                            }),
+                                        ))
+                                    }),
+                            )
+                    })),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .p_3()
+                    .border_t_1()
+                    .border_color(colors.border)
+                    .bg(colors.panel_background)
+                    .when_some(reply, |element, reply| {
+                        element.child(
+                            div()
+                                .flex()
+                                .justify_between()
+                                .text_sm()
+                                .text_color(colors.text_muted)
+                                .child(reply)
+                                .child(self.render_button("cancel-reply", "取消", false, cx).on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        if let Some(bridge) = this.active_mut() {
+                                            bridge.conversation_mut(room_id).reply_to = None;
+                                        }
+                                        cx.notify();
+                                    }),
+                                )),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(self.render_button("mention-all", "@全体", false, cx).on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    let current = this.composer.read(cx).text().to_string();
+                                    let prefix = if current.is_empty() { "" } else { " " };
+                                    this.composer.update(cx, |input, cx| {
+                                        input.set_text(format!("{current}{prefix}@全体成员 "), cx)
+                                    });
+                                    window.focus(&this.composer.focus_handle(cx), cx);
+                                }),
+                            ))
+                            .child(self.render_button("image", "图片", false, cx).on_click(cx.listener(Self::pick_image)))
+                            .child(self.render_button("file", "文件", false, cx).on_click(cx.listener(Self::pick_file)))
+                            .child(self.render_button("sticker", "表情", self.show_stickers, cx).on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.show_stickers = !this.show_stickers;
+                                    if this.show_stickers { this.show_members = false; }
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(div().flex_1().child(self.composer.clone()))
+                            .child(self.render_button("send", "发送", true, cx).on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    let text = this.composer.read(cx).text().trim().to_string();
+                                    if !text.is_empty() && this.send_text(text).is_ok() {
+                                        this.composer.update(cx, |input, cx| input.clear(cx));
+                                    }
+                                    cx.notify();
+                                }),
+                            )),
+                    ),
+            )
+    }
+
+    fn refresh_contacts(&mut self) {
+        if let Some(bridge) = self.active_mut() {
+            bridge.contacts_request_id = bridge.contacts_request_id.wrapping_add(1).max(1);
+            bridge.contacts_loading = true;
+            let request_id = bridge.contacts_request_id;
+            let _ = self.send_command(IcaCommand::FetchContacts { request_id });
+        }
+    }
+
+    fn sign_all_groups(&mut self) {
+        let room_ids = self
+            .active()
+            .map(|bridge| {
+                bridge
+                    .rooms
+                    .iter()
+                    .filter(|room| room.room_id < 0)
+                    .map(|room| room.room_id)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let mut failed = 0;
+        for room_id in &room_ids {
+            if self
+                .send_command(IcaCommand::SendGroupSign { room_id: *room_id })
+                .is_err()
+            {
+                failed += 1;
             }
         }
-
-        if processed == MAX_EVENTS_PER_FRAME {
-            ctx.request_repaint();
+        if let Some(bridge) = self.active_mut() {
+            bridge.last_notice = Some(format!(
+                "已请求 {} 个群签到，失败 {} 个",
+                room_ids.len() - failed,
+                failed
+            ));
         }
+    }
+
+    fn adjust_panel_width(&mut self, room_panel: bool, delta: f32) {
+        if room_panel {
+            self.room_panel_width = (self.room_panel_width + delta).clamp(140.0, 720.0);
+        } else {
+            self.sticker_panel_width = (self.sticker_panel_width + delta).clamp(300.0, 500.0);
+        }
+        let room_width = self.room_panel_width;
+        let sticker_width = self.sticker_panel_width;
+        self.config.update(|config| {
+            config.ui_setting.room_panel_width = room_width;
+            config.ui_setting.sticker_panel_width = sticker_width;
+        });
+        if let Err(error) = self.config.save() {
+            tracing::warn!(%error, "保存面板宽度失败");
+        }
+    }
+
+    fn send_sticker(&mut self, entry: &StickerEntry) {
+        let Some(room_id) = self.active().and_then(|bridge| bridge.selected_room_id) else {
+            self.set_error("请先选择会话");
+            return;
+        };
+        match self.sticker_store.read_entry(entry) {
+            Ok(bytes) => {
+                let mut message = SendMessage::new(String::new(), room_id, None);
+                message.set_img(&bytes, &entry.mime_type, true);
+                if let Err(error) = self.send_command(IcaCommand::SendMessage(message)) {
+                    self.set_error(error);
+                } else {
+                    self.show_stickers = false;
+                }
+            }
+            Err(error) => self.set_error(format!("读取收藏表情失败: {error}")),
+        }
+    }
+
+    fn import_sticker(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("图片", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
+            .pick_file()
+        else {
+            return;
+        };
+        match std::fs::read(&path)
+            .map_err(anyhow::Error::from)
+            .and_then(|bytes| self.sticker_store.add_bytes(&bytes).map(|_| ()))
+            .and_then(|()| self.sticker_store.refresh(true).map(|_| ()))
+        {
+            Ok(()) => {
+                if let Some(bridge) = self.active_mut() {
+                    bridge.last_notice = Some("收藏表情已导入".to_string());
+                }
+            }
+            Err(error) => self.set_error(format!("导入收藏表情失败: {error}")),
+        }
+    }
+
+    fn render_sticker_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors().clone();
+        let entries = self.sticker_store.entries();
+        let fallback_notice = self.sticker_store.fallback_notice();
+        div()
+            .flex()
+            .flex_col()
+            .w(px(self.sticker_panel_width))
+            .min_w(px(300.))
+            .max_w(px(500.))
+            .h_full()
+            .border_l_1()
+            .border_color(colors.border)
+            .bg(colors.panel_background)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .h(px(48.))
+                    .px_3()
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .child(format!("收藏表情 ({})", entries.len()))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_1()
+                            .child(
+                                self.render_button("import-sticker", "导入", false, cx)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.import_sticker();
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                self.render_button("close-stickers", "关闭", false, cx)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.show_stickers = false;
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
+            .when_some(fallback_notice, |element, notice| {
+                element.child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .text_sm()
+                        .text_color(colors.text_accent)
+                        .child(notice),
+                )
+            })
+            .child(
+                div()
+                    .id("sticker-scroll")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .p_2()
+                    .gap_1()
+                    .when(entries.is_empty(), |element| {
+                        element.child(
+                            div().p_3().text_color(colors.text_muted).child(format!(
+                                "目录为空：{}",
+                                self.sticker_store.root().display()
+                            )),
+                        )
+                    })
+                    .children(entries.into_iter().enumerate().map(|(index, entry)| {
+                        let selected_entry = entry.clone();
+                        self.render_button(("sticker-entry", index), entry.name, false, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.send_sticker(&selected_entry);
+                                cx.notify();
+                            }))
+                    })),
+            )
+    }
+
+    fn render_member_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors().clone();
+        let room_id = self
+            .active()
+            .and_then(|bridge| bridge.selected_room_id)
+            .unwrap_or_default();
+        let members = self
+            .active()
+            .and_then(|bridge| bridge.group_members.get(&room_id))
+            .cloned()
+            .unwrap_or_default();
+        div()
+            .flex()
+            .flex_col()
+            .w(px(320.))
+            .h_full()
+            .border_l_1()
+            .border_color(colors.border)
+            .bg(colors.panel_background)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .h(px(48.))
+                    .px_3()
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .child(format!("群成员 ({})", members.len()))
+                    .child(
+                        self.render_button("close-members", "关闭", false, cx)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_members = false;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .id("member-scroll")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .children(members.into_iter().enumerate().map(|(index, member)| {
+                        let poke_id = member.user_id;
+                        let mute_id = member.user_id;
+                        div()
+                            .id(("member", index))
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .p_3()
+                            .border_b_1()
+                            .border_color(colors.border_variant)
+                            .child(format!("{} ({})", member.display_name(), member.user_id))
+                            .child(
+                                div().text_sm().text_color(colors.text_muted).child(format!(
+                                    "{}  禁言至 {}",
+                                    member.role, member.shutup_time
+                                )),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .child(
+                                        self.render_button(("poke", index), "戳一戳", false, cx)
+                                            .on_click(cx.listener(move |this, _, _, _| {
+                                                let _ =
+                                                    this.send_command(IcaCommand::SendGroupPoke {
+                                                        room_id,
+                                                        target_id: poke_id,
+                                                    });
+                                            })),
+                                    )
+                                    .child(
+                                        self.render_button(
+                                            ("mute", index),
+                                            "禁言10分钟",
+                                            false,
+                                            cx,
+                                        )
+                                        .on_click(
+                                            cx.listener(move |this, _, _, _| {
+                                                let _ =
+                                                    this.send_command(IcaCommand::SetGroupBan {
+                                                        room_id,
+                                                        target_id: mute_id,
+                                                        duration: 600,
+                                                    });
+                                            }),
+                                        ),
+                                    ),
+                            )
+                    })),
+            )
+    }
+
+    fn render_simple_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors().clone();
+        let mut root = div()
+            .id("page-scroll")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .h_full()
+            .p_5()
+            .gap_3()
+            .overflow_y_scroll();
+        match self.page {
+            Page::Contacts => {
+                let contacts =
+                    self.active()
+                        .map(|bridge| {
+                            bridge
+                                .friends
+                                .iter()
+                                .map(|friend| (friend.room_id(), friend.display_name(), "好友"))
+                                .chain(
+                                    bridge.groups.iter().map(|group| {
+                                        (group.room_id(), group.display_name(), "群聊")
+                                    }),
+                                )
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                root =
+                    root.child(div().text_xl().child("联系人"))
+                        .children(contacts.into_iter().map(|(room_id, name, kind)| {
+                            div()
+                                .id(SharedString::from(format!("contact-{room_id}")))
+                                .flex()
+                                .justify_between()
+                                .p_3()
+                                .rounded_md()
+                                .bg(colors.surface_background)
+                                .cursor_pointer()
+                                .hover(|style| style.bg(colors.element_hover))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.page = Page::Chat;
+                                    this.select_room(room_id, cx);
+                                }))
+                                .child(name)
+                                .child(div().text_sm().text_color(colors.text_muted).child(kind))
+                        }));
+            }
+            Page::Requests => {
+                let requests = self
+                    .active()
+                    .map(|bridge| bridge.requests.clone())
+                    .unwrap_or_default();
+                root = root.child(div().text_xl().child("验证消息")).children(
+                    requests.into_iter().enumerate().map(|(index, request)| {
+                        let accept = request.clone();
+                        let reject = request.clone();
+                        div()
+                            .id(("request", index))
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .p_3()
+                            .rounded_md()
+                            .bg(colors.surface_background)
+                            .child(format!("{} {}", request.nickname, request.comment))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(colors.text_muted)
+                                    .child(request.tips),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .child(
+                                        self.render_button(("accept", index), "同意", true, cx)
+                                            .on_click(cx.listener(move |this, _, _, _| {
+                                                let _ =
+                                                    this.send_command(IcaCommand::HandleRequest {
+                                                        request_type: accept.request_type.clone(),
+                                                        flag: accept.flag.clone(),
+                                                        accept: true,
+                                                    });
+                                            })),
+                                    )
+                                    .child(
+                                        self.render_button(("reject", index), "拒绝", false, cx)
+                                            .on_click(cx.listener(move |this, _, _, _| {
+                                                let _ =
+                                                    this.send_command(IcaCommand::HandleRequest {
+                                                        request_type: reject.request_type.clone(),
+                                                        flag: reject.flag.clone(),
+                                                        accept: false,
+                                                    });
+                                            })),
+                                    ),
+                            )
+                    }),
+                );
+            }
+            Page::Relation => {
+                if let Some(bridge) = self.active() {
+                    root = root
+                        .child(div().text_xl().child("关系概览（列表模式）"))
+                        .child(format!(
+                            "账号：{} ({})",
+                            bridge.online.nick, bridge.online.qqid
+                        ))
+                        .child(format!(
+                            "会话：{}，好友：{}，群聊：{}",
+                            bridge.rooms.len(),
+                            bridge.friends.len(),
+                            bridge.groups.len()
+                        ))
+                        .child(format!(
+                            "Bridge：{} / {} 个客户端",
+                            bridge.online.icalingua_info.ica_version,
+                            bridge.online.icalingua_info.client_count
+                        ));
+                }
+            }
+            Page::Tools => {
+                root = root
+                    .child(div().text_xl().child("Socket.IO 工具"))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                self.render_button("sign-all", "全部群签到", true, cx)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.sign_all_groups();
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                self.render_button("online", "设为在线", false, cx)
+                                    .on_click(cx.listener(|this, _, _, _| {
+                                        let _ = this.send_command(IcaCommand::SetOnlineStatus(11));
+                                    })),
+                            )
+                            .child(self.render_button("away", "设为离开", false, cx).on_click(
+                                cx.listener(|this, _, _, _| {
+                                    let _ = this.send_command(IcaCommand::SetOnlineStatus(31));
+                                }),
+                            )),
+                    )
+                    .child(self.tool_event.clone())
+                    .child(self.tool_args.clone())
+                    .child(
+                        self.render_button("call-socket", "调用", true, cx)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let event = this.tool_event.read(cx).text().trim().to_string();
+                                let args_text = this.tool_args.read(cx).text().trim().to_string();
+                                match serde_json::from_str::<Vec<JsonValue>>(&args_text) {
+                                    Ok(args) if !event.is_empty() => {
+                                        let _ = this.send_command(IcaCommand::SocketApiCall {
+                                            event,
+                                            args,
+                                            expect_ack: true,
+                                        });
+                                    }
+                                    Ok(_) => this.set_error("事件名不能为空"),
+                                    Err(error) => {
+                                        this.set_error(format!("参数 JSON 无效: {error}"))
+                                    }
+                                }
+                                cx.notify();
+                            })),
+                    );
+            }
+            Page::Settings => {
+                root = root
+                    .child(div().text_xl().child("外观与运行状态"))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                self.render_button("system-theme", "跟随系统", false, cx)
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.follow_system_theme(cx)),
+                                    ),
+                            )
+                            .child(
+                                self.render_button("dark-theme", "One Dark", !self.light_theme, cx)
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.switch_theme(false, cx)),
+                                    ),
+                            )
+                            .child(
+                                self.render_button(
+                                    "light-theme",
+                                    "One Light",
+                                    self.light_theme,
+                                    cx,
+                                )
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.switch_theme(true, cx)),
+                                ),
+                            ),
+                    )
+                    .child(format!("会话栏宽度：{:.0}px", self.room_panel_width))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                self.render_button("room-narrower", "会话栏 -20", false, cx)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.adjust_panel_width(true, -20.);
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                self.render_button("room-wider", "会话栏 +20", false, cx)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.adjust_panel_width(true, 20.);
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(format!("表情栏宽度：{:.0}px", self.sticker_panel_width))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                self.render_button("sticker-narrower", "表情栏 -20", false, cx)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.adjust_panel_width(false, -20.);
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                self.render_button("sticker-wider", "表情栏 +20", false, cx)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.adjust_panel_width(false, 20.);
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(format!(
+                        "配置目录：{}",
+                        self.config.paths().data_dir().display()
+                    ))
+                    .child(format!("版本：{}", crate::VERSION));
+            }
+            Page::Chat => {}
+        }
+        root
+    }
+
+    fn pick_image(&mut self, _: &gpui::ClickEvent, _: &mut Window, _: &mut Context<Self>) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("图片", &["png", "jpg", "jpeg", "gif", "webp"])
+            .pick_file()
+        else {
+            return;
+        };
+        let Ok(data) = std::fs::read(&path) else {
+            self.set_error("读取图片失败");
+            return;
+        };
+        let Some(room_id) = self.active().and_then(|bridge| bridge.selected_room_id) else {
+            self.set_error("请先选择会话");
+            return;
+        };
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("png")
+            .to_ascii_lowercase();
+        let mime = match extension.as_str() {
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            _ => "image/png",
+        };
+        let _ = self.send_command(IcaCommand::SendImageMessage {
+            room_id,
+            content: String::new(),
+            reply_to: None,
+            mentions: Vec::new(),
+            image_type: mime.to_string(),
+            image_data: data.into(),
+        });
+    }
+
+    fn pick_file(&mut self, _: &gpui::ClickEvent, _: &mut Window, _: &mut Context<Self>) {
+        let Some(path) = rfd::FileDialog::new().pick_file() else {
+            return;
+        };
+        let Ok(data) = std::fs::read(&path) else {
+            self.set_error("读取文件失败");
+            return;
+        };
+        let Some(room_id) = self.active().and_then(|bridge| bridge.selected_room_id) else {
+            self.set_error("请先选择会话");
+            return;
+        };
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("file")
+            .to_string();
+        let file_type = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("bin")
+            .to_string();
+        let _ = self.send_command(IcaCommand::SendFileMessage {
+            room_id,
+            content: String::new(),
+            reply_to: None,
+            mentions: Vec::new(),
+            file_name: name,
+            file_type,
+            file_data: data.into(),
+        });
     }
 }
 
-impl eframe::App for IcaApp {
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        self.ime_event_this_frame = false;
-        for event in &raw_input.events {
-            match event {
-                egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => {
-                    self.ime_event_this_frame = true;
-                    self.ime_composing = !text.is_empty();
-                }
-                egui::Event::Ime(egui::ImeEvent::Commit(_)) => {
-                    self.ime_event_this_frame = true;
-                    self.ime_composing = false;
-                }
-                _ => {}
-            }
-        }
-
-        // 检测 Ctrl+V 但没有文字粘贴事件的情况（剪贴板可能是图片）。
-        // 即使窗口失焦也读取一次系统按键状态，避免重新聚焦后消费到陈旧的按下事件。
-        let system_paste_shortcut_pressed = Self::system_paste_shortcut_pressed();
-        self.clipboard_paste_failed =
-            clipboard_image_paste_requested(raw_input, system_paste_shortcut_pressed);
-    }
-
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        for session in &mut self.state.bridge_states {
-            session.stop();
-        }
-    }
-
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.poll_socketio_events(ui.ctx());
-        self.tick_auto_sign(ui.ctx());
-
-        // ESC 优先关闭输入区弹层，再处理会话内的选择状态。
-        if ui.ctx().input(|input| input.key_pressed(egui::Key::Escape)) {
-            if self.show_mention_picker {
-                self.show_mention_picker = false;
-                self.mention_search_query.clear();
-                self.mention_search_focus_requested = false;
-                self.mention_replace_trigger = false;
-                self.mention_selected_index = 0;
-                if let Some(bridge_idx) = self.active_bridge_idx
-                    && let Some(room_id) = self.bridge_states[bridge_idx].selected_room_id
-                {
-                    let composer_id = egui::Id::new(("message_composer", bridge_idx, room_id));
-                    ui.ctx()
-                        .memory_mut(|memory| memory.request_focus(composer_id));
-                }
-            } else if let Some(state) = self.active_bridge_state_mut() {
-                if state.forward_target_picker_open {
-                    state.forward_target_picker_open = false;
-                } else if let Some(room_id) = state.selected_room_id {
-                    if state.is_forward_selection_active(room_id) {
-                        state.clear_forward_selection();
+impl Render for IcaApp {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors().clone();
+        let status = self.active().and_then(|bridge| {
+            bridge
+                .last_error
+                .clone()
+                .map(|message| (message, true))
+                .or_else(|| bridge.last_notice.clone().map(|message| (message, false)))
+        });
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(colors.background)
+            .text_color(colors.text)
+            .font_family("Noto Sans CJK SC")
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.render_rail(cx))
+                    .when(self.page == Page::Chat, |element| {
+                        element.child(self.render_room_list(cx))
+                    })
+                    .child(if self.page == Page::Chat {
+                        self.render_chat(cx).into_any_element()
                     } else {
-                        state.selected_room_id = None;
-                    }
-                }
-            }
-        }
-
-        // 功能视图由 `chat` 和顶层 `shell` 实现。
-        self.render_top_panel(ui);
-        self.render_left_groups_panel(ui);
-        self.render_chat_list_panel(ui);
-        self.render_group_members_panel(ui);
-        self.render_central_panel(ui);
-        self.render_group_ban_confirmation(ui.ctx());
-        self.render_windows(ui);
+                        self.render_simple_page(cx).into_any_element()
+                    })
+                    .when(self.page == Page::Chat && self.show_stickers, |element| {
+                        element.child(self.render_sticker_panel(cx))
+                    })
+                    .when(self.page == Page::Chat && self.show_members, |element| {
+                        element.child(self.render_member_panel(cx))
+                    }),
+            )
+            .when_some(status, |element, (message, error)| {
+                element.child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .border_t_1()
+                        .border_color(colors.border)
+                        .bg(colors.status_bar_background)
+                        .text_sm()
+                        .text_color(if error {
+                            colors.text_accent
+                        } else {
+                            colors.text_muted
+                        })
+                        .child(message),
+                )
+            })
     }
 }

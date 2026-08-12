@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// 聊天界面的持久化外观选项。此类型只保存数据，egui 渲染位于 `app::settings`。
+/// 聊天界面的持久化外观选项。此类型只保存数据，渲染由 GPUI 应用层负责。
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ChatAppearanceSettings {
     #[serde(default)]

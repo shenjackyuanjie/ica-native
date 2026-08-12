@@ -1,17 +1,17 @@
-use eframe::egui;
-use egui::IconData;
+use std::{borrow::Cow, sync::Arc};
+
+use gpui::{App, AppContext, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui_platform::application;
 
 pub mod app;
 pub mod assets;
 pub mod config;
 pub mod face_data;
 pub mod ica;
-pub mod image_loader;
 pub mod memory_probe;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GITHUB_LINK: &str = "https://github.com/shenjackyuanjie/ica-native";
-
 pub type StopGetter = tokio::sync::oneshot::Receiver<()>;
 
 fn cli_log_level_from_args<I, S>(args: I) -> tracing::Level
@@ -39,81 +39,61 @@ fn init_logging() {
         tracing::Level::DEBUG => "debug",
         tracing::Level::TRACE => "trace",
     };
-    let filter = tracing_subscriber::EnvFilter::new(format!(
-        "{level_name},egui_winit::clipboard=off,ica_native::image_loader=off"
-    ));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(level_name))
+        .init();
 }
 
 fn main() -> anyhow::Result<()> {
     init_logging();
     memory_probe::log("main:start");
-    egui_main()
-}
-
-fn egui_main() -> anyhow::Result<()> {
-    memory_probe::log("egui_main:start");
     let config_store = config::ConfigStore::load()?;
-    memory_probe::log("cfg:init");
-
-    // 获取一个 cfg 快照
     let config = config_store.snapshot();
-    memory_probe::log("cfg:snapshot");
+    let width = config.screen.width.max(760.0);
+    let height = config.screen.height.max(560.0);
+    let runtime = app::runtime::AppRuntime::new(&config);
+    let runtime_handle = runtime.handle();
 
-    let icon = {
-        let img =
-            image::load_from_memory_with_format(assets::png::ICON_512X, image::ImageFormat::Png)?;
-        let rgba_image = img.into_rgba8();
-        let (w, h) = (rgba_image.width(), rgba_image.height());
-        IconData {
-            rgba: rgba_image.into_raw(),
-            width: w,
-            height: h,
-        }
-    };
-    memory_probe::log("icon:loaded");
-
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([config.screen.width, config.screen.height])
-            .with_drag_and_drop(true)
-            .with_icon(icon),
-        renderer: eframe::Renderer::Glow,
-        glow_options: eframe::egui_glow::GlowConfiguration {
-            vsync: config.screen.vsync,
-            ..Default::default()
-        },
-        centered: config.screen.centered,
-        ..Default::default()
-    };
-    memory_probe::log("egui:before_run_native");
-
-    eframe::run_native(
-        "ica native",
-        options,
-        Box::new({
-            let config_store = config_store.clone();
-            move |cc| {
-                memory_probe::log("egui:creation_context");
-                // 安装 egui extra
-                egui_extras::install_image_loaders(&cc.egui_ctx);
-                memory_probe::log("egui:image_loaders");
-                // 安装图片统计加载器
-                image_loader::install_tracking_image_loader(
-                    &cc.egui_ctx,
-                    image_loader::ImageCacheSettings::from_config(&config_store.snapshot()),
-                );
-                memory_probe::log("egui:tracking_loader");
-                let app = app::IcaApp::new(cc, config_store.clone());
-                memory_probe::log("app:new");
-                Ok(Box::new(app))
+    application()
+        .with_assets(zed_assets::Assets)
+        .run(move |cx: &mut App| {
+            gpui_tokio::init_from_handle(cx, runtime_handle);
+            cx.set_http_client(Arc::new(
+                reqwest_client::ReqwestClient::user_agent(concat!(
+                    "ica-native/",
+                    env!("CARGO_PKG_VERSION")
+                ))
+                .expect("创建 GPUI HTTP 客户端失败"),
+            ));
+            theme::init(theme::LoadThemes::All(Box::new(zed_assets::Assets)), cx);
+            if let Err(error) = cx.text_system().add_fonts(vec![
+                Cow::Borrowed(assets::fonts::FONT_思源黑体),
+                Cow::Borrowed(assets::fonts::FONT_UNIFONT),
+            ]) {
+                tracing::warn!(%error, "加载内置中文字体失败，将使用系统回退字体");
             }
-        }),
-    )
-    .expect("eframe::run_native 运行失败");
+            app::apply_configured_theme(&config, cx);
+            app::bind_keys(cx);
 
-    memory_probe::log("egui_main:exit");
-    config_store.save()?;
-    memory_probe::log("cfg:write_back");
+            let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_min_size: Some(size(px(700.), px(500.))),
+                    app_id: Some("ica-native".to_string()),
+                    ..Default::default()
+                },
+                move |window, cx| cx.new(|cx| app::IcaApp::new(runtime, config_store, window, cx)),
+            )
+            .expect("打开 GPUI 主窗口失败");
+
+            cx.on_window_closed(|cx, _| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
+            cx.activate(true);
+        });
     Ok(())
 }

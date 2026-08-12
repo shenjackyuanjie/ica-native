@@ -1,44 +1,39 @@
-use std::ops::Deref;
-
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc::UnboundedReceiver, mpsc::unbounded_channel, oneshot};
 
 use crate::config::IcaCfg;
 use crate::ica::{self, BridgeEvent, BridgeHandle};
 
-use super::event::AppEvent;
-use super::state::{BridgeSession, BridgeState};
+pub struct BridgeConnection {
+    pub key: String,
+    pub handle: BridgeHandle,
+    stop_sender: Option<oneshot::Sender<()>>,
+}
+
+impl BridgeConnection {
+    pub fn stop(&mut self) {
+        if let Some(sender) = self.stop_sender.take() {
+            let _ = sender.send(());
+        }
+    }
+}
 
 pub struct AppRuntime {
     tokio: Runtime,
-    sessions: Vec<BridgeSession>,
-    pub(super) event_rx: UnboundedReceiver<AppEvent>,
-    pub(super) event_tx: UnboundedSender<AppEvent>,
+    connections: Vec<BridgeConnection>,
+    event_rx: Option<UnboundedReceiver<BridgeEvent>>,
 }
 
 impl AppRuntime {
-    pub fn new(ctx: &egui::Context, config: &IcaCfg) -> Self {
+    pub fn new(config: &IcaCfg) -> Self {
         let tokio = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(config.tokio_rt_work_thread as usize)
             .enable_all()
             .build()
             .expect("创建 Tokio runtime 失败");
+        let (event_tx, event_rx) = unbounded_channel();
+        let mut connections = Vec::new();
 
-        let (bridge_tx, mut bridge_rx) = unbounded_channel::<BridgeEvent>();
-        let (event_tx, event_rx) = unbounded_channel::<AppEvent>();
-        let forward_tx = event_tx.clone();
-        let repaint_ctx = ctx.clone();
-        tokio.spawn(async move {
-            while let Some(event) = bridge_rx.recv().await {
-                if forward_tx.send(AppEvent::Bridge(event)).is_err() {
-                    break;
-                }
-                repaint_ctx.request_repaint();
-            }
-        });
-
-        let mut sessions = Vec::new();
         for bridge in config
             .bridges
             .iter()
@@ -46,45 +41,53 @@ impl AppRuntime {
             .cloned()
         {
             let (stop_tx, stop_rx) = oneshot::channel();
-            let bridge_key = if bridge.name.is_empty() {
+            let key = if bridge.name.trim().is_empty() {
                 bridge.url.clone()
             } else {
                 bridge.name.clone()
             };
             let (command_tx, command_rx) = unbounded_channel();
-            let handle = BridgeHandle::new(bridge_key.clone(), command_tx);
-            let state = BridgeState::new(bridge_key.clone(), config.chat_groups.clone());
-            sessions.push(BridgeSession::new(handle, state, stop_tx));
-
-            let event_tx = bridge_tx.clone();
+            connections.push(BridgeConnection {
+                key: key.clone(),
+                handle: BridgeHandle::new(key.clone(), command_tx),
+                stop_sender: Some(stop_tx),
+            });
+            let tx = event_tx.clone();
             tokio.spawn(async move {
-                if let Err(error) = ica::run_bridge(stop_rx, &bridge, event_tx, command_rx).await {
-                    tracing::error!(bridge = %bridge_key, error = %error, "Socket.IO bridge 异常停止");
+                if let Err(error) = ica::run_bridge(stop_rx, &bridge, tx, command_rx).await {
+                    tracing::error!(bridge = %key, error = %error, "Socket.IO bridge 异常停止");
                 }
             });
         }
 
         Self {
             tokio,
-            sessions,
-            event_rx,
-            event_tx,
+            connections,
+            event_rx: Some(event_rx),
         }
     }
 
-    pub fn take_sessions(&mut self) -> Vec<BridgeSession> {
-        std::mem::take(&mut self.sessions)
+    pub fn handle(&self) -> tokio::runtime::Handle {
+        self.tokio.handle().clone()
     }
 
-    pub fn event_sender(&self) -> UnboundedSender<AppEvent> {
-        self.event_tx.clone()
+    pub fn connections(&self) -> &[BridgeConnection] {
+        &self.connections
+    }
+
+    pub fn connections_mut(&mut self) -> &mut [BridgeConnection] {
+        &mut self.connections
+    }
+
+    pub fn take_event_receiver(&mut self) -> UnboundedReceiver<BridgeEvent> {
+        self.event_rx.take().expect("bridge 事件接收器只能取一次")
     }
 }
 
-impl Deref for AppRuntime {
-    type Target = Runtime;
-
-    fn deref(&self) -> &Self::Target {
-        &self.tokio
+impl Drop for AppRuntime {
+    fn drop(&mut self) {
+        for connection in &mut self.connections {
+            connection.stop();
+        }
     }
 }

@@ -194,10 +194,6 @@ impl BridgeHandle {
             .send(command)
             .map_err(|error| error.to_string())
     }
-
-    pub(crate) fn command_sender(&self) -> UnboundedSender<IcaCommand> {
-        self.command_tx.clone()
-    }
 }
 
 pub(super) fn emit_ui_event(

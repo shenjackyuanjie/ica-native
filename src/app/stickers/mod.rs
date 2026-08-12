@@ -7,13 +7,6 @@ use sha2::{Digest, Sha256};
 
 use crate::config::{ConfigPaths, IcaCfg};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum StickerPickerTab {
-    #[default]
-    QqFaces,
-    Favorites,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StickerEntry {
     pub path: PathBuf,

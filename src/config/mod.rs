@@ -267,6 +267,15 @@ fn reedit_draft_conflict_mode_default() -> ReEditDraftConflictMode {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UiSetting {
+    /// 主题模式；system 会跟随操作系统浅色/深色外观。
+    #[serde(default)]
+    pub theme_mode: ThemeMode,
+    /// 会话栏宽度。
+    #[serde(default = "room_panel_width_default")]
+    pub room_panel_width: f32,
+    /// 收藏表情栏宽度。
+    #[serde(default = "sticker_panel_width_default")]
+    pub sticker_panel_width: f32,
     /// 选择会话后是否自动清空聊天列表搜索框
     #[serde(default = "clear_search_on_room_select_default")]
     pub clear_search_on_room_select: bool,
@@ -282,6 +291,23 @@ pub struct UiSetting {
     /// QQ 关系网渲染设置
     #[serde(default)]
     pub relation_network: RelationNetworkSetting,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+fn room_panel_width_default() -> f32 {
+    300.0
+}
+
+fn sticker_panel_width_default() -> f32 {
+    320.0
 }
 
 fn clear_search_on_room_select_default() -> bool {
@@ -412,6 +438,9 @@ impl Default for RelationNetworkSetting {
 impl Default for UiSetting {
     fn default() -> Self {
         Self {
+            theme_mode: ThemeMode::System,
+            room_panel_width: room_panel_width_default(),
+            sticker_panel_width: sticker_panel_width_default(),
             clear_search_on_room_select: clear_search_on_room_select_default(),
             auto_fetch_history_on_room_select: auto_fetch_history_on_room_select_default(),
             scroll_to_bottom_after_send: scroll_to_bottom_after_send_default(),
