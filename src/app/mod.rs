@@ -156,18 +156,6 @@ impl Page {
             Self::Settings => "设置",
         }
     }
-
-    fn icon(self) -> IconName {
-        match self {
-            Self::Chat => IconName::Chat,
-            Self::Groups => IconName::Folder,
-            Self::Contacts => IconName::Person,
-            Self::Requests => IconName::Bell,
-            Self::Relation => IconName::GitGraph,
-            Self::Tools => IconName::Terminal,
-            Self::Settings => IconName::Settings,
-        }
-    }
 }
 
 #[derive(Default)]
@@ -536,7 +524,7 @@ impl IcaApp {
             face_images: RefCell::new(HashMap::new()),
             show_members: false,
             show_mentions: false,
-            room_panel_width: snapshot.ui_setting.room_panel_width.clamp(140.0, 720.0),
+            room_panel_width: snapshot.ui_setting.room_panel_width.clamp(300.0, 700.0),
             sticker_panel_width: snapshot.ui_setting.sticker_panel_width.clamp(300.0, 500.0),
             sticker_store,
             _event_task: event_task,
@@ -1360,7 +1348,7 @@ impl IcaApp {
             .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
     }
 
-    fn render_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
         let pages = [
             Page::Chat,
@@ -1372,60 +1360,24 @@ impl IcaApp {
             Page::Settings,
         ];
         div()
+            .flex_none()
             .flex()
-            .flex_col()
-            .w(px(72.))
-            .h_full()
             .items_center()
-            .border_r_1()
+            .h(px(36.))
+            .px_2()
+            .gap_1()
+            .border_b_1()
             .border_color(colors.border)
-            .bg(colors.panel_background)
+            .bg(colors.toolbar_background)
             .child(
                 div()
-                    .h(px(56.))
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_size(px(17.))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child("ica"),
+                    .px_2()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .child("Icalingua++ native"),
             )
             .children(pages.into_iter().enumerate().map(|(index, page)| {
-                let selected = self.page == page;
-                div()
-                    .id(("page", index))
-                    .w(px(60.))
-                    .h(px(52.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(3.))
-                    .items_center()
-                    .justify_center()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .text_size(px(11.))
-                    .text_color(if selected {
-                        colors.text_accent
-                    } else {
-                        colors.text_muted
-                    })
-                    .bg(if selected {
-                        colors.element_selected
-                    } else {
-                        colors.ghost_element_background
-                    })
-                    .hover(|style| style.bg(colors.ghost_element_hover))
-                    .child(
-                        Icon::new(page.icon())
-                            .size(IconSize::Small)
-                            .color(if selected {
-                                Color::Accent
-                            } else {
-                                Color::Muted
-                            }),
-                    )
-                    .child(page.label())
+                self.render_button(("top-page", index), page.label(), self.page == page, cx)
+                    .h(px(28.))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.page = page;
                         if page == Page::Contacts {
@@ -1437,77 +1389,184 @@ impl IcaApp {
                     }))
             }))
             .child(div().flex_1())
-            .children(self.bridges.iter().enumerate().map(|(index, bridge)| {
-                let label = bridge.key.chars().next().unwrap_or('?').to_string();
-                let selected = self.active_bridge == Some(index);
-                let avatar = if bridge.online.qqid > 0 {
-                    Avatar::new(format!(
-                        "https://q1.qlogo.cn/g?b=qq&nk={}&s=140",
-                        bridge.online.qqid
-                    ))
-                    .size(px(30.))
-                    .into_any_element()
-                } else {
-                    div()
-                        .size(px(30.))
-                        .rounded_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .bg(colors.element_background)
-                        .text_sm()
-                        .child(label)
-                        .into_any_element()
-                };
+            .child(
                 div()
-                    .id(("bridge", index))
-                    .size(px(40.))
-                    .mb_2()
+                    .px_2()
+                    .text_size(px(11.))
+                    .text_color(colors.text_muted)
+                    .child(format!("v{}", crate::VERSION)),
+            )
+    }
+
+    fn render_group_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors().clone();
+        let settings = self.config.snapshot().custom_chat;
+        let current_filter = self
+            .active()
+            .map_or(RoomFilter::All, |bridge| bridge.room_filter);
+        let current_filter = if current_filter == RoomFilter::Group {
+            RoomFilter::All
+        } else {
+            current_filter
+        };
+        let (custom_groups, rooms) = self
+            .active()
+            .map(|bridge| (bridge.chat_groups.groups.clone(), bridge.rooms.clone()))
+            .unwrap_or_default();
+        let private_has_unread = rooms
+            .iter()
+            .any(|room| room.room_id > 0 && room.unread_count > 0);
+        let mut entries = vec![
+            (RoomFilter::All, "所有聊天".to_string(), false),
+            (RoomFilter::Private, "私聊".to_string(), private_has_unread),
+        ];
+        entries.extend(custom_groups.iter().enumerate().map(|(index, group)| {
+            let has_unread = rooms.iter().any(|room| {
+                room.unread_count > 0
+                    && (group.rooms.contains(&room.room_id)
+                        || (group.include_all_personal && room.room_id > 0))
+            });
+            (RoomFilter::Custom(index), group.name.clone(), has_unread)
+        }));
+
+        div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .w(px(70.))
+            .h_full()
+            .items_center()
+            .border_r_1()
+            .border_color(colors.border)
+            .bg(colors.panel_background)
+            .child(
+                div()
+                    .id("chat-group-scroll")
                     .flex()
+                    .flex_col()
+                    .flex_1()
+                    .w_full()
                     .items_center()
-                    .justify_center()
-                    .rounded_lg()
-                    .cursor_pointer()
-                    .border_1()
-                    .border_color(if selected {
-                        colors.border_focused
-                    } else {
-                        colors.border_transparent
-                    })
-                    .bg(if selected {
-                        colors.element_selected
-                    } else {
-                        colors.ghost_element_background
-                    })
-                    .hover(|style| style.bg(colors.ghost_element_hover))
-                    .child(avatar)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.active_bridge = Some(index);
-                        cx.notify();
-                    }))
-            }))
+                    .overflow_y_scroll()
+                    .pt_2()
+                    .children(entries.into_iter().enumerate().map(
+                        |(index, (filter, label, has_unread))| {
+                            let selected = current_filter == filter;
+                            div()
+                                .id(("chat-group-filter", index))
+                                .relative()
+                                .flex()
+                                .flex_none()
+                                .flex_col()
+                                .items_center()
+                                .justify_center()
+                                .w(px(62.))
+                                .h(px(58.))
+                                .gap(px(2.))
+                                .rounded_md()
+                                .cursor_pointer()
+                                .text_size(px(11.))
+                                .text_color(if selected {
+                                    colors.text
+                                } else {
+                                    colors.text_muted
+                                })
+                                .bg(if selected {
+                                    colors.element_selected
+                                } else {
+                                    colors.ghost_element_background
+                                })
+                                .hover(|style| style.bg(colors.ghost_element_hover))
+                                .child(Icon::new(IconName::Chat).size(IconSize::Small).color(
+                                    if selected {
+                                        Color::Accent
+                                    } else {
+                                        Color::Muted
+                                    },
+                                ))
+                                .child(div().max_w(px(58.)).truncate().child(label))
+                                .when(
+                                    has_unread
+                                        && !selected
+                                        && !settings.disable_chat_group
+                                        && !settings.disable_chat_group_dot,
+                                    |element| {
+                                        element.child(
+                                            div()
+                                                .absolute()
+                                                .top(px(5.))
+                                                .right(px(9.))
+                                                .size(px(6.))
+                                                .rounded_full()
+                                                .bg(gpui::rgb(0xdc2626)),
+                                        )
+                                    },
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if let Some(bridge) = this.active_mut() {
+                                        bridge.room_filter = filter;
+                                    }
+                                    cx.notify();
+                                }))
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .flex_col()
+                    .items_center()
+                    .gap_1()
+                    .py_2()
+                    .w_full()
+                    .border_t_1()
+                    .border_color(colors.border)
+                    .child(
+                        self.render_button("new-chat-group", "+", false, cx)
+                            .w(px(28.))
+                            .px_0()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.page = Page::Groups;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        self.render_icon_button(
+                            "manage-chat-groups",
+                            IconName::Settings,
+                            false,
+                            cx,
+                        )
+                        .size(px(28.))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.page = Page::Groups;
+                            cx.notify();
+                        })),
+                    ),
+            )
     }
 
     fn render_room_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
-        let groups_disabled = self.config.snapshot().custom_chat.disable_chat_group;
         let query = self.room_search.read(cx).text().trim().to_lowercase();
         let selected = self.active().and_then(|bridge| bridge.selected_room_id);
+        let selected_bridge_name = self
+            .active()
+            .map(|bridge| bridge.key.clone())
+            .unwrap_or_else(|| "没有启用的 bridge".to_string());
         let room_filter = self
             .active()
             .map_or(RoomFilter::All, |bridge| bridge.room_filter);
-        let room_filter = if groups_disabled && matches!(room_filter, RoomFilter::Custom(_)) {
+        let room_filter = if room_filter == RoomFilter::Group {
             RoomFilter::All
         } else {
             room_filter
         };
-        let custom_groups = if groups_disabled {
-            Vec::new()
-        } else {
-            self.active()
-                .map(|bridge| bridge.chat_groups.groups.clone())
-                .unwrap_or_default()
-        };
+        let custom_groups = self
+            .active()
+            .map(|bridge| bridge.chat_groups.groups.clone())
+            .unwrap_or_default();
         let rooms = self
             .active()
             .map(|bridge| {
@@ -1538,10 +1597,16 @@ impl IcaApp {
                             room.avatar_url(),
                             room.last_message.content.clone().unwrap_or_default(),
                             room.last_message.username.clone().unwrap_or_default(),
+                            room.last_message.user_id,
                             room.last_message.timestamp.clone().unwrap_or_default(),
                             room.unread_count,
                             room.at,
                             room.index > 0,
+                            bridge
+                                .conversations
+                                .get(&room.room_id)
+                                .map(|conversation| conversation.draft.trim().to_string())
+                                .unwrap_or_default(),
                         )
                     })
                     .collect::<Vec<_>>()
@@ -1551,87 +1616,128 @@ impl IcaApp {
             .flex()
             .flex_col()
             .w(px(self.room_panel_width))
-            .min_w(px(140.))
-            .max_w(px(720.))
+            .min_w(px(300.))
+            .max_w(px(700.))
             .h_full()
             .border_r_1()
             .border_color(colors.border)
             .bg(colors.surface_background)
             .child(
                 div()
-                    .h(px(64.))
-                    .px_3()
+                    .flex_none()
                     .flex()
                     .items_center()
+                    .h(px(36.))
+                    .px_2()
+                    .gap_2()
                     .border_b_1()
-                    .border_color(colors.border)
-                    .child(self.room_search.clone()),
+                    .border_color(colors.border_variant)
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(colors.text_muted)
+                            .child("Bridge"),
+                    )
+                    .child(
+                        self.render_button(
+                            "bridge-selector",
+                            format!("{selected_bridge_name}  ▾"),
+                            true,
+                            cx,
+                        )
+                        .h(px(26.))
+                        .max_w(px(210.))
+                        .tooltip(Tooltip::text("点击切换到下一个 Bridge"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                                    if this.bridges.is_empty() {
+                                        return;
+                                    }
+                                    let index = this
+                                        .active_bridge
+                                        .map_or(0, |index| (index + 1) % this.bridges.len());
+                                    this.active_bridge = Some(index);
+                                    this.room_search.update(cx, |input, cx| input.clear(cx));
+                                    let draft = this
+                                        .active()
+                                        .and_then(|bridge| bridge.selected_room_id)
+                                        .and_then(|room_id| {
+                                            this.active()
+                                                .and_then(|bridge| bridge.conversations.get(&room_id))
+                                        })
+                                        .map(|conversation| conversation.draft.clone())
+                                        .unwrap_or_default();
+                                    this.composer.update(cx, |input, cx| input.set_text(draft, cx));
+                                    cx.notify();
+                                })),
+                    ),
             )
             .child(
                 div()
-                    .id("room-filters")
+                    .flex_none()
+                    .h(px(36.))
+                    .px_2()
                     .flex()
                     .items_center()
-                    .h(px(38.))
+                    .border_b_1()
+                    .border_color(colors.border_variant)
                     .gap_1()
-                    .px_3()
-                    .overflow_x_scroll()
                     .child(
-                        self.render_button(
-                            "filter-all",
-                            "全部",
-                            room_filter == RoomFilter::All,
-                            cx,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(bridge) = this.active_mut() {
-                                bridge.room_filter = RoomFilter::All;
-                            }
-                            cx.notify();
-                        })),
+                        div()
+                            .mr_1()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child("聊天列表"),
                     )
                     .child(
-                        self.render_button(
-                            "filter-private",
-                            "私聊",
-                            room_filter == RoomFilter::Private,
-                            cx,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(bridge) = this.active_mut() {
-                                bridge.room_filter = RoomFilter::Private;
-                            }
-                            cx.notify();
-                        })),
+                        self.render_button("open-contacts-from-list", "联系人", false, cx)
+                            .h(px(26.))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.page = Page::Contacts;
+                                this.refresh_contacts();
+                                cx.notify();
+                            })),
                     )
                     .child(
-                        self.render_button(
-                            "filter-group",
-                            "群聊",
-                            room_filter == RoomFilter::Group,
-                            cx,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(bridge) = this.active_mut() {
-                                bridge.room_filter = RoomFilter::Group;
-                            }
-                            cx.notify();
-                        })),
+                        self.render_button("refresh-current-room", "刷新", false, cx)
+                            .h(px(26.))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(room_id) =
+                                    this.active().and_then(|bridge| bridge.selected_room_id)
+                                {
+                                    let _ = this.send_command(IcaCommand::FetchMessages(room_id));
+                                }
+                                cx.notify();
+                            })),
                     )
-                    .children(custom_groups.into_iter().enumerate().map(|(index, group)| {
-                        self.render_button(
-                            ("filter-custom", index),
-                            group.name,
-                            room_filter == RoomFilter::Custom(index),
-                            cx,
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(bridge) = this.active_mut() {
-                                bridge.room_filter = RoomFilter::Custom(index);
-                            }
-                            cx.notify();
-                        }))
-                    })),
+                    .child(
+                        self.render_button("room-list-top", "顶部", false, cx)
+                            .h(px(26.))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.room_scroll.scroll_to_item(0);
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        self.render_button("room-list-bottom", "底部", false, cx)
+                            .h(px(26.))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let last = this
+                                    .active()
+                                    .map_or(0, |bridge| bridge.rooms.len().saturating_sub(1));
+                                this.room_scroll.scroll_to_item(last);
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .h(px(44.))
+                    .px_2()
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .child(self.room_search.clone()),
             )
             .child(
                 div()
@@ -1648,10 +1754,12 @@ impl IcaApp {
                             avatar_url,
                             preview,
                             sender,
+                            sender_id,
                             timestamp,
                             unread,
                             at,
                             pinned,
+                            draft,
                         )| {
                             let is_selected = selected == Some(room_id);
                             let preview =
@@ -1670,8 +1778,11 @@ impl IcaApp {
                                 .flex()
                                 .flex_none()
                                 .items_center()
-                                .h(px(68.))
-                                .px_3()
+                                .h(px(62.))
+                                .mx_1()
+                                .px_1()
+                                .py_1()
+                                .rounded_sm()
                                 .border_b_1()
                                 .border_color(colors.border_variant)
                                 .cursor_pointer()
@@ -1686,7 +1797,33 @@ impl IcaApp {
                                         this.select_room(room_id, cx)
                                     }),
                                 )
-                                .child(div().mr_3().child(Avatar::new(avatar_url).size(px(40.))))
+                                .child(
+                                    div()
+                                        .relative()
+                                        .flex_none()
+                                        .size(px(40.))
+                                        .mr_2()
+                                        .child(Avatar::new(avatar_url).size(px(40.)))
+                                        .when(room_id < 0 && sender_id.is_some(), |element| {
+                                            let sender_id = sender_id.unwrap_or_default();
+                                            element.child(
+                                                div()
+                                                    .absolute()
+                                                    .right(px(-1.))
+                                                    .bottom(px(-1.))
+                                                    .size(px(20.))
+                                                    .p(px(1.))
+                                                    .rounded_md()
+                                                    .bg(colors.surface_background)
+                                                    .child(
+                                                        Avatar::new(format!(
+                                                            "https://q1.qlogo.cn/g?b=qq&nk={sender_id}&s=140"
+                                                        ))
+                                                        .size(px(18.)),
+                                                    ),
+                                            )
+                                        }),
+                                )
                                 .child(
                                     div()
                                         .flex()
@@ -1704,15 +1841,17 @@ impl IcaApp {
                                                         .flex_1()
                                                         .min_w_0()
                                                         .truncate()
-                                                        .text_size(px(15.))
+                                                        .text_size(px(16.))
                                                         .font_weight(gpui::FontWeight::MEDIUM)
                                                         .child(name),
                                                 )
                                                 .when(pinned, |element| {
                                                     element.child(
-                                                        Icon::new(IconName::Pin)
-                                                            .size(IconSize::Indicator)
-                                                            .color(Color::Muted),
+                                                        div()
+                                                            .ml_1()
+                                                            .text_size(px(11.))
+                                                            .text_color(colors.text_muted)
+                                                            .child("↑"),
                                                     )
                                                 })
                                                 .when(!timestamp.is_empty(), |element| {
@@ -1730,6 +1869,21 @@ impl IcaApp {
                                                 .flex()
                                                 .items_center()
                                                 .h(px(18.))
+                                                .when(!draft.is_empty(), |element| {
+                                                    element.child(
+                                                        div()
+                                                            .mr_1()
+                                                            .px_1()
+                                                            .h(px(16.))
+                                                            .flex()
+                                                            .items_center()
+                                                            .rounded_full()
+                                                            .bg(gpui::rgb(0x006cff))
+                                                            .text_size(px(10.))
+                                                            .text_color(gpui::rgb(0xffffff))
+                                                            .child("草稿"),
+                                                    )
+                                                })
                                                 .child(
                                                     div()
                                                         .flex_1()
@@ -1737,7 +1891,9 @@ impl IcaApp {
                                                         .truncate()
                                                         .text_size(px(12.))
                                                         .text_color(colors.text_muted)
-                                                        .child(if preview.is_empty() {
+                                                        .child(if !draft.is_empty() {
+                                                            draft
+                                                        } else if preview.is_empty() {
                                                             "暂无消息".to_string()
                                                         } else {
                                                             preview
@@ -1754,7 +1910,11 @@ impl IcaApp {
                                                             .items_center()
                                                             .justify_center()
                                                             .rounded_full()
-                                                            .bg(badge_color)
+                                                            .bg(if matches!(at, At::None | At::Bool(false)) {
+                                                                gpui::rgb(0x808080).into()
+                                                            } else {
+                                                                badge_color
+                                                            })
                                                             .text_size(px(11.))
                                                             .text_color(gpui::rgb(0xffffff))
                                                             .child(unread.min(99).to_string()),
@@ -2818,7 +2978,7 @@ impl IcaApp {
 
     fn adjust_panel_width(&mut self, room_panel: bool, delta: f32) {
         if room_panel {
-            self.room_panel_width = (self.room_panel_width + delta).clamp(140.0, 720.0);
+            self.room_panel_width = (self.room_panel_width + delta).clamp(300.0, 700.0);
         } else {
             self.sticker_panel_width = (self.sticker_panel_width + delta).clamp(300.0, 500.0);
         }
@@ -4664,14 +4824,16 @@ impl Render for IcaApp {
             .bg(colors.background)
             .text_color(colors.text)
             .font_family("Noto Sans CJK SC")
+            .child(self.render_top_bar(cx))
             .child(
                 div()
                     .flex()
                     .flex_1()
                     .min_h_0()
-                    .child(self.render_rail(cx))
                     .when(self.page == Page::Chat, |element| {
-                        element.child(self.render_room_list(cx))
+                        element
+                            .child(self.render_group_rail(cx))
+                            .child(self.render_room_list(cx))
                     })
                     .child(if self.page == Page::Chat {
                         self.render_chat(cx).into_any_element()
