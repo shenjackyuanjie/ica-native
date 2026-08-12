@@ -2055,6 +2055,10 @@ impl IcaApp {
             .and_then(|bridge| bridge.group_members.get(&room_id))
             .cloned()
             .unwrap_or_default();
+        let message_max_offset = self.message_scroll.max_offset().y;
+        let message_distance_from_bottom = self.message_scroll.offset().y + message_max_offset;
+        let show_jump_to_latest =
+            message_max_offset > px(1.) && message_distance_from_bottom.abs() > px(60.);
         div()
             .flex()
             .flex_col()
@@ -2195,15 +2199,22 @@ impl IcaApp {
             )
             .child(
                 div()
-                    .id("message-scroll")
+                    .relative()
                     .flex()
-                    .flex_col()
                     .flex_1()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.message_scroll)
-                    .p_4()
-                    .gap_3()
-                    .when(!search_keyword.is_empty(), |element| {
+                    .min_h_0()
+                    .child(
+                        div()
+                            .id("message-scroll")
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.message_scroll)
+                            .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
+                            .p_4()
+                            .gap_3()
+                            .when(!search_keyword.is_empty(), |element| {
                         let keyword = search_keyword.clone();
                         element.child(
                             div()
@@ -2228,8 +2239,8 @@ impl IcaApp {
                                     )
                                 }),
                         )
-                    })
-                    .children(messages.into_iter().map(|(id, sender, sender_id, role, title, content, time, deleted, hidden, files, reply, quoted_reply, edit_content, raw, forward, forward_preview, system, show_date, date, is_self)| {
+                            })
+                            .children(messages.into_iter().map(|(id, sender, sender_id, role, title, content, time, deleted, hidden, files, reply, quoted_reply, edit_content, raw, forward, forward_preview, system, show_date, date, is_self)| {
                         let files = if hidden { Vec::new() } else { files };
                         let file_count = files.len();
                         let display_content = if deleted {
@@ -2579,7 +2590,28 @@ impl IcaApp {
                             })
                             .child(row)
                             .into_any_element()
-                    })),
+                            })),
+                    )
+                    .when(show_jump_to_latest, |element| {
+                        element.child(
+                            self.render_button("jump-to-latest", "↓", false, cx)
+                                .absolute()
+                                .right(px(12.))
+                                .bottom(px(12.))
+                                .size(px(36.))
+                                .px_0()
+                                .rounded_full()
+                                .border_1()
+                                .border_color(colors.border)
+                                .bg(colors.elevated_surface_background)
+                                .text_size(px(18.))
+                                .tooltip(Tooltip::text("跳转到最新消息"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.message_scroll.scroll_to_bottom();
+                                    cx.notify();
+                                })),
+                        )
+                    }),
             )
             .child(
                 div()
