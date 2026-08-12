@@ -1,7 +1,43 @@
 use std::{borrow::Cow, sync::Arc};
 
-use gpui::{App, AppContext, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui::{App, AppContext, Bounds, Font, Pixels, WindowBounds, WindowOptions, px, size};
 use gpui_platform::application;
+
+struct IcaThemeSettingsProvider {
+    ui_font: Font,
+    buffer_font: Font,
+}
+
+impl IcaThemeSettingsProvider {
+    fn new() -> Self {
+        Self {
+            ui_font: gpui::font("Noto Sans CJK SC"),
+            buffer_font: gpui::font("Noto Sans CJK SC"),
+        }
+    }
+}
+
+impl theme::ThemeSettingsProvider for IcaThemeSettingsProvider {
+    fn ui_font<'a>(&'a self, _: &'a App) -> &'a Font {
+        &self.ui_font
+    }
+
+    fn buffer_font<'a>(&'a self, _: &'a App) -> &'a Font {
+        &self.buffer_font
+    }
+
+    fn ui_font_size(&self, _: &App) -> Pixels {
+        px(14.)
+    }
+
+    fn buffer_font_size(&self, _: &App) -> Pixels {
+        px(14.)
+    }
+
+    fn ui_density(&self, _: &App) -> theme::UiDensity {
+        theme::UiDensity::Default
+    }
+}
 
 pub mod app;
 pub mod assets;
@@ -66,6 +102,7 @@ fn main() -> anyhow::Result<()> {
                 .expect("创建 GPUI HTTP 客户端失败"),
             ));
             theme::init(theme::LoadThemes::All(Box::new(zed_assets::Assets)), cx);
+            theme::set_theme_settings_provider(Box::new(IcaThemeSettingsProvider::new()), cx);
             if let Err(error) = cx.text_system().add_fonts(vec![
                 Cow::Borrowed(assets::fonts::FONT_思源黑体),
                 Cow::Borrowed(assets::fonts::FONT_UNIFONT),
