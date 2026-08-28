@@ -658,6 +658,15 @@ impl IcaApp {
                             && ui.input_mut(|input| {
                                 input.consume_key(egui::Modifiers::CTRL, egui::Key::M)
                             });
+                        // Consume the plain Enter event before `TextEdit` sees it. Otherwise the
+                        // multiline editor inserts a newline at the cursor first, which can be in
+                        // the middle of the draft, and then the same key press sends the message.
+                        let enter_pressed = consume_composer_send_key(
+                            ui,
+                            composer_id,
+                            self.ime_composing,
+                            self.ime_event_this_frame,
+                        );
                         let response = ui.add_sized(
                             [input_width, control_height],
                             egui::TextEdit::multiline(&mut composer_draft)
@@ -668,21 +677,6 @@ impl IcaApp {
                         mention_anchor_rect = Some(response.rect);
                         if request_composer_focus {
                             response.request_focus();
-                        }
-                        let enter_no_mod = response.has_focus()
-                            && !self.ime_composing
-                            && !self.ime_event_this_frame
-                            && ui.input(|input| {
-                                input.key_pressed(egui::Key::Enter)
-                                    && !input.modifiers.shift
-                                    && !input.modifiers.ctrl
-                            });
-                        if enter_no_mod {
-                            while composer_draft.ends_with('\n')
-                                || composer_draft.ends_with('\r')
-                            {
-                                composer_draft.pop();
-                            }
                         }
                         if response.changed() && room_id < 0 && !self.ime_composing {
                             if saved_cursor_preceded_by(
@@ -718,7 +712,6 @@ impl IcaApp {
                             mention_opened_this_frame = true;
                             request_group_members = true;
                         }
-                        let enter_pressed = enter_no_mod;
                         if room_id < 0
                             && ui
                                 .add_sized(
@@ -964,6 +957,22 @@ impl IcaApp {
     }
 }
 
+fn consume_composer_send_key(
+    ui: &egui::Ui,
+    composer_id: egui::Id,
+    ime_composing: bool,
+    ime_event_this_frame: bool,
+) -> bool {
+    !ime_composing
+        && !ime_event_this_frame
+        && ui.memory(|memory| memory.has_focus(composer_id))
+        && ui.input_mut(|input| {
+            !input.modifiers.shift
+                && !input.modifiers.ctrl
+                && input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+        })
+}
+
 fn safe_mention_text(text: &str) -> String {
     const MAX_CHARS: usize = 48;
 
@@ -1013,7 +1022,7 @@ fn safe_mention_text(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::safe_mention_text;
+    use super::{consume_composer_send_key, safe_mention_text};
 
     #[test]
     fn mention_text_removes_layout_controls() {
@@ -1034,5 +1043,34 @@ mod tests {
     #[test]
     fn mention_text_uses_fallback_for_blank_names() {
         assert_eq!(safe_mention_text("\n\t\u{202E}"), "未命名成员");
+    }
+
+    #[test]
+    fn plain_enter_is_consumed_before_multiline_editor_can_insert_a_newline() {
+        let ctx = egui::Context::default();
+        let composer_id = egui::Id::new("composer_enter_regression");
+        let mut draft = "aaaaaaabaaaaaa".to_string();
+
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let response = ui.add(egui::TextEdit::multiline(&mut draft).id(composer_id));
+            response.request_focus();
+        });
+
+        let mut input = egui::RawInput::default();
+        input.events.push(egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        let mut enter_pressed = false;
+        let _ = ctx.run_ui(input, |ui| {
+            enter_pressed = consume_composer_send_key(ui, composer_id, false, false);
+            ui.add(egui::TextEdit::multiline(&mut draft).id(composer_id));
+        });
+
+        assert!(enter_pressed);
+        assert_eq!(draft, "aaaaaaabaaaaaa");
     }
 }
