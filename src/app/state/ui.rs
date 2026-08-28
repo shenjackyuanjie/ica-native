@@ -21,6 +21,14 @@ pub enum GroupMemberFilter {
     Muted,
 }
 
+/// 窄窗口下主区域展示的页面。宽屏仍同时展示会话列表和聊天内容。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompactChatPanel {
+    #[default]
+    Conversations,
+    Chat,
+}
+
 #[derive(Debug, Clone)]
 pub struct GroupBanConfirmation {
     pub room_id: i64,
@@ -62,6 +70,7 @@ pub struct AppState {
     pub chat_group_editor: ChatGroupEditor,
     pub config_editor: ConfigEditor,
     pub chat_list_scroll_target: ChatListScrollTarget,
+    pub compact_chat_panel: CompactChatPanel,
     pub clear_search_on_room_select: bool,
     pub auto_fetch_history_on_room_select: bool,
     pub scroll_to_bottom_after_send: bool,
@@ -114,6 +123,7 @@ impl AppState {
             chat_group_editor: ChatGroupEditor::default(),
             config_editor: ConfigEditor::new(store),
             chat_list_scroll_target: ChatListScrollTarget::Top,
+            compact_chat_panel: CompactChatPanel::default(),
             clear_search_on_room_select: config.ui_setting.clear_search_on_room_select,
             auto_fetch_history_on_room_select: config.ui_setting.auto_fetch_history_on_room_select,
             scroll_to_bottom_after_send: config.ui_setting.scroll_to_bottom_after_send,

@@ -6,28 +6,34 @@ impl IcaApp {
         let disable_groups = self.custom_chat.disable_chat_group;
         let disable_dot = self.custom_chat.disable_chat_group_dot;
         let active_bridge_idx = self.active_bridge_idx;
-        let (mut chat_groups, mut selected_chat_group, rooms, selected_room_id) = active_bridge_idx
-            .and_then(|idx| self.bridge_states.get(idx))
-            .map(|state| {
-                (
-                    state.chat_groups.clone(),
-                    state.selected_chat_group.clone(),
-                    state.rooms.clone(),
-                    state.selected_room_id,
-                )
-            })
-            .unwrap_or_else(|| {
-                (
-                    crate::config::ChatGroups::default(),
-                    SelectedChatGroup::All,
-                    Vec::new(),
-                    None,
-                )
-            });
+        let (mut chat_groups, mut selected_chat_group, rooms, selected_room_id, account) =
+            active_bridge_idx
+                .and_then(|idx| self.bridge_states.get(idx))
+                .map(|state| {
+                    (
+                        state.chat_groups.clone(),
+                        state.selected_chat_group.clone(),
+                        state.rooms.clone(),
+                        state.selected_room_id,
+                        (state.online_data.qqid, state.online_data.nick.clone()),
+                    )
+                })
+                .unwrap_or_else(|| {
+                    (
+                        crate::config::ChatGroups::default(),
+                        SelectedChatGroup::All,
+                        Vec::new(),
+                        None,
+                        (0, String::new()),
+                    )
+                });
         let private_has_unread = rooms
             .iter()
             .any(|room| room.room_id > 0 && room.unread_count > 0);
-        let group_has_unread = (0..chat_groups.groups.len())
+        let group_has_unread = rooms
+            .iter()
+            .any(|room| room.room_id < 0 && room.unread_count > 0);
+        let custom_group_has_unread = (0..chat_groups.groups.len())
             .map(|idx| chat_groups.has_unread_in_group(idx, &rooms))
             .collect::<Vec<_>>();
         let mut updated_group = None;
@@ -42,6 +48,23 @@ impl IcaApp {
 
                 ui.spacing_mut().item_spacing.x = 0.5;
                 ui.vertical_centered(|ui| {
+                    if account.0 > 0 {
+                        let avatar = Image::from_uri(format!(
+                            "https://q1.qlogo.cn/g?b=qq&nk={}&s=100",
+                            account.0
+                        ))
+                        .fit_to_exact_size([32.0, 32.0].into())
+                        .corner_radius(16.0);
+                        if ui
+                            .add(Button::image(avatar))
+                            .on_hover_text(format!("{} ({})", account.1, account.0))
+                            .clicked()
+                        {
+                            self.open_page.online_status = true;
+                        }
+                        ui.add_space(6.0);
+                    }
+
                     // 所有聊天
                     {
                         let btn = Button::image(img.clone());
@@ -52,6 +75,30 @@ impl IcaApp {
                         let mut text = RichText::new("所有聊天");
                         if selected_chat_group == SelectedChatGroup::All {
                             text = text.strong();
+                        }
+                        ui.add(Label::new(text).selectable(false));
+                    }
+
+                    // 群聊
+                    {
+                        let btn = Button::image(img.clone());
+                        let resp = ui.add(btn);
+                        if resp.clicked() {
+                            selected_chat_group = SelectedChatGroup::Group;
+                        }
+                        let mut text = RichText::new("群聊");
+                        if selected_chat_group == SelectedChatGroup::Group {
+                            text = text.strong();
+                        }
+                        if !disable_dot
+                            && selected_chat_group != SelectedChatGroup::Group
+                            && group_has_unread
+                        {
+                            let dot_radius = 3.0;
+                            let dot_pos =
+                                resp.rect.right_top() + egui::vec2(-dot_radius, dot_radius);
+                            ui.painter()
+                                .circle_filled(dot_pos, dot_radius, egui::Color32::RED);
                         }
                         ui.add(Label::new(text).selectable(false));
                     }
@@ -98,7 +145,7 @@ impl IcaApp {
                         if !disable_groups
                             && !disable_dot
                             && !is_selected
-                            && group_has_unread.get(idx).copied().unwrap_or(false)
+                            && custom_group_has_unread.get(idx).copied().unwrap_or(false)
                         {
                             let dot_radius = 3.0;
                             let dot_pos =

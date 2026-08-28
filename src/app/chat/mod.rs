@@ -68,6 +68,12 @@ pub(crate) fn is_image_file_type(file_type: &str) -> bool {
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"))
 }
 
+pub(crate) fn is_video_file_type(file_type: &str) -> bool {
+    file_type
+        .get(..6)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("video/"))
+}
+
 pub(super) fn image_url_looks_like_gif(url: &str) -> bool {
     let url = url.to_ascii_lowercase();
     url.split(['?', '#'])

@@ -64,6 +64,7 @@ fn clipboard_image_paste_requested(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectedChatGroup {
     All,
+    Group,
     Private,
     Custom(usize),
 }
@@ -146,6 +147,14 @@ impl IcaApp {
             style.visuals.widgets.active.expansion = 0.0;
             style.visuals.widgets.open.expansion = 0.0;
         });
+    }
+
+    /// 与 Icalingua++ 一致：窄窗口只保留会话页或聊天页其中之一。
+    ///
+    /// 保留现有的 `disable_adaptive_single_panel_mode` 配置语义：勾选时始终使用
+    /// 三栏布局，取消勾选后才会在窄窗口自动切换。
+    pub fn uses_compact_chat_layout(&self, ctx: &egui::Context) -> bool {
+        !self.custom_chat.disable_adaptive_single_panel_mode && ctx.content_rect().width() < 720.0
     }
 
     /// 生成测试用的聊天室数据
@@ -520,12 +529,32 @@ impl eframe::App for IcaApp {
             }
         }
 
-        // 功能视图由 `chat` 和顶层 `shell` 实现。
+        // 功能视图由 `chat` 和顶层 `shell` 实现。窄窗口只显示一个主面板，避免
+        // 左侧导航、会话列表、成员面板和聊天正文互相挤压。
+        let compact_layout = self.uses_compact_chat_layout(ui.ctx());
+        if compact_layout
+            && self.compact_chat_panel == CompactChatPanel::Chat
+            && self
+                .active_bridge_state()
+                .and_then(|state| state.selected_room_id)
+                .is_none()
+        {
+            self.compact_chat_panel = CompactChatPanel::Conversations;
+        }
         self.render_top_panel(ui);
-        self.render_left_groups_panel(ui);
-        self.render_chat_list_panel(ui);
-        self.render_group_members_panel(ui);
-        self.render_central_panel(ui);
+        let show_conversations =
+            !compact_layout || self.compact_chat_panel == CompactChatPanel::Conversations;
+        let show_chat = !compact_layout || self.compact_chat_panel == CompactChatPanel::Chat;
+        if show_conversations {
+            if !self.custom_chat.disable_chat_group {
+                self.render_left_groups_panel(ui);
+            }
+            self.render_chat_list_panel(ui);
+        }
+        if show_chat {
+            self.render_group_members_panel(ui);
+            self.render_central_panel(ui);
+        }
         self.render_group_ban_confirmation(ui.ctx());
         self.render_windows(ui);
     }

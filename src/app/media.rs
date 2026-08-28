@@ -75,17 +75,21 @@ impl IcaApp {
                 self.media_notice = Some("图片 URL 已复制".to_string());
             }
             ImageAction::Open(source) => {
-                let gallery = source
-                    .room_id
-                    .and_then(|room_id| {
-                        self.bridge_states
-                            .get(bridge_idx)
-                            .and_then(|session| session.conversation(room_id))
-                            .map(|conversation| {
-                                image_sources_for_messages(room_id, &conversation.messages)
-                            })
-                    })
-                    .unwrap_or_else(|| vec![source.clone()]);
+                let gallery = if self.custom_chat.disable_img_swap_in_chat {
+                    vec![source.clone()]
+                } else {
+                    source
+                        .room_id
+                        .and_then(|room_id| {
+                            self.bridge_states
+                                .get(bridge_idx)
+                                .and_then(|session| session.conversation(room_id))
+                                .map(|conversation| {
+                                    image_sources_for_messages(room_id, &conversation.messages)
+                                })
+                        })
+                        .unwrap_or_else(|| vec![source.clone()])
+                };
                 self.open_image_viewer_with_sources(source, gallery);
             }
             ImageAction::CopyImage(source) => {

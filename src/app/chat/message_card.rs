@@ -9,7 +9,8 @@ use linkify::{LinkFinder, LinkKind};
 
 use super::{
     format_message_content, forward::forward_reference, image_url_looks_like_gif,
-    is_image_file_type, should_probe_gif_after_static_error, try_load_gif_texture,
+    is_image_file_type, is_video_file_type, should_probe_gif_after_static_error,
+    try_load_gif_texture,
 };
 
 const AT_OPEN_TAG: &str = "<IcalinguaAt qq=";
@@ -700,6 +701,8 @@ impl IcaApp {
                                                     if let Some(file) = reply_image {
                                                         if file.url.is_empty() {
                                                             ui.weak("[图片]");
+                                                        } else if self.custom_chat.hide_chat_img {
+                                                            ui.weak("[图片已隐藏]");
                                                         } else {
                                                             let source = ImageSource::message(
                                                                 file.url.clone(),
@@ -763,7 +766,13 @@ impl IcaApp {
                                                     let is_image =
                                                         is_image_file_type(&file.file_type);
 
-                                                    if is_image && !file.url.is_empty() {
+                                                    if is_image && self.custom_chat.hide_chat_img {
+                                                        ui.weak("[图片已隐藏]");
+                                                    } else if is_video_file_type(&file.file_type)
+                                                        && self.custom_chat.hide_chat_video
+                                                    {
+                                                        ui.weak("[视频已隐藏]");
+                                                    } else if is_image && !file.url.is_empty() {
                                                         let image_max_width =
                                                             ui.available_width().min(240.0);
                                                         let source = ImageSource::message(

@@ -56,10 +56,11 @@ mod tests {
         let composer_id = egui::Id::new("composer_enter_regression");
         let mut draft = "aaaaaaabaaaaaa".to_string();
 
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let response = ui.add(egui::TextEdit::multiline(&mut draft).id(composer_id));
             response.request_focus();
         });
+        output.textures_delta.clear();
 
         let mut input = egui::RawInput::default();
         input.events.push(egui::Event::Key {
@@ -70,10 +71,11 @@ mod tests {
             modifiers: egui::Modifiers::NONE,
         });
         let mut enter_pressed = false;
-        let _ = ctx.run_ui(input, |ui| {
+        let mut output = ctx.run_ui(input, |ui| {
             enter_pressed = consume_composer_send_key(ui, composer_id, false, false);
             ui.add(egui::TextEdit::multiline(&mut draft).id(composer_id));
         });
+        output.textures_delta.clear();
 
         assert!(enter_pressed);
         assert_eq!(draft, "aaaaaaabaaaaaa");

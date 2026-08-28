@@ -1,4 +1,6 @@
-use crate::app::{IcaApp, MessageAction, MessageLayoutCacheKey, MessageRowLayout};
+use crate::app::{
+    CompactChatPanel, IcaApp, MessageAction, MessageLayoutCacheKey, MessageRowLayout,
+};
 
 use super::message_card::MessageRenderOptions;
 use super::{estimate_composer_rows, estimate_message_row_height, message_visible_range};
@@ -71,6 +73,7 @@ fn show_constrained_composer<R>(
 
 impl IcaApp {
     pub fn render_central_panel(&mut self, ui: &mut egui::Ui) {
+        let compact_layout = self.uses_compact_chat_layout(ui.ctx());
         egui::CentralPanel::default().show(ui, |ui| {
             let Some(active_bridge_idx) = self.active_bridge_idx else {
                 ui.heading("未启用 bridge");
@@ -98,11 +101,15 @@ impl IcaApp {
                     .unwrap_or_else(|| room_id.to_string());
 
                 ui.horizontal_wrapped(|ui| {
+                    if compact_layout
+                        && ui
+                            .small_button("← 会话")
+                            .on_hover_text("返回会话列表")
+                            .clicked()
+                    {
+                        self.compact_chat_panel = CompactChatPanel::Conversations;
+                    }
                     ui.heading(room_name);
-                    ui.separator();
-                    ui.label(format!("当前 bridge：{}", bridge_key));
-                    ui.label(format!("连接状态：{}", socket_state));
-                    ui.label(format!("认证: {}", auth_state));
                     if is_shut_up {
                         ui.colored_label(egui::Color32::YELLOW, "禁言中");
                     }
@@ -163,42 +170,48 @@ impl IcaApp {
                     clear_notice = ui.small_button("清除").clicked();
                 });
             }
-            egui::ComboBox::from_id_salt(("bridge_status_history", active_bridge_idx))
-                .selected_text(format!("消息历史 ({})", status_history.len()))
-                .width(ui.available_width().min(560.0))
-                .show_ui(ui, |ui| {
-                    ui.set_min_width((ui.ctx().content_rect().width() - 24.0).clamp(120.0, 360.0));
-                    if status_history.is_empty() {
-                        ui.weak("暂无历史消息");
-                        return;
-                    }
-                    if ui.button("清空历史").clicked() {
-                        clear_status_history = true;
-                        ui.close();
-                        return;
-                    }
-                    ui.separator();
-                    egui::ScrollArea::vertical()
-                        .id_salt(("bridge_status_history_scroll", active_bridge_idx))
-                        .max_height(280.0)
-                        .show(ui, |ui| {
-                            for entry in status_history.iter().rev() {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.monospace(&entry.timestamp);
-                                    let kind = egui::RichText::new(entry.kind.label()).strong();
-                                    if matches!(
-                                        entry.kind,
-                                        crate::app::state::StatusMessageKind::Error
-                                    ) {
-                                        ui.colored_label(egui::Color32::LIGHT_RED, kind);
-                                    } else {
-                                        ui.weak(kind);
-                                    }
-                                    ui.label(&entry.text);
-                                });
-                            }
-                        });
-                });
+            // Bridge 诊断只在未进入会话时展示。聊天时把有限的顶部空间留给
+            // 会话信息和常用操作；完整诊断仍可从“选项 → Socket.IO 状态”查看。
+            if selected_room_id.is_none() {
+                egui::ComboBox::from_id_salt(("bridge_status_history", active_bridge_idx))
+                    .selected_text(format!("消息历史 ({})", status_history.len()))
+                    .width(ui.available_width().min(560.0))
+                    .show_ui(ui, |ui| {
+                        ui.set_min_width(
+                            (ui.ctx().content_rect().width() - 24.0).clamp(120.0, 360.0),
+                        );
+                        if status_history.is_empty() {
+                            ui.weak("暂无历史消息");
+                            return;
+                        }
+                        if ui.button("清空历史").clicked() {
+                            clear_status_history = true;
+                            ui.close();
+                            return;
+                        }
+                        ui.separator();
+                        egui::ScrollArea::vertical()
+                            .id_salt(("bridge_status_history_scroll", active_bridge_idx))
+                            .max_height(280.0)
+                            .show(ui, |ui| {
+                                for entry in status_history.iter().rev() {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.monospace(&entry.timestamp);
+                                        let kind = egui::RichText::new(entry.kind.label()).strong();
+                                        if matches!(
+                                            entry.kind,
+                                            crate::app::state::StatusMessageKind::Error
+                                        ) {
+                                            ui.colored_label(egui::Color32::LIGHT_RED, kind);
+                                        } else {
+                                            ui.weak(kind);
+                                        }
+                                        ui.label(&entry.text);
+                                    });
+                                }
+                            });
+                    });
+            }
             if clear_error {
                 self.bridge_states[active_bridge_idx].clear_error();
             }

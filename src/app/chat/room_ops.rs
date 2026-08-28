@@ -2,7 +2,7 @@ use crate::config::ReEditDraftConflictMode;
 use crate::ica::IcaCommand;
 use crate::ica::types::RoomId;
 
-use crate::app::{IcaApp, SelectedChatGroup, VisibleRoomIndicesCache};
+use crate::app::{CompactChatPanel, IcaApp, SelectedChatGroup, VisibleRoomIndicesCache};
 
 /// 判断切换会话时是否需要请求一份完整的消息快照。
 ///
@@ -176,6 +176,7 @@ impl IcaApp {
                 }
                 match &selected_chat_group {
                     SelectedChatGroup::All => true,
+                    SelectedChatGroup::Group => room.room_id < 0,
                     SelectedChatGroup::Private => room.room_id > 0,
                     SelectedChatGroup::Custom(_) => {
                         selected_group
@@ -248,6 +249,7 @@ impl IcaApp {
     }
 
     pub fn select_active_room(&mut self, room_id: RoomId) {
+        self.compact_chat_panel = CompactChatPanel::Chat;
         self.show_face_picker = false;
         let selected_room_changed = self
             .active_bridge_state()

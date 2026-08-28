@@ -28,7 +28,7 @@ pub use conversation::ConversationState;
 pub use session::{
     BridgeSession, ConnectionState, RoomDirectory, StatusMessage, StatusMessageKind,
 };
-pub use ui::{AppState, GroupBanConfirmation, GroupMemberFilter};
+pub use ui::{AppState, CompactChatPanel, GroupBanConfirmation, GroupMemberFilter};
 
 fn deserialize_string_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
 where

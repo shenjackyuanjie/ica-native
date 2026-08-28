@@ -28,6 +28,7 @@ impl IcaApp {
 
         // 图片查看器（独立系统窗口，带工具栏和缩放）
         if let Some(viewer_state) = self.image_viewer.clone() {
+            let touch_gestures_enabled = !self.custom_chat.disable_image_viewer_touch_gestures;
             let viewport_id = egui::ViewportId::from_hash_of("image_preview");
             let viewport_builder = egui::ViewportBuilder::default()
                 .with_title("图片预览")
@@ -228,7 +229,12 @@ impl IcaApp {
                                                 }
                                                 _ => acc,
                                             });
-                                        (wheel_delta_y, i.pointer.hover_pos(), i.zoom_delta())
+                                        let pinch_zoom_delta = if touch_gestures_enabled {
+                                            i.zoom_delta()
+                                        } else {
+                                            1.0
+                                        };
+                                        (wheel_delta_y, i.pointer.hover_pos(), pinch_zoom_delta)
                                     });
 
                                 let zoom_factor = if wheel_delta_y != 0.0 {
