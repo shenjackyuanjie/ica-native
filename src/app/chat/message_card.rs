@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use crate::app::media::{ImageAction, ImageSource};
 use crate::app::{IcaApp, MessageAction};
 use crate::ica::types::{RoomId, files::MessageFile, message::ReplyMessage};
+use chrono::Datelike;
 
 use egui::{Hyperlink, Image, Label};
 use linkify::{LinkFinder, LinkKind};
@@ -13,8 +14,10 @@ use super::{
     try_load_gif_texture,
 };
 
-const AT_OPEN_TAG: &str = "<IcalinguaAt qq=";
-const AT_CLOSE_TAG: &str = "</IcalinguaAt>";
+const LEGACY_AT_OPEN_TAG: &str = "<IcalinguaAt qq=";
+const LEGACY_AT_CLOSE_TAG: &str = "</IcalinguaAt>";
+const AT_OPEN_TAG: &str = "<IcaAt qq=";
+const AT_CLOSE_TAG: &str = "</IcaAt>";
 const FACE_OPEN_TAG: &str = "[Face: ";
 const FORWARD_OPEN_TAG: &str = "[Forward: ";
 const NESTED_FORWARD_OPEN_TAG: &str = "[NestedForward: ";
@@ -43,6 +46,19 @@ fn should_show_group_identity(room_id: RoomId, mirai: &serde_json::Value) -> boo
             .pointer("/eqq/type")
             .and_then(serde_json::Value::as_str)
             != Some("tg")
+}
+
+/// 与 ICA 一致地按消息距离当前日期的远近显示时间。
+fn display_timestamp(message: &crate::ica::types::message::Message) -> String {
+    let local_time = message.time.with_timezone(&chrono::Local);
+    let now = chrono::Local::now();
+    if local_time.date_naive() == now.date_naive() {
+        return message.time_text.clone();
+    }
+    if local_time.year() == now.year() {
+        return local_time.format("%m/%d %H:%M:%S").to_string();
+    }
+    local_time.format("%Y/%m/%d %H:%M:%S").to_string()
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -112,6 +128,7 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
     while !remaining.is_empty() {
         let Some((start, marker)) = [
             (remaining.find(FACE_OPEN_TAG), ContentMarker::Face),
+            (remaining.find(LEGACY_AT_OPEN_TAG), ContentMarker::Mention),
             (remaining.find(AT_OPEN_TAG), ContentMarker::Mention),
             (remaining.find(FORWARD_OPEN_TAG), ContentMarker::Forward),
             (
@@ -132,17 +149,22 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
         }
 
         if marker == ContentMarker::Mention {
+            let (open_tag, close_tag, xml_escaped) = if remaining.starts_with(LEGACY_AT_OPEN_TAG) {
+                (LEGACY_AT_OPEN_TAG, LEGACY_AT_CLOSE_TAG, false)
+            } else {
+                (AT_OPEN_TAG, AT_CLOSE_TAG, true)
+            };
             let Some(tag_end) = remaining.find('>') else {
                 push_text_segments(&mut segments, remaining);
                 break;
             };
             let body = &remaining[tag_end + 1..];
-            let Some(close) = body.find(AT_CLOSE_TAG) else {
+            let Some(close) = body.find(close_tag) else {
                 push_text_segments(&mut segments, remaining);
                 break;
             };
-            let full_len = tag_end + 1 + close + AT_CLOSE_TAG.len();
-            let user_id = remaining[AT_OPEN_TAG.len()..tag_end]
+            let full_len = tag_end + 1 + close + close_tag.len();
+            let user_id = remaining[open_tag.len()..tag_end]
                 .parse::<i64>()
                 .ok()
                 .filter(|user_id| *user_id > 0);
@@ -150,7 +172,11 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
             if let Some(user_id) = user_id
                 && !encoded_text.is_empty()
             {
-                let text = urlencoding::decode(encoded_text).unwrap_or(Cow::Borrowed(encoded_text));
+                let text = if xml_escaped {
+                    super::decode_xml_entities(encoded_text)
+                } else {
+                    urlencoding::decode(encoded_text).unwrap_or(Cow::Borrowed(encoded_text))
+                };
                 segments.push(ContentSegment::Mention { user_id, text });
             } else {
                 push_text_segments(&mut segments, &remaining[..full_len]);
@@ -617,7 +643,7 @@ impl IcaApp {
                                                 }
                                             }
                                         }
-                                        ui.weak(&message.time_text);
+                                        ui.weak(display_timestamp(message));
                                         if message.deleted {
                                             ui.weak("已撤回");
                                         }

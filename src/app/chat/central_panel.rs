@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::app::{
     CompactChatPanel, IcaApp, MessageAction, MessageLayoutCacheKey, MessageRowLayout,
 };
@@ -272,6 +274,11 @@ impl IcaApp {
             } else {
                 0
             };
+            // 多选时每个可见消息都会查询一次；预建集合避免长历史记录中反复线性扫描。
+            let forward_selected_id_set = forward_selected_ids
+                .iter()
+                .map(String::as_str)
+                .collect::<HashSet<_>>();
             let has_reply_banner =
                 conversation.is_some_and(|conversation| conversation.reply_to.is_some());
             let pending_images = conversation
@@ -509,9 +516,7 @@ impl IcaApp {
                                     &message.date_text,
                                 );
                                 let forward_selected = forward_mode_active
-                                    && forward_selected_ids
-                                        .iter()
-                                        .any(|selected_id| selected_id == &message.msg_id);
+                                    && forward_selected_id_set.contains(message.msg_id.as_str());
                                 let is_scroll_target =
                                     scroll_to_target.as_deref() == Some(&message.msg_id);
                                 let before_y = ui.cursor().min.y;

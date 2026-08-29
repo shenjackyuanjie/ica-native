@@ -6,6 +6,7 @@ mod composer_drop;
 mod composer_helpers;
 mod composer_mentions;
 mod forward;
+mod group_files;
 mod group_members;
 mod image_viewer;
 mod message_card;
@@ -25,16 +26,25 @@ fn char_index_to_usize(index: egui::text::CharIndex) -> usize {
 }
 
 pub(super) fn format_message_content(content: &str) -> Cow<'_, str> {
-    let open_tag = "<IcalinguaAt qq=";
-    let close_tag = "</IcalinguaAt>";
-    if !content.contains(open_tag) {
+    if !content.contains("<IcalinguaAt qq=") && !content.contains("<IcaAt qq=") {
         return Cow::Borrowed(content);
     }
 
     let mut result = String::with_capacity(content.len());
     let mut remaining = content;
 
-    while let Some(start_idx) = remaining.find(open_tag) {
+    while let Some((start_idx, _open_tag, close_tag, xml_escaped)) = [
+        ("<IcalinguaAt qq=", "</IcalinguaAt>", false),
+        ("<IcaAt qq=", "</IcaAt>", true),
+    ]
+    .into_iter()
+    .filter_map(|(open_tag, close_tag, xml_escaped)| {
+        remaining
+            .find(open_tag)
+            .map(|start_idx| (start_idx, open_tag, close_tag, xml_escaped))
+    })
+    .min_by_key(|(start_idx, ..)| *start_idx)
+    {
         let (before, after_start) = remaining.split_at(start_idx);
         result.push_str(before);
 
@@ -49,9 +59,13 @@ pub(super) fn format_message_content(content: &str) -> Cow<'_, str> {
         };
 
         let encoded_name = &tag_body[..close_idx];
-        match urlencoding::decode(encoded_name) {
-            Ok(decoded) => result.push_str(decoded.as_ref()),
-            Err(_) => result.push_str(encoded_name),
+        if xml_escaped {
+            result.push_str(&decode_xml_entities(encoded_name));
+        } else {
+            match urlencoding::decode(encoded_name) {
+                Ok(decoded) => result.push_str(decoded.as_ref()),
+                Err(_) => result.push_str(encoded_name),
+            }
         }
 
         remaining = &tag_body[close_idx + close_tag.len()..];
@@ -66,6 +80,52 @@ pub(crate) fn is_image_file_type(file_type: &str) -> bool {
         || file_type
             .get(..6)
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"))
+}
+
+/// 解码 ICA 新版 `<IcaAt>` 中使用的 XML 文本实体；只解码一层，避免把用户原文二次解释。
+pub(super) fn decode_xml_entities(value: &str) -> Cow<'_, str> {
+    if !value.contains('&') {
+        return Cow::Borrowed(value);
+    }
+    let mut decoded = String::with_capacity(value.len());
+    let mut remaining = value;
+    while let Some(start) = remaining.find('&') {
+        decoded.push_str(&remaining[..start]);
+        let tail = &remaining[start..];
+        let Some(end) = tail.find(';') else {
+            decoded.push_str(tail);
+            return Cow::Owned(decoded);
+        };
+        let entity = &tail[..=end];
+        let replacement = match entity {
+            "&amp;" => Some('&'),
+            "&lt;" => Some('<'),
+            "&gt;" => Some('>'),
+            "&quot;" => Some('"'),
+            "&apos;" => Some('\''),
+            _ => entity
+                .strip_prefix("&#x")
+                .or_else(|| entity.strip_prefix("&#X"))
+                .and_then(|number| number.strip_suffix(';'))
+                .and_then(|number| u32::from_str_radix(number, 16).ok())
+                .and_then(char::from_u32)
+                .or_else(|| {
+                    entity
+                        .strip_prefix("&#")
+                        .and_then(|number| number.strip_suffix(';'))
+                        .and_then(|number| number.parse::<u32>().ok())
+                        .and_then(char::from_u32)
+                }),
+        };
+        if let Some(replacement) = replacement {
+            decoded.push(replacement);
+        } else {
+            decoded.push_str(entity);
+        }
+        remaining = &tail[end + 1..];
+    }
+    decoded.push_str(remaining);
+    Cow::Owned(decoded)
 }
 
 pub(crate) fn is_video_file_type(file_type: &str) -> bool {
@@ -416,6 +476,13 @@ mod tests {
         let content = "你好 <IcalinguaAt qq=10001>Alice%20A</IcalinguaAt>";
 
         assert_eq!(format_message_content(content), "你好 Alice A");
+    }
+
+    #[test]
+    fn new_at_markup_is_decoded_without_double_decoding() {
+        let content = "你好 <IcaAt qq=10001>A&amp;B &lt;群&gt; &amp;amp;</IcaAt>";
+
+        assert_eq!(format_message_content(content), "你好 A&B <群> &amp;");
     }
 
     #[test]
