@@ -302,6 +302,56 @@ pub(super) async fn fetch_group_members(
     }
 }
 
+pub(super) async fn fetch_messages_by_sender(
+    client: &Client,
+    event_tx: &Option<UnboundedSender<BridgeEvent>>,
+    bridge_key: &str,
+    request_id: u64,
+    room_id: i64,
+    sender_id: i64,
+    offset: usize,
+) {
+    let tx = event_tx.clone();
+    let bridge_id = bridge_key.to_string();
+    let result = client
+        .emit_with_ack(
+            "fetchMessagesBySender",
+            vec![json!(room_id), json!(sender_id), json!(offset)],
+            Duration::from_secs(20),
+            move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
+                let tx = tx.clone();
+                let bridge_id = bridge_id.clone();
+                Box::pin(async move {
+                    emit_ui_event(
+                        &tx,
+                        &bridge_id,
+                        "memberHistoryResponse",
+                        json!({
+                            "requestId": request_id,
+                            "roomId": room_id,
+                            "senderId": sender_id,
+                            "offset": offset,
+                            "messages": normalize_ack_list(ack_payload_values(&payload)),
+                        }),
+                    );
+                })
+            },
+        )
+        .await;
+    if let Err(error) = result {
+        emit_ui_event(
+            event_tx,
+            bridge_key,
+            "commandFailed",
+            json!({
+                "kind": "fetchMessagesBySender",
+                "roomId": room_id,
+                "message": error.to_string(),
+            }),
+        );
+    }
+}
+
 pub(super) async fn get_system_messages(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,

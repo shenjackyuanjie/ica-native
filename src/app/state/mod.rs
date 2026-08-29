@@ -28,7 +28,9 @@ pub use conversation::ConversationState;
 pub use session::{
     BridgeSession, ConnectionState, RoomDirectory, StatusMessage, StatusMessageKind,
 };
-pub use ui::{AppState, CompactChatPanel, GroupBanConfirmation, GroupMemberFilter};
+pub use ui::{
+    AppState, CompactChatPanel, GroupBanConfirmation, GroupFilePanelState, GroupMemberFilter,
+};
 
 fn deserialize_string_or_default<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
@@ -647,6 +649,18 @@ pub struct MessageRowLayout {
     pub height: f32,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct MemberHistoryState {
+    pub open: bool,
+    pub room_id: RoomId,
+    pub sender_id: i64,
+    pub sender_name: String,
+    pub messages: Vec<Message>,
+    pub loading: bool,
+    pub exhausted: bool,
+    pub request_id: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct VisibleRoomIndicesCache {
     pub revision: u64,
@@ -677,6 +691,7 @@ pub struct BridgeState {
     pub contacts: ContactDirectory,
     /// 当前 bridge 的聊天记录搜索窗口状态。
     pub message_search: MessageSearchState,
+    pub member_history: MemberHistoryState,
 }
 
 impl Deref for BridgeState {
@@ -713,6 +728,7 @@ impl BridgeState {
             room_search_query: String::new(),
             contacts: ContactDirectory::default(),
             message_search: MessageSearchState::default(),
+            member_history: MemberHistoryState::default(),
         }
     }
 

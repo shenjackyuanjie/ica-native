@@ -138,6 +138,17 @@ pub(super) async fn handle_command(
         IcaCommand::FetchGroupMembers { room_id } => {
             history::fetch_group_members(client, event_tx, bridge_key, room_id).await
         }
+        IcaCommand::FetchMessagesBySender {
+            request_id,
+            room_id,
+            sender_id,
+            offset,
+        } => {
+            history::fetch_messages_by_sender(
+                client, event_tx, bridge_key, request_id, room_id, sender_id, offset,
+            )
+            .await
+        }
         IcaCommand::SetGroupBan {
             room_id,
             target_id,
@@ -472,6 +483,29 @@ pub(super) async fn handle_command(
                 }
             }
         }
+        IcaCommand::UploadGroupFile {
+            group_id,
+            parent_id,
+            file_name,
+            file_data,
+        } => match file_upload::upload_group_file(
+            client, group_id, &parent_id, &file_name, &file_data,
+        )
+        .await
+        {
+            Ok(()) => emit_ui_event(
+                event_tx,
+                bridge_key,
+                "groupFileUploadCompleted",
+                json!({ "groupId": group_id, "fileName": file_name }),
+            ),
+            Err(error) => emit_ui_event(
+                event_tx,
+                bridge_key,
+                "commandFailed",
+                json!({ "kind": "uploadGroupFile", "roomId": -group_id, "message": error }),
+            ),
+        },
         IcaCommand::PinRoom { room_id, pin } => {
             if let Err(e) = client
                 .emit("pinRoom", vec![json!(room_id), json!(pin)])

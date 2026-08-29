@@ -60,6 +60,15 @@ impl Default for GroupMemberPanelState {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct GroupFilePanelState {
+    pub open: bool,
+    pub directory_fid: String,
+    pub file_fid: String,
+    pub folder_name: String,
+    pub list_start: String,
+}
+
 pub struct AppState {
     pub custom_chat: ChatAppearanceSettings,
     pub online_mode: OnlineMode,
@@ -101,9 +110,12 @@ pub struct AppState {
     pub relation_network: std::sync::Arc<std::sync::Mutex<RelationNetworkState>>,
     pub sticker_store: StickerStore,
     pub sticker_picker_tab: StickerPickerTab,
+    pub sticker_category: String,
+    pub sticker_new_category: String,
     pub media_notice: Option<String>,
     pub media_error: Option<String>,
     pub group_member_panel: GroupMemberPanelState,
+    pub group_file_panel: GroupFilePanelState,
 }
 
 impl AppState {
@@ -156,9 +168,15 @@ impl AppState {
             )),
             sticker_store,
             sticker_picker_tab: StickerPickerTab::default(),
+            sticker_category: "默认".to_string(),
+            sticker_new_category: String::new(),
             media_notice: None,
             media_error: None,
             group_member_panel: GroupMemberPanelState::default(),
+            group_file_panel: GroupFilePanelState {
+                list_start: "0".to_string(),
+                ..Default::default()
+            },
         }
     }
 }

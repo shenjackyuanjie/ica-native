@@ -63,6 +63,8 @@ impl IcaApp {
         let mut force_refresh_group_members = false;
         let mut refresh_stickers = false;
         let mut selected_sticker = None::<StickerEntry>;
+        let mut move_sticker = None::<(StickerEntry, String)>;
+        let mut create_sticker_category = None::<String>;
         let mut open_pending_image = None::<(String, Vec<(String, std::sync::Arc<[u8]>)>)>;
         let mut composer_draft = self.state.bridge_states[active_bridge_idx]
             .state()
@@ -307,9 +309,47 @@ impl IcaApp {
                                             );
                                     }
                                     StickerPickerTab::Favorites => {
-                                        let entries = self.sticker_store.entries();
+                                        let categories = self.sticker_store.categories();
+                                        if !categories.contains(&self.sticker_category) {
+                                            self.sticker_category = categories
+                                                .first()
+                                                .cloned()
+                                                .unwrap_or_else(|| "默认".to_string());
+                                        }
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label("分类");
+                                            egui::ComboBox::from_id_salt((
+                                                "favorite_sticker_category",
+                                                active_bridge_idx,
+                                                room_id,
+                                            ))
+                                            .selected_text(&self.sticker_category)
+                                            .show_ui(ui, |ui| {
+                                                for category in &categories {
+                                                    ui.selectable_value(
+                                                        &mut self.sticker_category,
+                                                        category.clone(),
+                                                        category,
+                                                    );
+                                                }
+                                            });
+                                            ui.add_sized(
+                                                [100.0, 22.0],
+                                                egui::TextEdit::singleline(
+                                                    &mut self.sticker_new_category,
+                                                )
+                                                .hint_text("新建分类"),
+                                            );
+                                            if ui.small_button("新建").clicked() {
+                                                create_sticker_category =
+                                                    Some(self.sticker_new_category.trim().to_string());
+                                            }
+                                        });
+                                        let entries = self
+                                            .sticker_store
+                                            .entries_in_category(&self.sticker_category);
                                         if entries.is_empty() {
-                                            ui.weak("暂无收藏表情，可从消息图片右键添加");
+                                            ui.weak("该分类暂无收藏表情，可从消息图片右键添加或将表情移动到此处");
                                         } else {
                                             let favorite_face_size = face_size * 2.0;
                                             let favorite_button_size = button_size * 2.0;
@@ -358,7 +398,22 @@ impl IcaApp {
                                                                         Button::image(image),
                                                                     );
                                                                     let clicked = button.clicked();
-                                                                    button.on_hover_text(&entry.name);
+                                                                    let entry_for_menu = entry.clone();
+                                                                    button.context_menu(|ui| {
+                                                                        ui.label("移动到分类");
+                                                                        for category in &categories {
+                                                                            if category == &entry_for_menu.category {
+                                                                                continue;
+                                                                            }
+                                                                            if ui.button(category).clicked() {
+                                                                                move_sticker = Some((
+                                                                                    entry_for_menu.clone(),
+                                                                                    category.clone(),
+                                                                                ));
+                                                                                ui.close();
+                                                                            }
+                                                                        }
+                                                                    });
                                                                     if clicked {
                                                                         selected_sticker =
                                                                             Some(entry.clone());
@@ -568,6 +623,27 @@ impl IcaApp {
             self.request_group_members(active_bridge_idx, room_id, false);
         }
 
+        if let Some(category) = create_sticker_category
+            && !category.is_empty()
+        {
+            match self.sticker_store.create_category(&category) {
+                Ok(()) => {
+                    self.sticker_category = category;
+                    self.sticker_new_category.clear();
+                    refresh_stickers = true;
+                }
+                Err(error) => self.media_error = Some(format!("新建表情分类失败: {error}")),
+            }
+        }
+        if let Some((entry, category)) = move_sticker {
+            match self.sticker_store.move_entry(&entry, &category) {
+                Ok(()) => {
+                    self.sticker_category = category;
+                    refresh_stickers = true;
+                }
+                Err(error) => self.media_error = Some(format!("移动收藏表情失败: {error}")),
+            }
+        }
         if refresh_stickers {
             self.spawn_media_task(
                 ui.ctx(),

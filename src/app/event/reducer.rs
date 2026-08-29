@@ -873,6 +873,49 @@ impl IcaApp {
                     }
                 }
             }
+            "memberHistoryResponse" => {
+                let request_id = payload
+                    .get("requestId")
+                    .and_then(JsonValue::as_u64)
+                    .unwrap_or(0);
+                let offset = payload
+                    .get("offset")
+                    .and_then(JsonValue::as_u64)
+                    .unwrap_or(0) as usize;
+                if request_id != state.member_history.request_id {
+                    return;
+                }
+                state.member_history.loading = false;
+                match payload.get("messages").map(Vec::<Message>::deserialize) {
+                    Some(Ok(messages)) => {
+                        const MEMBER_HISTORY_PAGE_SIZE: usize = 20;
+                        state.member_history.exhausted = messages.len() < MEMBER_HISTORY_PAGE_SIZE;
+                        let mut existing_ids = state
+                            .member_history
+                            .messages
+                            .iter()
+                            .map(|message| message.msg_id.clone())
+                            .collect::<std::collections::HashSet<_>>();
+                        let fresh = messages
+                            .into_iter()
+                            .filter(|message| existing_ids.insert(message.msg_id.clone()))
+                            .collect::<Vec<_>>();
+                        if offset == 0 {
+                            state.member_history.messages = fresh;
+                        } else if fresh.is_empty() {
+                            state.member_history.exhausted = true;
+                        } else {
+                            let mut combined = fresh;
+                            combined.append(&mut state.member_history.messages);
+                            state.member_history.messages = combined;
+                        }
+                    }
+                    Some(Err(error)) => {
+                        state.last_error = Some(format!("成员发言记录解析失败: {error}"))
+                    }
+                    None => state.last_error = Some("成员发言记录响应缺少 messages".to_string()),
+                }
+            }
             "groupBanRequested" => {
                 let room_id = payload
                     .get("roomId")

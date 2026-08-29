@@ -130,6 +130,9 @@ impl IcaApp {
                                 self.request_group_members(active_bridge_idx, room_id, true);
                             }
                         }
+                        if ui.button("群文件").clicked() {
+                            self.group_file_panel.open = true;
+                        }
                     }
                     if room_id < 0 && ui.button("群签到").clicked() {
                         self.send_group_sign(room_id);

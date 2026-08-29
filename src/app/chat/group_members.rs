@@ -84,6 +84,7 @@ impl IcaApp {
             .find(|member| member.user_id == self_id)
             .cloned();
         let mut request_refresh = false;
+        let mut open_member_history = None::<(i64, String)>;
 
         egui::Panel::right("group_members_panel")
             .resizable(true)
@@ -171,22 +172,35 @@ impl IcaApp {
                                 .corner_radius(4.0);
                                 ui.add(avatar);
                                 ui.vertical(|ui| {
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.strong(member.display_name());
-                                        if let Some(role) = member.role_label() {
-                                            ui.colored_label(egui::Color32::LIGHT_BLUE, role);
-                                        }
-                                    });
-                                    ui.weak(format!("QQ {}", member.user_id));
+                                    let name = member.display_name();
+                                    let title = member.role_label().map_or_else(
+                                        || name.to_string(),
+                                        |role| format!("{name} · {role}"),
+                                    );
+                                    ui.add_sized(
+                                        [ui.available_width(), 20.0],
+                                        egui::Label::new(egui::RichText::new(title).strong())
+                                            .truncate(),
+                                    )
+                                    .on_hover_text(name);
+                                    ui.add_sized(
+                                        [ui.available_width(), 18.0],
+                                        egui::Label::new(format!("QQ {}", member.user_id))
+                                            .truncate(),
+                                    );
                                     if member.is_muted_at(now) {
-                                        ui.colored_label(
-                                            egui::Color32::YELLOW,
-                                            format!(
-                                                "剩余 {}",
-                                                format_duration(
-                                                    member.remaining_mute_seconds_at(now)
-                                                )
-                                            ),
+                                        ui.add_sized(
+                                            [ui.available_width(), 18.0],
+                                            egui::Label::new(
+                                                egui::RichText::new(format!(
+                                                    "剩余 {}",
+                                                    format_duration(
+                                                        member.remaining_mute_seconds_at(now)
+                                                    )
+                                                ))
+                                                .color(egui::Color32::YELLOW),
+                                            )
+                                            .truncate(),
                                         );
                                     }
                                 });
@@ -197,8 +211,12 @@ impl IcaApp {
                                 member,
                                 self_id,
                             );
-                            let controls = ui.add_enabled_ui(denial.is_none(), |ui| {
-                                ui.horizontal(|ui| {
+                            ui.horizontal(|ui| {
+                                if ui.small_button("查看发言记录").clicked() {
+                                    open_member_history =
+                                        Some((member.user_id, member.display_name().to_string()));
+                                }
+                                let controls = ui.add_enabled_ui(denial.is_none(), |ui| {
                                     if member.is_muted_at(now) && ui.button("解除禁言").clicked()
                                     {
                                         queue_confirmation(
@@ -258,10 +276,10 @@ impl IcaApp {
                                         }
                                     });
                                 });
+                                if let Some(reason) = denial {
+                                    controls.response.on_hover_text(reason);
+                                }
                             });
-                            if let Some(reason) = denial {
-                                controls.response.on_hover_text(reason);
-                            }
                             ui.separator();
                         }
                     });
@@ -269,6 +287,116 @@ impl IcaApp {
 
         if request_refresh {
             self.request_group_members(bridge_idx, room_id, true);
+        }
+        if let Some((sender_id, sender_name)) = open_member_history {
+            self.open_member_history(bridge_idx, room_id, sender_id, sender_name);
+        }
+    }
+
+    fn open_member_history(
+        &mut self,
+        bridge_idx: usize,
+        room_id: i64,
+        sender_id: i64,
+        sender_name: String,
+    ) {
+        let history = &mut self.bridge_states[bridge_idx].member_history;
+        history.request_id = history.request_id.wrapping_add(1).max(1);
+        history.open = true;
+        history.room_id = room_id;
+        history.sender_id = sender_id;
+        history.sender_name = sender_name;
+        history.messages.clear();
+        history.exhausted = false;
+        history.loading = true;
+        let request_id = history.request_id;
+        if let Err(error) = self.bridge_states[bridge_idx].send(IcaCommand::FetchMessagesBySender {
+            request_id,
+            room_id,
+            sender_id,
+            offset: 0,
+        }) {
+            self.bridge_states[bridge_idx].member_history.loading = false;
+            self.bridge_states[bridge_idx].last_error =
+                Some(format!("请求成员发言记录失败: {error}"));
+        }
+    }
+
+    pub(crate) fn render_member_history_window(&mut self, ctx: &egui::Context) {
+        let Some(bridge_idx) = self.active_bridge_idx else {
+            return;
+        };
+        let snapshot = self.bridge_states[bridge_idx].member_history.clone();
+        if !snapshot.open {
+            return;
+        }
+        let mut open = snapshot.open;
+        let mut load_more = false;
+        egui::Window::new("成员发言记录")
+            .open(&mut open)
+            .default_size(egui::vec2(560.0, 560.0))
+            .min_size(egui::vec2(360.0, 300.0))
+            .show(ctx, |ui| {
+                ui.heading(&snapshot.sender_name);
+                ui.weak(format!("QQ {} · 当前群聊", snapshot.sender_id));
+                ui.horizontal_wrapped(|ui| {
+                    if snapshot.loading {
+                        ui.spinner();
+                        ui.weak("正在加载…");
+                    } else if snapshot.exhausted {
+                        ui.weak("已加载全部记录");
+                    } else if ui.button("加载更早记录").clicked() {
+                        load_more = true;
+                    }
+                    ui.weak(format!("已加载 {} 条", snapshot.messages.len()));
+                });
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt(("member_history", bridge_idx, snapshot.request_id))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for message in &snapshot.messages {
+                            egui::Frame::group(ui.style()).show(ui, |ui| {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.strong(&message.sender_name);
+                                    ui.weak(&message.time_text);
+                                });
+                                ui.add(
+                                    egui::Label::new(super::format_message_content(
+                                        &message.content,
+                                    ))
+                                    .wrap(),
+                                );
+                                if !message.files.is_empty() {
+                                    ui.weak(format!("[{} 个附件]", message.files.len()));
+                                }
+                            });
+                            ui.add_space(4.0);
+                        }
+                    });
+            });
+        self.bridge_states[bridge_idx].member_history.open = open;
+        if load_more {
+            let history = &mut self.bridge_states[bridge_idx].member_history;
+            if !history.loading && !history.exhausted {
+                history.loading = true;
+                let request_id = history.request_id;
+                let room_id = history.room_id;
+                let sender_id = history.sender_id;
+                let offset = history.messages.len();
+                if let Err(error) =
+                    self.bridge_states[bridge_idx].send(IcaCommand::FetchMessagesBySender {
+                        request_id,
+                        room_id,
+                        sender_id,
+                        offset,
+                    })
+                {
+                    self.bridge_states[bridge_idx].member_history.loading = false;
+                    self.bridge_states[bridge_idx].last_error =
+                        Some(format!("请求更早成员记录失败: {error}"));
+                }
+            }
         }
     }
 

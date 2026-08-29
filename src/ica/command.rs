@@ -41,6 +41,12 @@ pub enum IcaCommand {
     FetchGroupMembers {
         room_id: RoomId,
     },
+    FetchMessagesBySender {
+        request_id: u64,
+        room_id: RoomId,
+        sender_id: i64,
+        offset: usize,
+    },
     SetGroupBan {
         room_id: RoomId,
         target_id: i64,
@@ -135,6 +141,13 @@ pub enum IcaCommand {
         event: String,
         args: Vec<JsonValue>,
         expect_ack: bool,
+    },
+    /// 上传到群文件目录；数据分块传给 bridge 后由其提交到 QQ 群文件。
+    UploadGroupFile {
+        group_id: i64,
+        parent_id: String,
+        file_name: String,
+        file_data: std::sync::Arc<[u8]>,
     },
     /// 分块上传文件后发送消息
     SendFileMessage {
