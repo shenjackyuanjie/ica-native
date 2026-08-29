@@ -76,7 +76,7 @@ impl IcaApp {
                         if selected_chat_group == SelectedChatGroup::All {
                             text = text.strong();
                         }
-                        ui.add(Label::new(text).selectable(false));
+                        ui.add_sized([64.0, 18.0], Label::new(text).selectable(false).truncate());
                     }
 
                     // 群聊
@@ -100,7 +100,7 @@ impl IcaApp {
                             ui.painter()
                                 .circle_filled(dot_pos, dot_radius, egui::Color32::RED);
                         }
-                        ui.add(Label::new(text).selectable(false));
+                        ui.add_sized([64.0, 18.0], Label::new(text).selectable(false).truncate());
                     }
 
                     // 私聊
@@ -126,7 +126,7 @@ impl IcaApp {
                             ui.painter()
                                 .circle_filled(dot_pos, dot_radius, egui::Color32::RED);
                         }
-                        ui.add(Label::new(text).selectable(false));
+                        ui.add_sized([64.0, 18.0], Label::new(text).selectable(false).truncate());
                     }
 
                     // 用户自定义分组
@@ -179,7 +179,7 @@ impl IcaApp {
                         if is_selected {
                             text = text.strong();
                         }
-                        ui.add(Label::new(text).selectable(false));
+                        ui.add_sized([64.0, 18.0], Label::new(text).selectable(false).truncate());
                     }
 
                     // 管理按钮

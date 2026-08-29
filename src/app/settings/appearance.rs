@@ -112,6 +112,13 @@ impl ChatAppearanceSettings {
                 let _ = ui.checkbox(&mut self.high_contrast_chat, "");
                 ui.end_row();
 
+                ui.vertical(|ui| {
+                    ui.label("关闭聊天分组显示");
+                    ui.weak("隐藏最左侧的分组导航栏");
+                });
+                let _ = ui.checkbox(&mut self.hide_chat_group_sidebar, "");
+                ui.end_row();
+
                 ui.label("选中会话后清空聊天列表搜索框");
                 let _ = ui.checkbox(clear_on_select, "");
                 ui.end_row();

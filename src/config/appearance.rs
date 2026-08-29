@@ -39,6 +39,9 @@ pub struct ChatAppearanceSettings {
     pub hide_group_member_avatar: bool,
     #[serde(default)]
     pub high_contrast_chat: bool,
+    /// 仅隐藏最左侧的聊天分组导航，不改变会话列表和分组数据。
+    #[serde(default)]
+    pub hide_chat_group_sidebar: bool,
     #[serde(default = "default_true")]
     pub auto_read_on_select: bool,
 }
@@ -68,6 +71,7 @@ impl Default for ChatAppearanceSettings {
             enable_topic_button: true,
             hide_group_member_avatar: false,
             high_contrast_chat: false,
+            hide_chat_group_sidebar: false,
             auto_read_on_select: true,
         }
     }

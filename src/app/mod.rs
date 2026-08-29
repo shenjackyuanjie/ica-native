@@ -546,7 +546,7 @@ impl eframe::App for IcaApp {
             !compact_layout || self.compact_chat_panel == CompactChatPanel::Conversations;
         let show_chat = !compact_layout || self.compact_chat_panel == CompactChatPanel::Chat;
         if show_conversations {
-            if !self.custom_chat.disable_chat_group {
+            if !self.custom_chat.disable_chat_group && !self.custom_chat.hide_chat_group_sidebar {
                 self.render_left_groups_panel(ui);
             }
             self.render_chat_list_panel(ui);

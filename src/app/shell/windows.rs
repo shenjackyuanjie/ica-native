@@ -67,6 +67,8 @@ impl IcaApp {
                 });
             });
         self.open_page.custom_chat_extra = custom_chat_extra_open;
+        let chat_group_sidebar_hidden_changed =
+            self.custom_chat.hide_chat_group_sidebar != custom_chat_before.hide_chat_group_sidebar;
         if clear_on_select_changed {
             self.set_clear_search_on_room_select(clear_on_select);
         }
@@ -84,6 +86,13 @@ impl IcaApp {
             self.update_config(|cfg| {
                 cfg.custom_chat = custom_chat;
             });
+        }
+        if chat_group_sidebar_hidden_changed && self.custom_chat.hide_chat_group_sidebar {
+            // 隐藏分组导航后不保留不可见的筛选条件，确保会话列表仍展示全部会话。
+            for bridge_state in &mut self.bridge_states {
+                bridge_state.selected_chat_group = crate::app::SelectedChatGroup::All;
+                bridge_state.invalidate_visible_room_indices();
+            }
         }
 
         if let Some(active_bridge_idx) = self.active_bridge_idx {
