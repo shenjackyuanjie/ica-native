@@ -327,7 +327,10 @@ pub(super) async fn send_merged_forward(
 mod tests {
     use serde_json::json;
 
-    use super::{forward_values_summary, forward_wrapper_depth, normalize_forward_values};
+    use super::{
+        forward_values_summary, forward_wrapper_depth, is_forward_error_response,
+        normalize_forward_values,
+    };
 
     #[test]
     fn 保留普通消息数组() {
@@ -354,10 +357,22 @@ mod tests {
     }
 
     #[test]
-    fn 保留错误响应对象() {
-        let response = vec![json!({ "_id": 0, "senderId": 0 })];
-
-        assert_eq!(normalize_forward_values(response.clone()), response);
+    fn 识别主请求错误响应以决定资源回退() {
+        assert!(is_forward_error_response(&[
+            json!({ "_id": 0, "senderId": 0 })
+        ]));
+        assert!(!is_forward_error_response(&[
+            json!({ "_id": 1, "senderId": 0 })
+        ]));
+        assert!(!is_forward_error_response(&[json!({ "_id": 0 })]));
+        assert!(!is_forward_error_response(&[json!({ "senderId": 0 })]));
+        assert!(!is_forward_error_response(&[
+            json!({ "_id": "0", "senderId": 0 })
+        ]));
+        assert!(!is_forward_error_response(&[
+            json!({ "_id": 0, "senderId": 0 }),
+            json!({ "_id": 1, "senderId": 1 }),
+        ]));
     }
 
     #[test]

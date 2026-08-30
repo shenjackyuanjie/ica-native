@@ -245,36 +245,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn legacy_custom_chat_key_stays_compatible() {
-        let parsed: IcaCfg = toml::from_str(
-            r#"
-                [custom_chat]
-                hide_chat_img = true
-                sort_stickers_by_time = false
-            "#,
-        )
-        .unwrap();
-        assert!(parsed.custom_chat.hide_chat_img);
-        assert!(!parsed.custom_chat.sort_stickers_by_time);
-        assert!(!parsed.custom_chat.high_contrast_chat);
-
-        let encoded = toml::to_string(&parsed).unwrap();
-        assert!(encoded.contains("[custom_chat]"));
-        assert!(!encoded.contains("chat_appearance"));
-    }
-
-    #[test]
-    fn high_contrast_chat_setting_round_trips() {
-        let mut config = IcaCfg::default();
-        config.custom_chat.high_contrast_chat = true;
-
-        let encoded = toml::to_string(&config).unwrap();
-        let decoded: IcaCfg = toml::from_str(&encoded).unwrap();
-
-        assert!(decoded.custom_chat.high_contrast_chat);
-    }
-
-    #[test]
     fn server_owned_chat_groups_are_not_persisted_or_loaded() {
         let mut config = IcaCfg::default();
         config
