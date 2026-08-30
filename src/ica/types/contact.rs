@@ -20,33 +20,80 @@ where
     })
 }
 
-fn deserialize_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = JsonValue::deserialize(deserializer)?;
+fn parse_i64(value: JsonValue) -> Result<i64, String> {
     match value {
         JsonValue::Number(value) => value
             .as_i64()
             .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
-            .ok_or_else(|| serde::de::Error::custom("integer is outside i64 range")),
-        JsonValue::String(value) => value.parse().map_err(serde::de::Error::custom),
-        _ => Err(serde::de::Error::custom("应为整数或整数字符串")),
+            .ok_or_else(|| "integer is outside i64 range".to_string()),
+        JsonValue::String(value) => value.parse::<i64>().map_err(|error| error.to_string()),
+        _ => Err("应为整数或整数字符串".to_string()),
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct FriendContact {
-    #[serde(alias = "user_id", deserialize_with = "deserialize_i64")]
-    pub uin: i64,
-    #[serde(
-        default,
-        alias = "nickname",
-        deserialize_with = "deserialize_string_or_default"
-    )]
-    pub nick: String,
+fn deserialize_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    parse_i64(JsonValue::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+}
+
+fn deserialize_optional_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(value) = Option::<JsonValue>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        Ok(None)
+    } else {
+        parse_i64(value).map(Some).map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Deserialize)]
+struct FriendContactWire {
+    #[serde(default, deserialize_with = "deserialize_optional_i64")]
+    uin: Option<i64>,
+    #[serde(default, deserialize_with = "deserialize_optional_i64")]
+    user_id: Option<i64>,
     #[serde(default, deserialize_with = "deserialize_string_or_default")]
+    nick: String,
+    #[serde(default, deserialize_with = "deserialize_string_or_default")]
+    nickname: String,
+    #[serde(default, deserialize_with = "deserialize_string_or_default")]
+    remark: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FriendContact {
+    pub uin: i64,
+    pub nick: String,
     pub remark: String,
+}
+
+impl<'de> Deserialize<'de> for FriendContact {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = FriendContactWire::deserialize(deserializer)?;
+        let uin = wire
+            .uin
+            .or(wire.user_id)
+            .ok_or_else(|| serde::de::Error::missing_field("uin 或 user_id"))?;
+        let nick = if wire.nick.trim().is_empty() {
+            wire.nickname
+        } else {
+            wire.nick
+        };
+        Ok(Self {
+            uin,
+            nick,
+            remark: wire.remark,
+        })
+    }
 }
 
 impl FriendContact {
@@ -125,7 +172,7 @@ mod tests {
     use super::{FriendContact, GroupContact};
 
     #[test]
-    fn friend_contract_accepts_oicq_and_fallback_field_names() {
+    fn friend_contract_accepts_oicq_fallback_and_duplicate_field_names() {
         let fallback: FriendContact = serde_json::from_value(json!({
             "uin": 10001,
             "nick": "Alice",
@@ -138,10 +185,20 @@ mod tests {
             "remark": null
         }))
         .unwrap();
+        let bridge: FriendContact = serde_json::from_value(json!({
+            "uin": 10003,
+            "user_id": "99999",
+            "nick": "Carol",
+            "nickname": "旧昵称",
+            "remark": ""
+        }))
+        .unwrap();
 
         assert_eq!(fallback.display_name(), "同事");
         assert_eq!(oicq.uin, 10002);
         assert_eq!(oicq.display_name(), "Bob");
+        assert_eq!(bridge.uin, 10003);
+        assert_eq!(bridge.display_name(), "Carol");
         assert!(fallback.matches_query("ALICE"));
     }
 
