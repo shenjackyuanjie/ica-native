@@ -4,12 +4,15 @@
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-08-30
+
 ### Added
 - 屏幕配置新增 `renderer = "glow" | "wgpu"` 渲染后端选项；WGPU 沿用现有 `vsync` 设置，Windows 可通过 `wgpu_backend = "dx12" | "vulkan"` 明确选择图形 API，便于绕过部分 NVIDIA/OpenGL 组合在 VSync 下偶发的交互闪屏。
 
 ### Changed
 - 同时编译 Glow 与按平台裁剪的 WGPU 渲染后端；旧配置仍默认使用低内存的 Glow，可通过 `[screen] renderer = "wgpu"` 切换并在重启后生效。
 - 按测试准则清理测试：删除仅往返验证 TOML 序列化的直通用例，将合并转发「错误响应对象」用例改为直接覆盖回退判定逻辑，并移除历史文件测试中无边界意义的大小断言。
+- 更新 Rust 依赖基线，并将 Socket.IO 客户端固定到包含最新依赖升级的 revision。
 
 ## [0.1.14] - 2026-08-30
 
