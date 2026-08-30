@@ -224,9 +224,46 @@ pub struct Screen {
     /// 垂直同步
     #[serde(default = "screen_vsync_default")]
     pub vsync: bool,
+    /// 渲染后端。
+    #[serde(default)]
+    pub renderer: RendererBackend,
+    /// WGPU 使用的图形 API；仅在 renderer = "wgpu" 时生效。
+    #[serde(default)]
+    pub wgpu_backend: WgpuBackend,
     /// 初始化时是否窗口居中
     #[serde(default = "screen_centered_default")]
     pub centered: bool,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RendererBackend {
+    /// 低内存的 OpenGL 后端；部分 Windows/NVIDIA 组合在 VSync 下可能偶发闪屏。
+    #[default]
+    Glow,
+    /// WGPU 后端；使用 wgpu_backend 指定图形 API，避免回退到 OpenGL。
+    Wgpu,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WgpuBackend {
+    Dx12,
+    Vulkan,
+    Metal,
+}
+
+impl Default for WgpuBackend {
+    fn default() -> Self {
+        #[cfg(target_os = "windows")]
+        return Self::Dx12;
+        #[cfg(target_os = "linux")]
+        return Self::Vulkan;
+        #[cfg(target_os = "macos")]
+        return Self::Metal;
+        #[allow(unreachable_code)]
+        Self::Vulkan
+    }
 }
 
 fn screen_width_default() -> f32 {
@@ -248,6 +285,8 @@ impl Default for Screen {
             width: screen_width_default(),
             height: screen_height_default(),
             vsync: screen_vsync_default(),
+            renderer: RendererBackend::default(),
+            wgpu_backend: WgpuBackend::default(),
             centered: screen_centered_default(),
         }
     }

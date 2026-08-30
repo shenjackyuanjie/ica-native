@@ -8,6 +8,7 @@ eframe = { version = "0.36.1", default-features = false, features = [
     "accesskit",
     "default_fonts",
     "glow",
+    "wgpu_no_default_features",
 ] }
 egui = "0.36.1"
 egui_extras = { version = "0.36.1", features = ["file", "http", "svg"] }
@@ -53,6 +54,7 @@ linkify = "0.11.0"
 urlencoding = "2.1.3"
 
 [target.'cfg(windows)'.dependencies]
+wgpu = { version = "30.0.1", default-features = false, features = ["dx12", "vulkan"] }
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_System_DataExchange",
@@ -62,3 +64,9 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",
 ] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wgpu = { version = "30.0.1", default-features = false, features = ["gles", "vulkan"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { version = "30.0.1", default-features = false, features = ["metal"] }

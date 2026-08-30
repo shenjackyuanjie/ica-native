@@ -1,6 +1,8 @@
 use eframe::egui;
 use egui::IconData;
 
+use crate::config::{RendererBackend, WgpuBackend};
+
 pub mod app;
 pub mod assets;
 pub mod config;
@@ -73,16 +75,51 @@ fn egui_main() -> anyhow::Result<()> {
     };
     memory_probe::log("icon:loaded");
 
+    let renderer = match config.screen.renderer {
+        RendererBackend::Glow => eframe::Renderer::Glow,
+        RendererBackend::Wgpu => eframe::Renderer::Wgpu,
+    };
+    let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(
+        eframe::egui_wgpu::SurfaceConfig {
+            present_mode: if config.screen.vsync {
+                eframe::wgpu::PresentMode::AutoVsync
+            } else {
+                eframe::wgpu::PresentMode::AutoNoVsync
+            },
+            desired_maximum_frame_latency: eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY
+                .desired_maximum_frame_latency,
+        },
+    );
+    #[cfg(target_os = "windows")]
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
+        // 显式选择图形 API，避免 WGPU 自动落回会触发闪屏的 OpenGL 路径。
+        setup.instance_descriptor.backends = match config.screen.wgpu_backend {
+            WgpuBackend::Dx12 => eframe::wgpu::Backends::DX12,
+            WgpuBackend::Vulkan => eframe::wgpu::Backends::VULKAN,
+            WgpuBackend::Metal => {
+                tracing::warn!("Windows 不支持 Metal，WGPU 将改用 DX12");
+                eframe::wgpu::Backends::DX12
+            }
+        };
+    }
+    tracing::info!(
+        renderer = ?config.screen.renderer,
+        wgpu_backend = ?config.screen.wgpu_backend,
+        vsync = config.screen.vsync,
+        "初始化渲染后端"
+    );
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([config.screen.width, config.screen.height])
             .with_drag_and_drop(true)
             .with_icon(icon),
-        renderer: eframe::Renderer::Glow,
+        renderer,
         glow_options: eframe::egui_glow::GlowConfiguration {
             vsync: config.screen.vsync,
             ..Default::default()
         },
+        wgpu_options,
         centered: config.screen.centered,
         ..Default::default()
     };
