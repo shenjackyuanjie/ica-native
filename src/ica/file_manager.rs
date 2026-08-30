@@ -44,21 +44,24 @@ pub(super) async fn call_file_manager(
 ) -> Result<(), String> {
     let token = request_gfs_token(main_client, gin).await?;
     let (auth_tx, mut auth_rx) = mpsc::unbounded_channel::<Result<JsonValue, String>>();
+    let auth_bridge_key = bridge_key.to_string();
 
     let mut builder =
         ClientBuilder::new(socket_url.to_string()).transport_type(TransportType::Websocket);
     {
         let token = token.clone();
+        let auth_bridge_key = auth_bridge_key.clone();
         builder = builder.on(
             "requireAuth",
             move |_payload: Payload, client: Client| -> BoxFuture<'static, ()> {
                 let token = token.clone();
+                let auth_bridge_key = auth_bridge_key.clone();
                 Box::pin(async move {
                     if let Err(e) = client
                         .emit("auth", vec![json!(token), json!("fileMgr")])
                         .await
                     {
-                        tracing::warn!(error = %e, "发送 fileMgr 认证事件失败");
+                        tracing::warn!(bridge = %auth_bridge_key, socket = "file_manager", error = %e, "发送 fileMgr 认证事件失败");
                     }
                 })
             },

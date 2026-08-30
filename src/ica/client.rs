@@ -13,18 +13,23 @@ use crate::ica::types::message::{DeleteMessage, SendMessage};
 use crate::ica::types::{RoomId, UserId};
 
 /// 使用指定私钥对服务端的 requireAuth payload 进行签名并发送 auth 事件
-async fn sign_with_key(payload: Payload, client: Client, private_key_hex: String) {
+async fn sign_with_key(
+    payload: Payload,
+    client: Client,
+    bridge_key: String,
+    private_key_hex: String,
+) {
     // 解析 payload，优先取 Text
     let require_data = match payload {
         Payload::Text(vals) => vals,
         _ => {
-            event!(Level::WARN, "sign_with_key: unexpected payload type");
+            event!(Level::WARN, bridge = %bridge_key, socket = "main", "sign_with_key: unexpected payload type");
             return;
         }
     };
 
     if require_data.is_empty() {
-        event!(Level::WARN, "sign_with_key: empty payload");
+        event!(Level::WARN, bridge = %bridge_key, socket = "main", "sign_with_key: empty payload");
         return;
     }
 
@@ -34,6 +39,8 @@ async fn sign_with_key(payload: Payload, client: Client, private_key_hex: String
         other => {
             event!(
                 Level::WARN,
+                bridge = %bridge_key,
+                socket = "main",
                 "sign_with_key: auth_key is not string: {:?}",
                 other
             );
@@ -47,6 +54,8 @@ async fn sign_with_key(payload: Payload, client: Client, private_key_hex: String
         Err(e) => {
             event!(
                 Level::ERROR,
+                bridge = %bridge_key,
+                socket = "main",
                 "sign_with_key: auth_key 不是有效的十六进制: {}",
                 e
             );
@@ -65,6 +74,8 @@ async fn sign_with_key(payload: Payload, client: Client, private_key_hex: String
         Err(_) => {
             event!(
                 Level::ERROR,
+                bridge = %bridge_key,
+                socket = "main",
                 "sign_with_key: private key not valid 32-bytes hex"
             );
             return;
@@ -79,10 +90,10 @@ async fn sign_with_key(payload: Payload, client: Client, private_key_hex: String
     // 发送签名到服务端 (auth)
     match client.emit("auth", sign_bytes).await {
         Ok(_) => {
-            event!(Level::INFO, "sign_with_key: auth signed & sent");
+            event!(Level::INFO, bridge = %bridge_key, socket = "main", "sign_with_key: auth signed & sent");
         }
         Err(e) => {
-            event!(Level::ERROR, "sign_with_key: 发送 auth 事件失败: {:?}", e);
+            event!(Level::ERROR, bridge = %bridge_key, socket = "main", error = ?e, "sign_with_key: 发送 auth 事件失败");
         }
     }
 }
@@ -92,12 +103,14 @@ async fn sign_with_key(payload: Payload, client: Client, private_key_hex: String
 /// 多 bridge 场景下，每个 socket 连接都必须固定使用自己的私钥，
 /// 因此这里不再从全局配置里“猜”第一个 bridge，而是在注册事件时直接把 key 封进回调。
 pub fn sign_callback(
+    bridge_key: String,
     private_key_hex: String,
 ) -> impl Fn(Payload, Client) -> BoxFuture<'static, ()> + Send + Sync + 'static {
     move |payload: Payload, client: Client| {
+        let bridge_key = bridge_key.clone();
         let private_key_hex = private_key_hex.clone();
         Box::pin(async move {
-            sign_with_key(payload, client, private_key_hex).await;
+            sign_with_key(payload, client, bridge_key, private_key_hex).await;
         })
     }
 }

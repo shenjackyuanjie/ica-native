@@ -88,7 +88,7 @@ pub async fn run_bridge(
 
         {
             // 鉴权回调在注册时就和当前 bridge 的私钥绑死，避免串 key。
-            let sign_callback = client::sign_callback(private_key.clone());
+            let sign_callback = client::sign_callback(bridge_key.clone(), private_key.clone());
             let bridge_id = bridge_key.clone();
             let tx = event_tx.clone();
             builder = builder.on(
@@ -171,15 +171,17 @@ pub async fn run_bridge(
         let client = match builder.connect().await {
             Ok(client) => {
                 tracing::info!(
-                    "{}",
-                    format!("Socket.IO 连接耗时: {:?}", start_connect_time.elapsed())
+                    bridge = %bridge_key,
+                    socket = "main",
+                    elapsed = ?start_connect_time.elapsed(),
+                    "Socket.IO 已连接"
                 );
                 reconnect_attempt = 0;
                 emit_ui_event(&event_tx, &bridge_key, "socketConnected", JsonValue::Null);
                 client
             }
             Err(e) => {
-                tracing::error!(error = %e, "Socket.IO 连接失败");
+                tracing::error!(bridge = %bridge_key, socket = "main", error = %e, "Socket.IO 连接失败");
                 emit_ui_event(
                     &event_tx,
                     &bridge_key,
@@ -235,10 +237,10 @@ pub async fn run_bridge(
                 _ = &mut stop_alrm => {
                     match client.disconnect().await {
                         Ok(_) => {
-                            tracing::info!(bridge = %bridge_key, "Socket.IO bridge 已断开");
+                            tracing::info!(bridge = %bridge_key, socket = "main", "Socket.IO 已断开");
                         }
                         Err(e) => {
-                            tracing::warn!(bridge = %bridge_key, error = %e, "断开 Socket.IO bridge 失败");
+                            tracing::warn!(bridge = %bridge_key, socket = "main", error = %e, "断开 Socket.IO 失败");
                         }
                     }
                     emit_ui_event(&event_tx, &bridge_key, "socketDisconnected", JsonValue::Null);

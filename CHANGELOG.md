@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Fixed
+- 联系人窗口现会解开 Socket.IO ACK 的单参数列表包装，兼容 `getFriendsFallback` 和 `getGroups` 的实际响应，避免好友和群列表同时因 ID 解析失败而无法加载。
+
+### Changed
+- Socket.IO 主连接与 fileMgr 连接的鉴权、连接和断开日志均标记 `bridge` 与 `socket`，便于多连接场景定位日志来源。
+
 ## [0.1.15] - 2026-08-30
 
 ### Added

@@ -13,9 +13,14 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::ica::{command::emit_ui_event, event::BridgeEvent};
 
-use super::ack_payload_values;
+use super::{ack_payload_values, normalize_ack_list};
 
 const CONTACTS_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// 联系人接口的 ACK 可能把列表作为唯一参数再包一层；UI 侧始终接收联系人对象数组。
+fn contact_ack_items(payload: &Payload) -> serde_json::Value {
+    normalize_ack_list(ack_payload_values(payload))
+}
 
 async fn fetch_contact_part(
     client: &Client,
@@ -48,7 +53,7 @@ async fn fetch_contact_part(
                         json!({
                             "requestId": request_id,
                             "part": part,
-                            "items": ack_payload_values(&payload),
+                            "items": contact_ack_items(&payload),
                         }),
                     );
                 })
@@ -113,4 +118,30 @@ pub(super) async fn fetch_contacts(
         "getGroups",
     )
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use rust_socketio::Payload;
+    use serde_json::json;
+
+    use super::contact_ack_items;
+
+    #[test]
+    fn nested_ack_list_is_unwrapped_for_contact_deserialization() {
+        let payload = Payload::Text(vec![json!([[{
+            "uin": "10001",
+            "nick": "Alice",
+            "remark": ""
+        }]])]);
+
+        assert_eq!(
+            contact_ack_items(&payload),
+            json!([{
+                "uin": "10001",
+                "nick": "Alice",
+                "remark": ""
+            }])
+        );
+    }
 }
