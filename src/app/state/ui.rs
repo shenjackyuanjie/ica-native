@@ -1,4 +1,4 @@
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
 use crate::config::{ChatAppearanceSettings, ConfigStore, ReEditDraftConflictMode};
 
@@ -71,6 +71,29 @@ pub struct GroupFilePanelState {
     pub list_start: String,
 }
 
+/// 两个定制聊天界面独立窗口共享的可编辑配置草稿。
+pub struct ChatAppearanceViewportState {
+    pub custom_chat: ChatAppearanceSettings,
+    pub clear_search_on_room_select: bool,
+    pub auto_fetch_history_on_room_select: bool,
+    pub scroll_to_bottom_after_send: bool,
+    pub reedit_draft_conflict_mode: ReEditDraftConflictMode,
+    pub dirty: bool,
+}
+
+impl ChatAppearanceViewportState {
+    fn new(config: &crate::config::IcaCfg) -> Self {
+        Self {
+            custom_chat: config.custom_chat.clone(),
+            clear_search_on_room_select: config.ui_setting.clear_search_on_room_select,
+            auto_fetch_history_on_room_select: config.ui_setting.auto_fetch_history_on_room_select,
+            scroll_to_bottom_after_send: config.ui_setting.scroll_to_bottom_after_send,
+            reedit_draft_conflict_mode: config.ui_setting.reedit_draft_conflict_mode,
+            dirty: false,
+        }
+    }
+}
+
 pub struct AppState {
     pub custom_chat: ChatAppearanceSettings,
     pub online_mode: OnlineMode,
@@ -101,6 +124,10 @@ pub struct AppState {
     pub image_viewer: Option<std::sync::Arc<std::sync::Mutex<ImageViewerState>>>,
     /// 联系人独立窗口关闭后通知主视口更新打开状态。
     pub contacts_viewport_closed: Arc<AtomicBool>,
+    /// 两个定制聊天界面窗口关闭后通知主视口更新打开状态。
+    pub custom_chat_ica_viewport_closed: Arc<AtomicBool>,
+    pub custom_chat_extra_viewport_closed: Arc<AtomicBool>,
+    pub chat_appearance_viewport: Arc<Mutex<ChatAppearanceViewportState>>,
     pub socket_api_event: String,
     pub socket_api_args: String,
     pub socket_api_expect_ack: bool,
@@ -157,6 +184,11 @@ impl AppState {
             mention_selected_index: 0,
             image_viewer: None,
             contacts_viewport_closed: Arc::new(AtomicBool::new(false)),
+            custom_chat_ica_viewport_closed: Arc::new(AtomicBool::new(false)),
+            custom_chat_extra_viewport_closed: Arc::new(AtomicBool::new(false)),
+            chat_appearance_viewport: Arc::new(Mutex::new(ChatAppearanceViewportState::new(
+                config,
+            ))),
             socket_api_event: String::new(),
             socket_api_args: "[]".to_string(),
             socket_api_expect_ack: true,

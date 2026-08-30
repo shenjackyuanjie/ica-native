@@ -1,85 +1,47 @@
+use std::sync::atomic::Ordering;
+
 use crate::app::IcaApp;
 use crate::app::online_mode::OnlineMode;
 use crate::config::ReEditDraftConflictMode;
 
 impl IcaApp {
-    // 将所有窗口渲染相关的独立函数合并到一个功能块里（内部分支式处理每个窗口）
-    pub fn render_windows(&mut self, ui: &mut egui::Ui) {
-        let ctx = ui.ctx().clone();
+    fn apply_chat_appearance_viewport_changes(&mut self) {
+        let pending = {
+            let mut viewport = self.chat_appearance_viewport.lock().unwrap();
+            if !std::mem::take(&mut viewport.dirty) {
+                return;
+            }
+            (
+                viewport.custom_chat.clone(),
+                viewport.clear_search_on_room_select,
+                viewport.auto_fetch_history_on_room_select,
+                viewport.scroll_to_bottom_after_send,
+                viewport.reedit_draft_conflict_mode,
+            )
+        };
+        let (
+            custom_chat,
+            clear_search_on_room_select,
+            auto_fetch_history_on_room_select,
+            scroll_to_bottom_after_send,
+            reedit_draft_conflict_mode,
+        ) = pending;
         let custom_chat_before = self.custom_chat.clone();
-        // 定制聊天界面 (ica)
-        let mut custom_chat_ica_open = self.open_page.custom_chat_ica;
-        egui::Window::new("定制聊天界面 (ica)")
-            .open(&mut custom_chat_ica_open)
-            .resizable(false)
-            .show(&ctx, |ui| {
-                self.custom_chat.show_ica_ui(ui);
-            });
-        self.open_page.custom_chat_ica = custom_chat_ica_open;
-
-        // 定制聊天界面 (extra)
-        let mut custom_chat_extra_open = self.open_page.custom_chat_extra;
-        let mut clear_on_select = self.clear_search_on_room_select;
-        let mut clear_on_select_changed = false;
-        let mut auto_fetch_history_on_select = self.auto_fetch_history_on_room_select;
-        let mut auto_fetch_history_on_select_changed = false;
-        let mut scroll_on_send = self.scroll_to_bottom_after_send;
-        let mut scroll_on_send_changed = false;
-        let mut reedit_mode = self.reedit_draft_conflict_mode;
-        let mut reedit_mode_changed = false;
-        egui::Window::new("定制聊天界面 (extra)")
-            .open(&mut custom_chat_extra_open)
-            .resizable(false)
-            .show(&ctx, |ui| {
-                let clear_on_select_before = clear_on_select;
-                let auto_fetch_history_on_select_before = auto_fetch_history_on_select;
-                let scroll_on_send_before = scroll_on_send;
-                self.custom_chat.show_extra_ui(
-                    ui,
-                    &mut clear_on_select,
-                    &mut auto_fetch_history_on_select,
-                    &mut scroll_on_send,
-                );
-                clear_on_select_changed |= clear_on_select != clear_on_select_before;
-                auto_fetch_history_on_select_changed |=
-                    auto_fetch_history_on_select != auto_fetch_history_on_select_before;
-                scroll_on_send_changed |= scroll_on_send != scroll_on_send_before;
-                ui.separator();
-                ui.label("重新编辑草稿冲突处理");
-                ui.horizontal_wrapped(|ui| {
-                    reedit_mode_changed |= ui
-                        .selectable_value(
-                            &mut reedit_mode,
-                            ReEditDraftConflictMode::Overwrite,
-                            "覆盖",
-                        )
-                        .changed();
-                    reedit_mode_changed |= ui
-                        .selectable_value(&mut reedit_mode, ReEditDraftConflictMode::Append, "追加")
-                        .changed();
-                    reedit_mode_changed |= ui
-                        .selectable_value(
-                            &mut reedit_mode,
-                            ReEditDraftConflictMode::SkipIfNonEmpty,
-                            "草稿非空时不执行",
-                        )
-                        .changed();
-                });
-            });
-        self.open_page.custom_chat_extra = custom_chat_extra_open;
         let chat_group_sidebar_hidden_changed =
-            self.custom_chat.hide_chat_group_sidebar != custom_chat_before.hide_chat_group_sidebar;
-        if clear_on_select_changed {
-            self.set_clear_search_on_room_select(clear_on_select);
+            custom_chat.hide_chat_group_sidebar != custom_chat_before.hide_chat_group_sidebar;
+        self.custom_chat = custom_chat;
+
+        if clear_search_on_room_select != self.clear_search_on_room_select {
+            self.set_clear_search_on_room_select(clear_search_on_room_select);
         }
-        if auto_fetch_history_on_select_changed {
-            self.set_auto_fetch_history_on_room_select(auto_fetch_history_on_select);
+        if auto_fetch_history_on_room_select != self.auto_fetch_history_on_room_select {
+            self.set_auto_fetch_history_on_room_select(auto_fetch_history_on_room_select);
         }
-        if scroll_on_send_changed {
-            self.set_scroll_to_bottom_after_send(scroll_on_send);
+        if scroll_to_bottom_after_send != self.scroll_to_bottom_after_send {
+            self.set_scroll_to_bottom_after_send(scroll_to_bottom_after_send);
         }
-        if reedit_mode_changed {
-            self.set_reedit_draft_conflict_mode(reedit_mode);
+        if reedit_draft_conflict_mode != self.reedit_draft_conflict_mode {
+            self.set_reedit_draft_conflict_mode(reedit_draft_conflict_mode);
         }
         if self.custom_chat != custom_chat_before {
             let custom_chat = self.custom_chat.clone();
@@ -93,6 +55,132 @@ impl IcaApp {
                 bridge_state.selected_chat_group = crate::app::SelectedChatGroup::All;
                 bridge_state.invalidate_visible_room_indices();
             }
+        }
+    }
+
+    // 将所有窗口渲染相关的独立函数合并到一个功能块里（内部分支式处理每个窗口）
+    pub fn render_windows(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        if self
+            .custom_chat_ica_viewport_closed
+            .swap(false, Ordering::Relaxed)
+        {
+            self.open_page.custom_chat_ica = false;
+        }
+        if self
+            .custom_chat_extra_viewport_closed
+            .swap(false, Ordering::Relaxed)
+        {
+            self.open_page.custom_chat_extra = false;
+        }
+        self.apply_chat_appearance_viewport_changes();
+        let parent_viewport_id = ctx.viewport_id();
+
+        // 定制聊天界面 (ica)
+        if self.open_page.custom_chat_ica {
+            let viewport_state = self.chat_appearance_viewport.clone();
+            let closed = self.custom_chat_ica_viewport_closed.clone();
+            ctx.show_viewport_deferred(
+                egui::ViewportId::from_hash_of("custom_chat_ica"),
+                egui::ViewportBuilder::default()
+                    .with_title("定制聊天界面 (ica)")
+                    .with_inner_size([500.0, 680.0])
+                    .with_min_inner_size([380.0, 420.0]),
+                move |viewport_ctx, _class| {
+                    if viewport_ctx.input(|input| input.viewport().close_requested()) {
+                        closed.store(true, Ordering::Relaxed);
+                        viewport_ctx.request_repaint_of(parent_viewport_id);
+                        return;
+                    }
+                    egui::CentralPanel::default().show(viewport_ctx, |ui| {
+                        let mut state = viewport_state.lock().unwrap();
+                        let custom_chat_before = state.custom_chat.clone();
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            state.custom_chat.show_ica_ui(ui);
+                        });
+                        state.dirty |= state.custom_chat != custom_chat_before;
+                    });
+                    if viewport_state.lock().unwrap().dirty {
+                        viewport_ctx.request_repaint_of(parent_viewport_id);
+                    }
+                },
+            );
+        }
+
+        // 定制聊天界面 (extra)
+        if self.open_page.custom_chat_extra {
+            let viewport_state = self.chat_appearance_viewport.clone();
+            let closed = self.custom_chat_extra_viewport_closed.clone();
+            ctx.show_viewport_deferred(
+                egui::ViewportId::from_hash_of("custom_chat_extra"),
+                egui::ViewportBuilder::default()
+                    .with_title("定制聊天界面 (extra)")
+                    .with_inner_size([500.0, 620.0])
+                    .with_min_inner_size([380.0, 380.0]),
+                move |viewport_ctx, _class| {
+                    if viewport_ctx.input(|input| input.viewport().close_requested()) {
+                        closed.store(true, Ordering::Relaxed);
+                        viewport_ctx.request_repaint_of(parent_viewport_id);
+                        return;
+                    }
+                    egui::CentralPanel::default().show(viewport_ctx, |ui| {
+                        let mut state = viewport_state.lock().unwrap();
+                        let custom_chat_before = state.custom_chat.clone();
+                        let clear_on_select_before = state.clear_search_on_room_select;
+                        let auto_fetch_history_on_select_before =
+                            state.auto_fetch_history_on_room_select;
+                        let scroll_on_send_before = state.scroll_to_bottom_after_send;
+                        let reedit_mode_before = state.reedit_draft_conflict_mode;
+                        let mut custom_chat = custom_chat_before.clone();
+                        let mut clear_search_on_room_select = clear_on_select_before;
+                        let mut auto_fetch_history_on_room_select =
+                            auto_fetch_history_on_select_before;
+                        let mut scroll_to_bottom_after_send = scroll_on_send_before;
+                        let mut reedit_draft_conflict_mode = reedit_mode_before;
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            custom_chat.show_extra_ui(
+                                ui,
+                                &mut clear_search_on_room_select,
+                                &mut auto_fetch_history_on_room_select,
+                                &mut scroll_to_bottom_after_send,
+                            );
+                            ui.separator();
+                            ui.label("重新编辑草稿冲突处理");
+                            ui.horizontal_wrapped(|ui| {
+                                ui.selectable_value(
+                                    &mut reedit_draft_conflict_mode,
+                                    ReEditDraftConflictMode::Overwrite,
+                                    "覆盖",
+                                );
+                                ui.selectable_value(
+                                    &mut reedit_draft_conflict_mode,
+                                    ReEditDraftConflictMode::Append,
+                                    "追加",
+                                );
+                                ui.selectable_value(
+                                    &mut reedit_draft_conflict_mode,
+                                    ReEditDraftConflictMode::SkipIfNonEmpty,
+                                    "草稿非空时不执行",
+                                );
+                            });
+                        });
+                        state.dirty |= custom_chat != custom_chat_before
+                            || clear_search_on_room_select != clear_on_select_before
+                            || auto_fetch_history_on_room_select
+                                != auto_fetch_history_on_select_before
+                            || scroll_to_bottom_after_send != scroll_on_send_before
+                            || reedit_draft_conflict_mode != reedit_mode_before;
+                        state.custom_chat = custom_chat;
+                        state.clear_search_on_room_select = clear_search_on_room_select;
+                        state.auto_fetch_history_on_room_select = auto_fetch_history_on_room_select;
+                        state.scroll_to_bottom_after_send = scroll_to_bottom_after_send;
+                        state.reedit_draft_conflict_mode = reedit_draft_conflict_mode;
+                    });
+                    if viewport_state.lock().unwrap().dirty {
+                        viewport_ctx.request_repaint_of(parent_viewport_id);
+                    }
+                },
+            );
         }
 
         if let Some(active_bridge_idx) = self.active_bridge_idx {
