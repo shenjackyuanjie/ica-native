@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-08-30
+
 ### Fixed
 - 联系人窗口现会解开 Socket.IO ACK 的单参数列表包装，并兼容 Bridge 同时提供 `uin`/`user_id`、`nick`/`nickname` 的好友对象，避免好友和群列表因包装或重复字段而无法加载。
 
