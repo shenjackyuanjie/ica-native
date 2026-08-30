@@ -1,5 +1,6 @@
 use serde_json::{Value as JsonValue, json};
 
+use crate::app::media::{ImageAction, ImageSource};
 use crate::app::{IcaApp, state::ForwardViewerAction};
 use crate::ica::{IcaCommand, types::message::Message};
 
@@ -147,6 +148,15 @@ pub(super) fn render_forward_preview(ui: &mut egui::Ui, reference: &ForwardRefer
     if reference.preview.len() > MAX_VISIBLE_LINES {
         ui.weak("...");
     }
+}
+
+fn forward_image_sources(messages: &[Message]) -> Vec<ImageSource> {
+    messages
+        .iter()
+        .flat_map(|message| message.files.iter())
+        .filter(|file| super::is_image_file_type(&file.file_type) && !file.url.is_empty())
+        .map(|file| ImageSource::url(file.url.clone()))
+        .collect()
 }
 
 fn inline_forward_messages(code: &JsonValue) -> Option<Vec<Message>> {
@@ -416,6 +426,10 @@ impl IcaApp {
                     fallback_res_id,
                 );
             }
+            Some(ForwardViewerAction::Image { action, sources }) => match action {
+                ImageAction::Open(source) => self.open_image_viewer_with_sources(source, sources),
+                action => self.handle_image_action(ctx, bridge_idx, action),
+            },
             Some(ForwardViewerAction::OpenReference {
                 res_id,
                 file_name,
@@ -454,6 +468,7 @@ impl IcaApp {
 
                 egui::CentralPanel::default().show(viewport_ctx, |ui| {
                     let mut nested_reference = None;
+                    let mut image_action = None;
                     let mut viewer = viewport_state.lock().unwrap();
                     ui.horizontal(|ui| {
                         ui.label("资源 ID");
@@ -492,6 +507,7 @@ impl IcaApp {
                         ui.weak("没有转发消息");
                     }
                     let parent_res_id = viewer.res_id.clone();
+                    let image_sources = forward_image_sources(&viewer.messages);
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         for message in &viewer.messages {
                             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -529,11 +545,18 @@ impl IcaApp {
                                         || file.file_type.starts_with("image/"))
                                         && !file.url.is_empty()
                                     {
-                                        ui.add(
-                                            egui::Image::from_uri(file.url.clone())
-                                                .max_width(ui.available_width().min(420.0))
-                                                .max_height(260.0),
-                                        );
+                                        let source = ImageSource::url(file.url.clone());
+                                        if let Some(action) =
+                                            super::message_card::render_message_image(
+                                                ui,
+                                                &source,
+                                                &file.file_type,
+                                                ui.available_width().min(420.0),
+                                                260.0,
+                                            )
+                                        {
+                                            image_action = Some(action);
+                                        }
                                     } else if !file.url.is_empty() {
                                         ui.hyperlink_to(
                                             file.name.as_deref().unwrap_or("打开附件"),
@@ -569,6 +592,12 @@ impl IcaApp {
                             inline_messages: reference.inline_messages,
                         });
                     }
+                    if let Some(action) = image_action {
+                        viewer.pending_action = Some(ForwardViewerAction::Image {
+                            action,
+                            sources: image_sources,
+                        });
+                    }
                 });
 
                 if viewport_state.lock().unwrap().pending_action.is_some() {
@@ -587,9 +616,12 @@ mod tests {
     use chrono::Utc;
     use serde_json::{Value as JsonValue, json};
 
-    use crate::ica::types::message::{At, Message};
+    use crate::ica::types::{
+        files::MessageFile,
+        message::{At, Message},
+    };
 
-    use super::{fake_forward_node, forward_reference};
+    use super::{fake_forward_node, forward_image_sources, forward_reference};
 
     fn message(content: &str, code: JsonValue) -> Message {
         Message {
@@ -671,5 +703,55 @@ mod tests {
         assert_eq!(node["message"][0]["data"]["text"], "raw");
         assert_eq!(node["message"][1]["type"], "face");
         assert_eq!(node["consistent"], true);
+    }
+
+    #[test]
+    fn image_gallery_uses_only_forwarded_image_attachments_in_order() {
+        let mut first = message("first", JsonValue::Null);
+        first.files = vec![
+            MessageFile {
+                file_type: "image/png".to_string(),
+                url: "https://example.test/one.png".to_string(),
+                size: None,
+                name: None,
+                fid: None,
+            },
+            MessageFile {
+                file_type: "file".to_string(),
+                url: "https://example.test/archive.zip".to_string(),
+                size: None,
+                name: None,
+                fid: None,
+            },
+        ];
+        let mut second = message("second", JsonValue::Null);
+        second.files = vec![
+            MessageFile {
+                file_type: "image/gif".to_string(),
+                url: "https://example.test/two.gif".to_string(),
+                size: None,
+                name: None,
+                fid: None,
+            },
+            MessageFile {
+                file_type: "image/jpeg".to_string(),
+                url: String::new(),
+                size: None,
+                name: None,
+                fid: None,
+            },
+        ];
+
+        let sources = forward_image_sources(&[first, second]);
+        assert_eq!(
+            sources
+                .into_iter()
+                .map(|source| source.url)
+                .collect::<Vec<_>>(),
+            [
+                "https://example.test/one.png".to_string(),
+                "https://example.test/two.gif".to_string(),
+            ]
+        );
     }
 }

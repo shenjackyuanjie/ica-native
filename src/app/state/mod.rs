@@ -439,6 +439,10 @@ pub struct ForwardViewerState {
 #[derive(Debug, Clone)]
 pub enum ForwardViewerAction {
     Reload,
+    Image {
+        action: ImageAction,
+        sources: Vec<ImageSource>,
+    },
     OpenReference {
         res_id: String,
         file_name: Option<String>,

@@ -355,7 +355,7 @@ fn reply_image_file(reply: &ReplyMessage) -> Option<&MessageFile> {
 }
 
 /// 渲染消息中的图片缩略图并返回统一图片动作。
-fn render_message_image(
+pub(super) fn render_message_image(
     ui: &mut egui::Ui,
     source: &ImageSource,
     file_type: &str,
