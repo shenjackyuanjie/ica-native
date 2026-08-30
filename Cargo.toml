@@ -34,20 +34,20 @@ image = { version = "0.25.10", default-features = false, features = [
 ] }
 toml = "1.1.4"
 
-rust_socketio = { git = "https://github.com/shenjackyuanjie/rust-socketio.git", rev = "4bdb04f7cb305a724590bcf580dff11df8f6a06b", default-features = false, features = [
+rust_socketio = { git = "https://github.com/shenjackyuanjie/rust-socketio.git", rev = "6c678b0ae0b3be31da8688423112395d3141d140", default-features = false, features = [
     "async",
     "rustls-tls-native-roots",
 ] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
 
 tokio = { version = "1.53.1", features = ["full"] }
-futures-util = "0.3.33"
+futures-util = "0.3.34"
 
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["time", "env-filter"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 rand = "0.10.2"
-lru = "0.18.2"
+lru = "0.18.3"
 rfd = "0.17.2"
 arboard = "3.6.1"
 linkify = "0.11.0"
