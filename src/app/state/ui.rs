@@ -1,3 +1,5 @@
+use std::sync::{Arc, atomic::AtomicBool};
+
 use crate::config::{ChatAppearanceSettings, ConfigStore, ReEditDraftConflictMode};
 
 use super::super::{
@@ -97,6 +99,8 @@ pub struct AppState {
     pub mention_replace_trigger: bool,
     pub mention_selected_index: usize,
     pub image_viewer: Option<std::sync::Arc<std::sync::Mutex<ImageViewerState>>>,
+    /// 联系人独立窗口关闭后通知主视口更新打开状态。
+    pub contacts_viewport_closed: Arc<AtomicBool>,
     pub socket_api_event: String,
     pub socket_api_args: String,
     pub socket_api_expect_ack: bool,
@@ -152,6 +156,7 @@ impl AppState {
             mention_replace_trigger: false,
             mention_selected_index: 0,
             image_viewer: None,
+            contacts_viewport_closed: Arc::new(AtomicBool::new(false)),
             socket_api_event: String::new(),
             socket_api_args: "[]".to_string(),
             socket_api_expect_ack: true,

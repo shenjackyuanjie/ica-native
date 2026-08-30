@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex, atomic::Ordering};
+
 use crate::app::IcaApp;
 use crate::ica::IcaCommand;
 use crate::ica::types::{
@@ -28,6 +30,8 @@ pub struct ContactDirectory {
     groups_loaded: bool,
     friends_error: Option<String>,
     groups_error: Option<String>,
+    pending_refresh: bool,
+    pending_target: Option<ContactTarget>,
 }
 
 impl ContactDirectory {
@@ -101,6 +105,13 @@ impl ContactDirectory {
             (None, None) => None,
         }
     }
+
+    fn take_pending_action(&mut self) -> (bool, Option<ContactTarget>) {
+        (
+            std::mem::take(&mut self.pending_refresh),
+            self.pending_target.take(),
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -139,10 +150,17 @@ fn create_contact_room(room_id: RoomId, room_name: String, timestamp: i64) -> Ro
 impl IcaApp {
     pub fn open_contacts(&mut self) {
         self.open_page.contacts = true;
+        self.contacts_viewport_closed
+            .store(false, Ordering::Relaxed);
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
         };
-        if self.bridge_states[bridge_idx].contacts.needs_initial_load() {
+        if self.bridge_states[bridge_idx]
+            .contacts
+            .lock()
+            .unwrap()
+            .needs_initial_load()
+        {
             self.refresh_contacts(bridge_idx);
         }
     }
@@ -151,10 +169,14 @@ impl IcaApp {
         let Some(session) = self.bridge_states.get_mut(bridge_idx) else {
             return;
         };
-        let request_id = session.contacts.begin_refresh();
+        let request_id = session.contacts.lock().unwrap().begin_refresh();
         if let Err(error) = session.send(IcaCommand::FetchContacts { request_id }) {
             let message = format!("联系人刷新命令发送失败: {error}");
-            session.contacts.fail_all(request_id, message.clone());
+            session
+                .contacts
+                .lock()
+                .unwrap()
+                .fail_all(request_id, message.clone());
             session.last_error = Some(message);
         }
     }
@@ -189,209 +211,240 @@ impl IcaApp {
             self.switch_active_bridge(bridge_idx);
         }
         self.select_active_room(target.room_id);
-        self.open_page.contacts = false;
     }
 
     pub fn render_contacts_window(&mut self, ctx: &egui::Context) {
+        if self.contacts_viewport_closed.swap(false, Ordering::Relaxed) {
+            self.open_page.contacts = false;
+        }
         if !self.open_page.contacts {
             return;
         }
+        let parent_viewport_id = ctx.viewport_id();
+        let closed = self.contacts_viewport_closed.clone();
         let Some(bridge_idx) = self.active_bridge_idx else {
-            let mut open = self.open_page.contacts;
-            egui::Window::new("联系人").open(&mut open).show(ctx, |ui| {
-                ui.weak("当前没有启用的 bridge");
-            });
-            self.open_page.contacts = open;
+            let closed = closed.clone();
+            ctx.show_viewport_deferred(
+                egui::ViewportId::from_hash_of("contacts"),
+                egui::ViewportBuilder::default()
+                    .with_title("联系人")
+                    .with_inner_size([440.0, 620.0])
+                    .with_min_inner_size([320.0, 360.0]),
+                move |viewport_ctx, _class| {
+                    if viewport_ctx.input(|input| input.viewport().close_requested()) {
+                        closed.store(true, Ordering::Relaxed);
+                        viewport_ctx.request_repaint_of(parent_viewport_id);
+                        return;
+                    }
+                    egui::CentralPanel::default().show(viewport_ctx, |ui| {
+                        ui.weak("当前没有启用的 bridge");
+                    });
+                },
+            );
             return;
         };
 
-        if self.bridge_states[bridge_idx].contacts.needs_initial_load() {
-            self.refresh_contacts(bridge_idx);
-        }
-
-        let bridge_key = self.bridge_states[bridge_idx].bridge_key.clone();
-        let mut open = self.open_page.contacts;
-        let mut refresh_requested = false;
-        let mut selected_target = None;
-
-        egui::Window::new(format!("联系人 - {bridge_key}"))
-            .open(&mut open)
-            .default_size(egui::vec2(440.0, 620.0))
-            .min_size(egui::vec2(320.0, 360.0))
-            .resizable(true)
-            .show(ctx, |ui| {
-                let directory = &mut self.bridge_states[bridge_idx].contacts;
-
-                ui.horizontal(|ui| {
-                    ui.add_sized(
-                        [ui.available_width() - 72.0, 0.0],
-                        egui::TextEdit::singleline(&mut directory.search_query)
-                            .hint_text("搜索昵称、备注或 QQ/群号"),
-                    );
-                    if ui
-                        .add_enabled(!directory.is_loading(), egui::Button::new("刷新"))
-                        .clicked()
-                    {
-                        refresh_requested = true;
-                    }
-                    if directory.is_loading() {
-                        ui.spinner();
-                    }
-                });
-
-                ui.horizontal(|ui| {
-                    ui.selectable_value(
-                        &mut directory.tab,
-                        ContactTab::Friends,
-                        format!("好友 ({})", directory.friends.len()),
-                    );
-                    ui.selectable_value(
-                        &mut directory.tab,
-                        ContactTab::Groups,
-                        format!("群 ({})", directory.groups.len()),
-                    );
-                });
-
-                if let Some(error) = directory.error_message() {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
-                }
-                ui.separator();
-
-                let query = directory.search_query.trim().to_uppercase();
-                match directory.tab {
-                    ContactTab::Friends => {
-                        let filtered = directory
-                            .friends
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(index, friend)| {
-                                friend.matches_query(&query).then_some(index)
-                            })
-                            .collect::<Vec<_>>();
-                        if filtered.is_empty() {
-                            let message = if directory.friends_loading {
-                                "正在加载好友..."
-                            } else if directory.friends_loaded {
-                                "没有匹配的好友"
-                            } else {
-                                "好友列表尚未加载"
-                            };
-                            ui.weak(message);
-                        } else {
-                            let row_height = 54.0 + ui.spacing().item_spacing.y;
-                            egui::ScrollArea::vertical().show_rows(
-                                ui,
-                                row_height,
-                                filtered.len(),
-                                |ui, rows| {
-                                    for row in rows {
-                                        let friend = &directory.friends[filtered[row]];
-                                        let display_name = friend.display_name();
-                                        let secondary = if friend.nick.trim().is_empty()
-                                            || friend.nick.trim() == display_name
-                                        {
-                                            format!("QQ {}", friend.uin.abs())
-                                        } else {
-                                            format!(
-                                                "{} · QQ {}",
-                                                friend.nick.trim(),
-                                                friend.uin.abs()
-                                            )
-                                        };
-                                        let response = Self::render_contact_row(
-                                            ui,
-                                            &display_name,
-                                            &secondary,
-                                            &friend.avatar_url(),
-                                        );
-                                        Self::contact_context_menu(
-                                            &response,
-                                            &display_name,
-                                            friend.uin,
-                                            &friend.avatar_url(),
-                                        );
-                                        if response.clicked() {
-                                            selected_target = Some(ContactTarget {
-                                                room_id: friend.room_id(),
-                                                room_name: display_name,
-                                            });
-                                        }
-                                    }
-                                },
-                            );
-                        }
-                    }
-                    ContactTab::Groups => {
-                        let filtered = directory
-                            .groups
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(index, group)| {
-                                group.matches_query(&query).then_some(index)
-                            })
-                            .collect::<Vec<_>>();
-                        if filtered.is_empty() {
-                            let message = if directory.groups_loading {
-                                "正在加载群..."
-                            } else if directory.groups_loaded {
-                                "没有匹配的群"
-                            } else {
-                                "群列表尚未加载"
-                            };
-                            ui.weak(message);
-                        } else {
-                            let row_height = 54.0 + ui.spacing().item_spacing.y;
-                            egui::ScrollArea::vertical().show_rows(
-                                ui,
-                                row_height,
-                                filtered.len(),
-                                |ui, rows| {
-                                    for row in rows {
-                                        let group = &directory.groups[filtered[row]];
-                                        let display_name = group.display_name();
-                                        let secondary = if group.group_name.trim().is_empty()
-                                            || group.group_name.trim() == display_name
-                                        {
-                                            format!("群 {}", group.group_id.abs())
-                                        } else {
-                                            format!(
-                                                "{} · 群 {}",
-                                                group.group_name.trim(),
-                                                group.group_id.abs()
-                                            )
-                                        };
-                                        let response = Self::render_contact_row(
-                                            ui,
-                                            &display_name,
-                                            &secondary,
-                                            &group.avatar_url(),
-                                        );
-                                        Self::contact_context_menu(
-                                            &response,
-                                            &display_name,
-                                            group.group_id,
-                                            &group.avatar_url(),
-                                        );
-                                        if response.clicked() {
-                                            selected_target = Some(ContactTarget {
-                                                room_id: group.room_id(),
-                                                room_name: group.room_name(),
-                                            });
-                                        }
-                                    }
-                                },
-                            );
-                        }
-                    }
-                }
-            });
-
-        self.open_page.contacts = open;
-        if refresh_requested {
+        let directory = self.bridge_states[bridge_idx].contacts.clone();
+        let (refresh_requested, selected_target, needs_initial_load) = {
+            let mut directory = directory.lock().unwrap();
+            let (refresh_requested, selected_target) = directory.take_pending_action();
+            (
+                refresh_requested,
+                selected_target,
+                directory.needs_initial_load(),
+            )
+        };
+        if needs_initial_load || refresh_requested {
             self.refresh_contacts(bridge_idx);
         }
         if let Some(target) = selected_target {
             self.start_contact_chat(bridge_idx, target);
+        }
+
+        let bridge_key = self.bridge_states[bridge_idx].bridge_key.clone();
+        let viewport_id = egui::ViewportId::from_hash_of(("contacts", &bridge_key));
+        ctx.show_viewport_deferred(
+            viewport_id,
+            egui::ViewportBuilder::default()
+                .with_title(format!("联系人 - {bridge_key}"))
+                .with_inner_size([440.0, 620.0])
+                .with_min_inner_size([320.0, 360.0]),
+            move |viewport_ctx, _class| {
+                if viewport_ctx.input(|input| input.viewport().close_requested()) {
+                    closed.store(true, Ordering::Relaxed);
+                    viewport_ctx.request_repaint_of(parent_viewport_id);
+                    return;
+                }
+                egui::CentralPanel::default().show(viewport_ctx, |ui| {
+                    Self::render_contact_directory(ui, &directory);
+                });
+                if directory.lock().unwrap().pending_refresh
+                    || directory.lock().unwrap().pending_target.is_some()
+                {
+                    viewport_ctx.request_repaint_of(parent_viewport_id);
+                }
+            },
+        );
+    }
+
+    fn render_contact_directory(ui: &mut egui::Ui, directory: &Arc<Mutex<ContactDirectory>>) {
+        let mut directory = directory.lock().unwrap();
+
+        ui.horizontal(|ui| {
+            ui.add_sized(
+                [ui.available_width() - 72.0, 0.0],
+                egui::TextEdit::singleline(&mut directory.search_query)
+                    .hint_text("搜索昵称、备注或 QQ/群号"),
+            );
+            if ui
+                .add_enabled(!directory.is_loading(), egui::Button::new("刷新"))
+                .clicked()
+            {
+                directory.pending_refresh = true;
+            }
+            if directory.is_loading() {
+                ui.spinner();
+            }
+        });
+
+        let friend_count = directory.friends.len();
+        let group_count = directory.groups.len();
+        ui.horizontal(|ui| {
+            ui.selectable_value(
+                &mut directory.tab,
+                ContactTab::Friends,
+                format!("好友 ({friend_count})"),
+            );
+            ui.selectable_value(
+                &mut directory.tab,
+                ContactTab::Groups,
+                format!("群 ({group_count})"),
+            );
+        });
+
+        if let Some(error) = directory.error_message() {
+            ui.colored_label(egui::Color32::LIGHT_RED, error);
+        }
+        ui.separator();
+
+        let query = directory.search_query.trim().to_uppercase();
+        match directory.tab {
+            ContactTab::Friends => {
+                let filtered = directory
+                    .friends
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, friend)| friend.matches_query(&query).then_some(index))
+                    .collect::<Vec<_>>();
+                if filtered.is_empty() {
+                    let message = if directory.friends_loading {
+                        "正在加载好友..."
+                    } else if directory.friends_loaded {
+                        "没有匹配的好友"
+                    } else {
+                        "好友列表尚未加载"
+                    };
+                    ui.weak(message);
+                } else {
+                    let row_height = 54.0 + ui.spacing().item_spacing.y;
+                    egui::ScrollArea::vertical().show_rows(
+                        ui,
+                        row_height,
+                        filtered.len(),
+                        |ui, rows| {
+                            for row in rows {
+                                let friend = &directory.friends[filtered[row]];
+                                let display_name = friend.display_name();
+                                let secondary = if friend.nick.trim().is_empty()
+                                    || friend.nick.trim() == display_name
+                                {
+                                    format!("QQ {}", friend.uin.abs())
+                                } else {
+                                    format!("{} · QQ {}", friend.nick.trim(), friend.uin.abs())
+                                };
+                                let response = Self::render_contact_row(
+                                    ui,
+                                    &display_name,
+                                    &secondary,
+                                    &friend.avatar_url(),
+                                );
+                                Self::contact_context_menu(
+                                    &response,
+                                    &display_name,
+                                    friend.uin,
+                                    &friend.avatar_url(),
+                                );
+                                if response.clicked() {
+                                    directory.pending_target = Some(ContactTarget {
+                                        room_id: friend.room_id(),
+                                        room_name: display_name,
+                                    });
+                                }
+                            }
+                        },
+                    );
+                }
+            }
+            ContactTab::Groups => {
+                let filtered = directory
+                    .groups
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, group)| group.matches_query(&query).then_some(index))
+                    .collect::<Vec<_>>();
+                if filtered.is_empty() {
+                    let message = if directory.groups_loading {
+                        "正在加载群..."
+                    } else if directory.groups_loaded {
+                        "没有匹配的群"
+                    } else {
+                        "群列表尚未加载"
+                    };
+                    ui.weak(message);
+                } else {
+                    let row_height = 54.0 + ui.spacing().item_spacing.y;
+                    egui::ScrollArea::vertical().show_rows(
+                        ui,
+                        row_height,
+                        filtered.len(),
+                        |ui, rows| {
+                            for row in rows {
+                                let group = &directory.groups[filtered[row]];
+                                let display_name = group.display_name();
+                                let secondary = if group.group_name.trim().is_empty()
+                                    || group.group_name.trim() == display_name
+                                {
+                                    format!("群 {}", group.group_id.abs())
+                                } else {
+                                    format!(
+                                        "{} · 群 {}",
+                                        group.group_name.trim(),
+                                        group.group_id.abs()
+                                    )
+                                };
+                                let response = Self::render_contact_row(
+                                    ui,
+                                    &display_name,
+                                    &secondary,
+                                    &group.avatar_url(),
+                                );
+                                Self::contact_context_menu(
+                                    &response,
+                                    &display_name,
+                                    group.group_id,
+                                    &group.avatar_url(),
+                                );
+                                if response.clicked() {
+                                    directory.pending_target = Some(ContactTarget {
+                                        room_id: group.room_id(),
+                                        room_name: group.room_name(),
+                                    });
+                                }
+                            }
+                        },
+                    );
+                }
+            }
         }
     }
 

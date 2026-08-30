@@ -622,9 +622,11 @@ impl IcaApp {
                     .and_then(JsonValue::as_str)
                     .unwrap_or_default();
                 let Some(items) = payload.get("items") else {
-                    state
-                        .contacts
-                        .fail_part(request_id, part, "联系人响应缺少 items".to_string());
+                    state.contacts.lock().unwrap().fail_part(
+                        request_id,
+                        part,
+                        "联系人响应缺少 items".to_string(),
+                    );
                     return;
                 };
 
@@ -639,7 +641,11 @@ impl IcaApp {
                                     .cmp(&right.display_name().to_lowercase())
                                     .then(left.uin.cmp(&right.uin))
                             });
-                            state.contacts.apply_friends(request_id, friends);
+                            state
+                                .contacts
+                                .lock()
+                                .unwrap()
+                                .apply_friends(request_id, friends);
                         }
                         Err(error) => {
                             Self::log_event_parse_failure(
@@ -649,7 +655,11 @@ impl IcaApp {
                                 items,
                             );
                             let message = format!("好友列表解析失败: {error}");
-                            if state.contacts.fail_part(request_id, part, message.clone()) {
+                            if state.contacts.lock().unwrap().fail_part(
+                                request_id,
+                                part,
+                                message.clone(),
+                            ) {
                                 state.last_error = Some(message);
                             }
                         }
@@ -664,7 +674,11 @@ impl IcaApp {
                                     .cmp(&right.display_name().to_lowercase())
                                     .then(left.group_id.cmp(&right.group_id))
                             });
-                            state.contacts.apply_groups(request_id, groups);
+                            state
+                                .contacts
+                                .lock()
+                                .unwrap()
+                                .apply_groups(request_id, groups);
                         }
                         Err(error) => {
                             Self::log_event_parse_failure(
@@ -674,7 +688,11 @@ impl IcaApp {
                                 items,
                             );
                             let message = format!("群列表解析失败: {error}");
-                            if state.contacts.fail_part(request_id, part, message.clone()) {
+                            if state.contacts.lock().unwrap().fail_part(
+                                request_id,
+                                part,
+                                message.clone(),
+                            ) {
                                 state.last_error = Some(message);
                             }
                         }
@@ -693,7 +711,12 @@ impl IcaApp {
                     .unwrap_or_default();
                 let message =
                     Self::payload_message(payload).unwrap_or_else(|| "联系人请求失败".to_string());
-                if state.contacts.fail_part(request_id, part, message.clone()) {
+                if state
+                    .contacts
+                    .lock()
+                    .unwrap()
+                    .fail_part(request_id, part, message.clone())
+                {
                     state.last_error = Some(message);
                 }
             }

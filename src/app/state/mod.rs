@@ -688,7 +688,7 @@ pub struct BridgeState {
     pub forward_viewer: Arc<Mutex<ForwardViewerState>>,
     pub room_search_query: String,
     /// 从当前 bridge 获取、用于发起新会话的好友和群列表。
-    pub contacts: ContactDirectory,
+    pub contacts: Arc<Mutex<ContactDirectory>>,
     /// 当前 bridge 的聊天记录搜索窗口状态。
     pub message_search: MessageSearchState,
     pub member_history: MemberHistoryState,
@@ -726,7 +726,7 @@ impl BridgeState {
             forward_target_as_merged: true,
             forward_viewer: Arc::new(Mutex::new(ForwardViewerState::default())),
             room_search_query: String::new(),
-            contacts: ContactDirectory::default(),
+            contacts: Arc::new(Mutex::new(ContactDirectory::default())),
             message_search: MessageSearchState::default(),
             member_history: MemberHistoryState::default(),
         }
