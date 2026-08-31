@@ -17,11 +17,21 @@ fn room_id(payload: &JsonValue) -> i64 {
         .unwrap_or_default()
 }
 
+/// 处理本模块负责的事件；返回 false 表示事件不属于这里，交给下一个模块。
+pub(super) fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> bool {
+    match event_name {
+        "groupAnnouncementsResponse" => apply_response(state, payload),
+        "groupAnnouncementsFailed" => apply_failure(state, payload),
+        _ => return false,
+    }
+    true
+}
+
 /// 处理公告 CGI 的原始响应。
 ///
 /// 传输层只保证拿到了 JSON，`ec` 语义在这里通过 `parse_announcement_list` 判定，
 /// 因此接口层面的失败（未登录、无权限）与网络失败会走到同一个错误展示。
-pub(super) fn apply_response(state: &mut BridgeState, payload: &JsonValue) {
+fn apply_response(state: &mut BridgeState, payload: &JsonValue) {
     let request_id = request_id(payload);
     let room_id = room_id(payload);
     let viewer = state.group_announcement_viewer.clone();
@@ -55,7 +65,7 @@ pub(super) fn apply_response(state: &mut BridgeState, payload: &JsonValue) {
     }
 }
 
-pub(super) fn apply_failure(state: &mut BridgeState, payload: &JsonValue) {
+fn apply_failure(state: &mut BridgeState, payload: &JsonValue) {
     let request_id = request_id(payload);
     let room_id = room_id(payload);
     let message = payload
