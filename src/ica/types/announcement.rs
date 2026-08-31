@@ -70,15 +70,51 @@ pub fn resolve_bkn(online_bkn: i64, cookie: &str) -> Option<i64> {
     Some(bkn_from_skey(skey))
 }
 
-/// 公告正文里的配图。
+/// 公告配图的 CDN 前缀。
 ///
-/// 目前只读取图片标识与尺寸：手Q H5 是自己拼接图片 URL 的，公开资料里没有
-/// 稳定可靠的拼接规则，先如实保留原始字段，等实际响应样本确认后再补渲染。
+/// 取自手Q 群公告 H5 自身的实现（`index.bundle.js` 里
+/// `"//gdynamic.qpic.cn/gdynamic/".concat(pics[0].id, "/628")`），
+/// 路径末段是目标宽度，实测 628 为列表用尺寸、0 为原图。
+const ANNOUNCEMENT_IMAGE_BASE: &str = "https://gdynamic.qpic.cn/gdynamic";
+
+/// 列表缩略图宽度，与手Q H5 保持一致。
+const ANNOUNCEMENT_THUMBNAIL_WIDTH: u32 = 628;
+
+/// 公告正文里的配图。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupAnnouncementImage {
+    /// CDN 上的图片标识，URL 只由它拼成，与群号和公告 id 无关。
     pub id: String,
-    pub width: String,
-    pub height: String,
+    /// CGI 声明的原始像素宽高，缺失或非数字时为 None。
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+impl GroupAnnouncementImage {
+    /// 列表中展示用的缩略图。
+    pub fn thumbnail_url(&self) -> String {
+        format!(
+            "{ANNOUNCEMENT_IMAGE_BASE}/{}/{ANNOUNCEMENT_THUMBNAIL_WIDTH}",
+            self.id
+        )
+    }
+
+    /// 原图；宽度位传 0 表示不缩放。
+    pub fn original_url(&self) -> String {
+        format!("{ANNOUNCEMENT_IMAGE_BASE}/{}/0", self.id)
+    }
+
+    /// 按声明的宽高比算出限定宽度下的显示高度。
+    ///
+    /// 图片解码完成前 egui 不知道真实尺寸，先用这个值占位可以避免列表在
+    /// 图片陆续加载时反复跳动。宽高缺失时返回 None，交给调用方用默认高度。
+    pub fn display_height(&self, display_width: f32) -> Option<f32> {
+        let (width, height) = (self.width?, self.height?);
+        if width == 0 {
+            return None;
+        }
+        Some(display_width * height as f32 / width as f32)
+    }
 }
 
 /// 一条群公告。
@@ -97,6 +133,8 @@ pub struct GroupAnnouncement {
     pub read_count: Option<i64>,
     /// 是否要求群成员确认收到。
     pub confirm_required: bool,
+    /// 是否置顶；手Q H5 用 `pinned === 1` 判断。
+    pub pinned: bool,
     /// 原始 feed，供界面复制排查用。
     pub raw: JsonValue,
 }
@@ -117,18 +155,23 @@ fn json_i64(value: &JsonValue) -> Option<i64> {
     }
 }
 
-/// 还原公告正文。
+/// 配图宽高在 CGI 里是字符串形式的数字。
+fn json_u32(value: &JsonValue) -> Option<u32> {
+    json_i64(value).and_then(|value| u32::try_from(value).ok())
+}
+
+/// 解一层 HTML 实体。
 ///
-/// CGI 返回的正文是 HTML 片段：换行是 `\r\n`，空格和符号被转义成 HTML 实体。
-/// 这里统一成界面可直接显示的纯文本，只解一层实体，避免把用户原文二次解释。
-pub fn decode_announcement_text(value: &str) -> String {
-    let normalized = value.replace("\r\n", "\n").replace('\r', "\n");
-    if !normalized.contains('&') {
-        return normalized;
+/// 手Q H5 的 `decodeText` 是按 `&amp;` → `&#10;` → `&nbsp;` 顺序做多次全局替换的，
+/// 那种写法会把正文里的 `&amp;#10;` 先变成 `&#10;` 再变成换行，等于二次解释用户原文。
+/// 这里改为单次扫描：每个实体只解一次，因此 `&amp;#10;` 会稳定还原成字面量 `&#10;`。
+fn decode_entities(value: &str) -> String {
+    if !value.contains('&') {
+        return value.to_string();
     }
 
-    let mut decoded = String::with_capacity(normalized.len());
-    let mut remaining = normalized.as_str();
+    let mut decoded = String::with_capacity(value.len());
+    let mut remaining = value;
     while let Some(start) = remaining.find('&') {
         decoded.push_str(&remaining[..start]);
         let tail = &remaining[start..];
@@ -167,6 +210,35 @@ pub fn decode_announcement_text(value: &str) -> String {
     decoded
 }
 
+/// 剥离正文里的 C0 控制字符，只保留换行与制表符。
+///
+/// QQ 会用 U+0001 / U+0002 把正文中的链接包起来，这类字符在桌面端会渲染成豆腐块。
+fn strip_control_characters(value: &str) -> String {
+    if !value
+        .chars()
+        .any(|ch| ch.is_control() && ch != '\n' && ch != '\t')
+    {
+        return value.to_string();
+    }
+    value
+        .chars()
+        .filter(|ch| !ch.is_control() || *ch == '\n' || *ch == '\t')
+        .collect()
+}
+
+/// 还原公告正文。
+///
+/// CGI 下发的是给手Q H5 用的富文本片段，需要三步才能变成可直接显示的纯文本：
+/// 1. 解一层 HTML 实体：换行写作 `&#10;`，空格写作 `&nbsp;`；
+/// 2. 统一换行：正文里会出现 `\r` 紧跟 `&#10;` 的组合，必须先解开实体，
+///    才能把它识别成一个 CRLF 而不是两个换行；
+/// 3. 剥离 C0 控制字符，去掉 QQ 包裹链接用的 U+0001 / U+0002。
+pub fn decode_announcement_text(value: &str) -> String {
+    let decoded = decode_entities(value);
+    let normalized = decoded.replace("\r\n", "\n").replace('\r', "\n");
+    strip_control_characters(&normalized)
+}
+
 fn parse_images(message: &JsonValue) -> Vec<GroupAnnouncementImage> {
     message["pics"]
         .as_array()
@@ -175,8 +247,8 @@ fn parse_images(message: &JsonValue) -> Vec<GroupAnnouncementImage> {
                 .iter()
                 .map(|picture| GroupAnnouncementImage {
                     id: json_string(&picture["id"]),
-                    width: json_string(&picture["w"]),
-                    height: json_string(&picture["h"]),
+                    width: json_u32(&picture["w"]),
+                    height: json_u32(&picture["h"]),
                 })
                 .filter(|picture| !picture.id.is_empty())
                 .collect()
@@ -200,6 +272,7 @@ fn parse_feed(feed: &JsonValue) -> GroupAnnouncement {
         images: parse_images(message),
         read_count: json_i64(&feed["read_num"]),
         confirm_required: json_i64(&feed["settings"]["confirm_required"]).unwrap_or_default() != 0,
+        pinned: json_i64(&feed["pinned"]).unwrap_or_default() == 1,
         raw: feed.clone(),
     }
 }
@@ -229,9 +302,113 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        GroupAnnouncementImage, bkn_from_skey, decode_announcement_text, parse_announcement_list,
-        resolve_bkn, skey_from_cookie,
+        GroupAnnouncement, GroupAnnouncementImage, bkn_from_skey, decode_announcement_text,
+        parse_announcement_list, resolve_bkn, skey_from_cookie,
     };
+
+    /// 线上真实公告的响应片段，用来锁住正文与配图的还原结果。
+    fn real_world_feed() -> GroupAnnouncement {
+        parse_announcement_list(&json!({
+            "ec": 0,
+            "feeds": [{
+                "cn": 0,
+                "fid": "c4957b3500000000a4403f61499b0800",
+                "fn": 0,
+                "is_all_confirm": 0,
+                "is_read": 0,
+                "msg": {
+                    "pics": [{
+                        "h": "654",
+                        "id": "WtanI6jP7DxNPpicIQwCC0bYR9dVHsiaBQGfQPTPo0nwY",
+                        "w": "1086"
+                    }],
+                    "text": "HWS的新网页地图上线啦！&#10;HWS.shenjack.top:5400&#10;欢迎来当云监工！&#10;\u{1}https://kaihei.co/pdkQBI\u{2}\r&#10;开黑啦的服务器链接（",
+                    "text_face": "HWS的新网页地图上线啦！&#10;HWS.shenjack.top:5400&#10;欢迎来当云监工！&#10;\u{1}https://kaihei.co/pdkQBI\u{2}\r&#10;开黑啦的服务器链接（",
+                    "title": "群公告"
+                },
+                "pubt": 1631535268,
+                "read_num": 67,
+                "settings": {
+                    "confirm_required": 0,
+                    "is_show_edit_card": 0,
+                    "remind_ts": 0,
+                    "tip_window_type": 0
+                },
+                "type": 6,
+                "u": 3695888,
+                "vn": 0
+            }]
+        }))
+        .expect("真实样本应解析成功")
+        .remove(0)
+    }
+
+    #[test]
+    fn real_feed_text_keeps_crlf_written_as_cr_plus_entity_as_a_single_break() {
+        let feed = real_world_feed();
+
+        // 正文换行写作 &#10;，其中一处前面还带一个裸 \r。实体必须先解开，
+        // 才能把 "\r" + "&#10;" 认成一个 CRLF；先规整换行会多出一个空行。
+        assert_eq!(
+            feed.text,
+            "HWS的新网页地图上线啦！\nHWS.shenjack.top:5400\n欢迎来当云监工！\nhttps://kaihei.co/pdkQBI\n开黑啦的服务器链接（"
+        );
+        assert_eq!(feed.text.lines().count(), 5);
+
+        // QQ 用 U+0001 / U+0002 包住正文里的链接，桌面端必须剥掉，否则渲染成豆腐块。
+        assert!(
+            !feed
+                .text
+                .chars()
+                .any(|ch| ch.is_control() && ch != '\n' && ch != '\t'),
+            "正文不应残留换行以外的控制字符"
+        );
+
+        assert_eq!(feed.sender_id, 3695888);
+        assert_eq!(feed.read_count, Some(67));
+        assert!(!feed.confirm_required);
+        assert!(!feed.pinned);
+    }
+
+    #[test]
+    fn image_urls_follow_the_h5_gdynamic_template() {
+        let feed = real_world_feed();
+        let [image] = feed.images.as_slice() else {
+            panic!("真实样本应有且仅有一张配图");
+        };
+
+        // 与手Q H5 的 "//gdynamic.qpic.cn/gdynamic/{id}/628" 一致，且与群号、公告 id 无关。
+        assert_eq!(
+            image.thumbnail_url(),
+            "https://gdynamic.qpic.cn/gdynamic/WtanI6jP7DxNPpicIQwCC0bYR9dVHsiaBQGfQPTPo0nwY/628"
+        );
+        assert_eq!(
+            image.original_url(),
+            "https://gdynamic.qpic.cn/gdynamic/WtanI6jP7DxNPpicIQwCC0bYR9dVHsiaBQGfQPTPo0nwY/0"
+        );
+
+        // 1086x654 的图按 300 宽展示时的占位高度。
+        let height = image.display_height(300.0).expect("宽高齐全应能算出高度");
+        assert!((height - 300.0 * 654.0 / 1086.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn images_without_usable_size_fall_back_to_the_caller_default() {
+        let missing = GroupAnnouncementImage {
+            id: "x".to_string(),
+            width: None,
+            height: Some(10),
+        };
+        assert_eq!(missing.display_height(100.0), None);
+
+        // 宽度为 0 会让比例计算除零，必须挡在返回值里。
+        let zero_width = GroupAnnouncementImage {
+            id: "x".to_string(),
+            width: Some(0),
+            height: Some(10),
+        };
+        assert_eq!(zero_width.display_height(100.0), None);
+    }
 
     #[test]
     fn bkn_derivation_keeps_oicq_32_bit_truncation_semantics() {
@@ -289,10 +466,11 @@ mod tests {
                     "u": "10001",
                     "pubt": 1600000000,
                     "read_num": "12",
+                    "pinned": 1,
                     "settings": { "confirm_required": 1 },
                     "msg": {
                         "title": "标&amp;题",
-                        "text": "第一行\r\n第二行&nbsp;结束",
+                        "text": "第一行&#10;第二行&nbsp;结束",
                         "pics": [{ "id": "pic-1", "w": "800", "h": "600" }, { "w": "1", "h": "1" }]
                     }
                 },
@@ -306,6 +484,7 @@ mod tests {
         assert_eq!(first.sender_id, 10001);
         assert_eq!(first.read_count, Some(12));
         assert!(first.confirm_required);
+        assert!(first.pinned);
         assert_eq!(first.title, "标&题");
         assert_eq!(first.text, "第一行\n第二行 结束");
         // 缺 id 的配图无法定位，直接丢弃。
@@ -313,8 +492,8 @@ mod tests {
             first.images,
             vec![GroupAnnouncementImage {
                 id: "pic-1".to_string(),
-                width: "800".to_string(),
-                height: "600".to_string(),
+                width: Some(800),
+                height: Some(600),
             }]
         );
 
@@ -323,12 +502,16 @@ mod tests {
         assert_eq!(second.publish_time, 0);
         assert_eq!(second.read_count, None);
         assert!(!second.confirm_required);
+        assert!(!second.pinned);
         assert!(second.text.is_empty());
     }
 
     #[test]
     fn text_decoding_unescapes_one_layer_and_keeps_unknown_entities() {
+        // 手Q H5 的 decodeText 会先把 &amp; 换成 &，导致 &amp;#10; 被二次解释成换行；
+        // 单次扫描保证用户原文里的 &#10; 字面量原样保留。
         assert_eq!(decode_announcement_text("a&amp;amp;b"), "a&amp;b");
+        assert_eq!(decode_announcement_text("a&amp;#10;b"), "a&#10;b");
         assert_eq!(decode_announcement_text("&unknown; tail"), "&unknown; tail");
         assert_eq!(
             decode_announcement_text("no semicolon &amp"),

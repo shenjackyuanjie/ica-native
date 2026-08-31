@@ -1,4 +1,5 @@
 use crate::app::IcaApp;
+use crate::app::media::ImageSource;
 use crate::app::state::GroupAnnouncementViewerState;
 use crate::ica::IcaCommand;
 use crate::ica::types::RoomId;
@@ -6,6 +7,12 @@ use crate::ica::types::announcement::GroupAnnouncement;
 
 /// 折叠状态下正文最多展示的行数。
 const COLLAPSED_TEXT_LINES: usize = 4;
+
+/// 配图在列表里的最大显示宽度。
+const IMAGE_DISPLAY_WIDTH: f32 = 320.0;
+
+/// 无法从 CGI 拿到宽高时的占位高度，避免加载过程中列表反复跳动。
+const IMAGE_FALLBACK_HEIGHT: f32 = 180.0;
 
 /// 公告发布时间是秒级时间戳，按本地时区展示。
 fn format_publish_time(timestamp: i64) -> String {
@@ -47,9 +54,19 @@ fn announcement_headline(announcement: &GroupAnnouncement) -> String {
         .unwrap_or_else(|| "(无标题公告)".to_string())
 }
 
-fn render_announcement(ui: &mut egui::Ui, announcement: &GroupAnnouncement, expanded: &mut bool) {
+fn render_announcement(
+    ui: &mut egui::Ui,
+    announcement: &GroupAnnouncement,
+    expanded: &mut bool,
+    pending_image_url: &mut Option<String>,
+) {
     egui::Frame::group(ui.style()).show(ui, |ui| {
-        ui.strong(announcement_headline(announcement));
+        ui.horizontal_wrapped(|ui| {
+            if announcement.pinned {
+                ui.colored_label(egui::Color32::LIGHT_BLUE, "置顶");
+            }
+            ui.strong(announcement_headline(announcement));
+        });
         ui.horizontal_wrapped(|ui| {
             ui.weak(format_publish_time(announcement.publish_time));
             if announcement.sender_id > 0 {
@@ -81,12 +98,22 @@ fn render_announcement(ui: &mut egui::Ui, announcement: &GroupAnnouncement, expa
             }
         }
 
-        if !announcement.images.is_empty() {
-            // 手Q H5 自己拼接配图 URL，规则未确认前先如实说明，不展示可能失效的图片。
-            ui.weak(format!(
-                "含 {} 张配图，暂不支持在客户端渲染",
-                announcement.images.len()
-            ));
+        for image in &announcement.images {
+            let width = IMAGE_DISPLAY_WIDTH.min(ui.available_width());
+            // 图片解码完成前 egui 不知道真实尺寸，先按 CGI 声明的宽高比占位。
+            let height = image
+                .display_height(width)
+                .unwrap_or(IMAGE_FALLBACK_HEIGHT)
+                .min(width * 2.0);
+            let response = ui.add_sized(
+                [width, height],
+                egui::Image::from_uri(image.thumbnail_url())
+                    .maintain_aspect_ratio(true)
+                    .sense(egui::Sense::click()),
+            );
+            if response.on_hover_text("点击查看原图").clicked() {
+                *pending_image_url = Some(image.original_url());
+            }
         }
 
         ui.horizontal_wrapped(|ui| {
@@ -137,12 +164,15 @@ fn render_viewer(ui: &mut egui::Ui, viewer: &mut GroupAnnouncementViewerState) {
         return;
     }
 
+    // 借用期内不能直接改 `viewer`，先把交互结果收集起来，滚动区结束后统一写回。
     let mut toggled_fid = None;
+    let mut pending_image_url = None;
+    let expanded_fid = viewer.expanded_fid.clone();
     egui::ScrollArea::vertical().show(ui, |ui| {
         for announcement in &viewer.announcements {
-            let mut expanded = viewer.expanded_fid.as_deref() == Some(announcement.fid.as_str());
+            let mut expanded = expanded_fid.as_deref() == Some(announcement.fid.as_str());
             let was_expanded = expanded;
-            render_announcement(ui, announcement, &mut expanded);
+            render_announcement(ui, announcement, &mut expanded, &mut pending_image_url);
             if expanded != was_expanded {
                 toggled_fid = Some((announcement.fid.clone(), expanded));
             }
@@ -150,6 +180,9 @@ fn render_viewer(ui: &mut egui::Ui, viewer: &mut GroupAnnouncementViewerState) {
     });
     if let Some((fid, expanded)) = toggled_fid {
         viewer.expanded_fid = expanded.then_some(fid);
+    }
+    if pending_image_url.is_some() {
+        viewer.pending_image_url = pending_image_url;
     }
 }
 
@@ -206,6 +239,20 @@ impl IcaApp {
             .group_announcement_viewer
             .clone();
 
+        // 配图预览要复用主界面的图片查看器，只能回到主循环里打开。
+        let pending_image_url = viewer_state.lock().unwrap().pending_image_url.take();
+        if let Some(url) = pending_image_url {
+            let sources = viewer_state
+                .lock()
+                .unwrap()
+                .announcements
+                .iter()
+                .flat_map(|announcement| announcement.images.iter())
+                .map(|image| ImageSource::url(image.original_url()))
+                .collect::<Vec<_>>();
+            self.open_image_viewer_with_sources(ImageSource::url(url), sources);
+        }
+
         let reload_target = {
             let mut viewer = viewer_state.lock().unwrap();
             std::mem::take(&mut viewer.reload_requested)
@@ -256,8 +303,9 @@ impl IcaApp {
                     render_viewer(ui, &mut viewport_state.lock().unwrap());
                 });
 
-                // 刷新要回到主视口才能发命令，这里主动唤醒父窗口。
-                if viewport_state.lock().unwrap().reload_requested {
+                // 刷新与打开原图都要回到主视口才能处理，这里主动唤醒父窗口。
+                let viewer = viewport_state.lock().unwrap();
+                if viewer.reload_requested || viewer.pending_image_url.is_some() {
                     viewport_ctx.request_repaint_of(parent_viewport_id);
                 }
             },

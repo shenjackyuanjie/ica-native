@@ -15,6 +15,8 @@ pub struct GroupAnnouncementViewerState {
     /// 公告窗口跑在自己的 egui 上下文里，拿不到 `IcaApp`，
     /// 因此“刷新”只置位，真正的命令发送仍由主循环完成。
     pub reload_requested: bool,
+    /// 待打开的配图原图 URL；同样由主循环消费后交给图片预览窗口。
+    pub pending_image_url: Option<String>,
     /// 单调递增的请求序号，用于丢弃过期响应。
     request_id: u64,
 }
@@ -34,6 +36,7 @@ impl GroupAnnouncementViewerState {
         self.loading = true;
         self.last_error = None;
         self.reload_requested = false;
+        self.pending_image_url = None;
         self.request_id
     }
 
@@ -41,11 +44,14 @@ impl GroupAnnouncementViewerState {
         &mut self,
         request_id: u64,
         room_id: RoomId,
-        announcements: Vec<GroupAnnouncement>,
+        mut announcements: Vec<GroupAnnouncement>,
     ) -> bool {
         if !self.accepts(request_id, room_id) {
             return false;
         }
+        // 置顶公告固定排在最前；`sort_by_key` 是稳定排序，
+        // 因此两组内部都保持 CGI 下发的发布时间倒序。
+        announcements.sort_by_key(|announcement| !announcement.pinned);
         self.expanded_fid = self
             .expanded_fid
             .take()
@@ -83,9 +89,41 @@ mod tests {
     use crate::ica::types::announcement::{GroupAnnouncement, parse_announcement_list};
 
     fn announcement(fid: &str) -> GroupAnnouncement {
-        parse_announcement_list(&json!({ "ec": 0, "feeds": [{ "fid": fid }] }))
-            .expect("构造测试公告")
-            .remove(0)
+        pinned_announcement(fid, false)
+    }
+
+    fn pinned_announcement(fid: &str, pinned: bool) -> GroupAnnouncement {
+        parse_announcement_list(&json!({
+            "ec": 0,
+            "feeds": [{ "fid": fid, "pinned": i64::from(pinned) }]
+        }))
+        .expect("构造测试公告")
+        .remove(0)
+    }
+
+    #[test]
+    fn pinned_announcements_move_to_the_top_without_reordering_their_peers() {
+        let mut viewer = GroupAnnouncementViewerState::default();
+        let request = viewer.begin_request(-1001, "群一".to_string());
+        viewer.apply_response(
+            request,
+            -1001,
+            vec![
+                announcement("普通1"),
+                pinned_announcement("置顶1", true),
+                announcement("普通2"),
+                pinned_announcement("置顶2", true),
+            ],
+        );
+
+        // CGI 下发的是按发布时间倒序的混合列表，置顶要提到最前，
+        // 但两组内部的相对顺序不能被打乱。
+        let order = viewer
+            .announcements
+            .iter()
+            .map(|item| item.fid.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(order, ["置顶1", "置顶2", "普通1", "普通2"]);
     }
 
     #[test]
