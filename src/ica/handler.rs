@@ -1,9 +1,6 @@
 use rust_socketio::Payload;
 use rust_socketio::asynchronous::Client;
 
-use futures_util::future::BoxFuture;
-use std::time::Duration;
-
 use serde_json::Value as JsonValue;
 use serde_json::json;
 
@@ -14,8 +11,7 @@ use crate::ica::event::BridgeEvent;
 use crate::ica::types::message::SendMessage;
 
 use super::client;
-use super::command::{GROUP_BAN_MAX_DURATION, IcaCommand, emit_ui_event};
-use super::file_manager::call_file_manager;
+use super::command::{IcaCommand, emit_ui_event};
 
 mod announcement;
 mod contacts;
@@ -24,6 +20,18 @@ mod forward;
 mod history;
 mod http_send;
 mod message_payload;
+
+// 命令分发的具体实现按领域拆分，本文件只保留「命令 -> 处理函数」的映射。
+mod account_commands;
+mod bridge_api_commands;
+mod context;
+mod forward_commands;
+mod group_commands;
+mod history_commands;
+mod message_commands;
+mod room_commands;
+
+use context::CommandContext;
 use file_upload::upload_and_send_file;
 use http_send::{http_send_message, request_send_token};
 use message_payload::build_multi_image_message;
@@ -108,6 +116,10 @@ async fn send_message(
     }
 }
 
+/// 把一条 GUI 命令交给对应领域的实现。
+///
+/// 这里刻意保持穷尽匹配：新增 IcaCommand 变体时会在本函数编译失败，
+/// 提醒补上对应的处理函数，而不会被默认分支悄悄吞掉。
 pub(super) async fn handle_command(
     command: IcaCommand,
     client: &Client,
@@ -116,51 +128,32 @@ pub(super) async fn handle_command(
     socket_url: &str,
     api_base_url: &str,
 ) {
+    let ctx = CommandContext {
+        client,
+        event_tx,
+        bridge_key,
+        socket_url,
+        api_base_url,
+    };
     match command {
-        IcaCommand::FetchMessages(room_id) => {
-            history::fetch_messages(client, event_tx, bridge_key, room_id).await
-        }
+        IcaCommand::FetchMessages(room_id) => history_commands::fetch_messages(ctx, room_id).await,
         IcaCommand::FetchLatestHistory {
             room_id,
             current_loaded_messages,
-        } => {
-            history::fetch_latest_history(
-                client,
-                event_tx,
-                bridge_key,
-                room_id,
-                current_loaded_messages,
-            )
-            .await
-        }
+        } => history_commands::fetch_latest_history(ctx, room_id, current_loaded_messages).await,
         IcaCommand::FetchOlderMessages {
             room_id,
             before_time,
             before_id,
-        } => {
-            history::fetch_older_messages(
-                client,
-                event_tx,
-                bridge_key,
-                room_id,
-                before_time,
-                before_id,
-            )
-            .await
-        }
+        } => history_commands::fetch_older_messages(ctx, room_id, before_time, before_id).await,
         IcaCommand::FetchGroupMembers { room_id } => {
-            history::fetch_group_members(client, event_tx, bridge_key, room_id).await
+            history_commands::fetch_group_members(ctx, room_id).await
         }
         IcaCommand::FetchGroupAnnouncements {
             request_id,
             room_id,
             bkn,
-        } => {
-            announcement::fetch_group_announcements(
-                client, event_tx, bridge_key, request_id, room_id, bkn,
-            )
-            .await
-        }
+        } => group_commands::fetch_group_announcements(ctx, request_id, room_id, bkn).await,
         IcaCommand::FetchMessagesBySender {
             request_id,
             room_id,
@@ -168,17 +161,13 @@ pub(super) async fn handle_command(
             offset,
             snapshot_time,
         } => {
-            history::fetch_messages_by_sender(
-                client,
-                event_tx,
-                bridge_key,
-                history::FetchMessagesBySenderRequest {
-                    request_id,
-                    room_id,
-                    sender_id,
-                    offset,
-                    snapshot_time,
-                },
+            history_commands::fetch_messages_by_sender(
+                ctx,
+                request_id,
+                room_id,
+                sender_id,
+                offset,
+                snapshot_time,
             )
             .await
         }
@@ -186,86 +175,13 @@ pub(super) async fn handle_command(
             room_id,
             target_id,
             duration,
-        } => {
-            let Some(group_id) = room_id
-                .checked_abs()
-                .filter(|_| room_id < 0 && duration <= GROUP_BAN_MAX_DURATION)
-            else {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "setGroupBan",
-                        "roomId": room_id,
-                        "message": "群禁言参数无效",
-                    }),
-                );
-                return;
-            };
-
-            if let Err(error) = client
-                .emit(
-                    "setGroupBan",
-                    vec![json!(group_id), json!(target_id), json!(duration)],
-                )
-                .await
-            {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "setGroupBan",
-                        "roomId": room_id,
-                        "message": error.to_string(),
-                    }),
-                );
-            } else {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "groupBanRequested",
-                    json!({
-                        "roomId": room_id,
-                        "targetId": target_id,
-                        "duration": duration,
-                    }),
-                );
-
-                let client = client.clone();
-                let event_tx = event_tx.clone();
-                let bridge_key = bridge_key.to_string();
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    history::fetch_group_members(&client, &event_tx, &bridge_key, room_id).await;
-                });
-            }
-        }
-        IcaCommand::GetSystemMsg => {
-            history::get_system_messages(client, event_tx, bridge_key).await
-        }
+        } => group_commands::set_group_ban(ctx, room_id, target_id, duration).await,
+        IcaCommand::GetSystemMsg => account_commands::get_system_msg(ctx).await,
         IcaCommand::FetchContacts { request_id } => {
-            contacts::fetch_contacts(client, event_tx, bridge_key, request_id).await
+            account_commands::fetch_contacts(ctx, request_id).await
         }
-        IcaCommand::AddRoom(room) => {
-            let room_id = room.room_id;
-            if let Err(error) = client.emit("addRoom", json!(room)).await {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "addRoom",
-                        "roomId": room_id,
-                        "message": error.to_string(),
-                    }),
-                );
-            }
-        }
-        IcaCommand::SendMessage(message) => {
-            send_message(message, client, event_tx, bridge_key, api_base_url).await;
-        }
+        IcaCommand::AddRoom(room) => room_commands::add_room(ctx, room).await,
+        IcaCommand::SendMessage(message) => message_commands::send_chat_message(ctx, message).await,
         IcaCommand::SendImageMessage {
             room_id,
             content,
@@ -274,28 +190,10 @@ pub(super) async fn handle_command(
             image_type,
             image_data,
         } => {
-            let encoded_message = tokio::task::spawn_blocking(move || {
-                let mut message = SendMessage::new(content, room_id, reply_to);
-                message.set_mentions(&mentions);
-                message.set_img(image_data.as_ref(), &image_type, false);
-                message
-            })
-            .await;
-            match encoded_message {
-                Ok(message) => {
-                    send_message(message, client, event_tx, bridge_key, api_base_url).await;
-                }
-                Err(e) => emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "sendImageMessage",
-                        "roomId": room_id,
-                        "message": format!("图片编码任务失败: {e}"),
-                    }),
-                ),
-            }
+            message_commands::send_image_message(
+                ctx, room_id, content, reply_to, mentions, image_type, image_data,
+            )
+            .await
         }
         IcaCommand::SendMultiImageMessage {
             room_id,
@@ -304,114 +202,33 @@ pub(super) async fn handle_command(
             mentions,
             images,
         } => {
-            let encoded_message = tokio::task::spawn_blocking(move || {
-                build_multi_image_message(room_id, &content, reply_to.as_ref(), &mentions, &images)
-            })
-            .await;
-            match encoded_message {
-                Ok(message) => {
-                    send_message(message, client, event_tx, bridge_key, api_base_url).await;
-                }
-                Err(e) => emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "sendMultiImageMessage",
-                        "roomId": room_id,
-                        "message": format!("图片编码任务失败: {e}"),
-                    }),
-                ),
-            }
+            message_commands::send_multi_image_message(
+                ctx, room_id, content, reply_to, mentions, images,
+            )
+            .await
         }
         IcaCommand::SendRawMessage { room_id, content } => {
-            let payload = json!({
-                "messageType": "raw",
-                "roomId": room_id,
-                "content": content.to_string(),
-            });
-            if !client::send_string_message(client, &payload).await {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "sendRawMessage",
-                        "roomId": room_id,
-                        "message": "sendRawMessage 失败",
-                    }),
-                );
-            }
+            message_commands::send_raw_message(ctx, room_id, content).await
         }
         IcaCommand::SearchMessages {
             room_id,
             keyword,
             offset,
-        } => {
-            let tx = event_tx.clone();
-            let bridge_id = bridge_key.to_string();
-            let keyword_for_event = keyword.clone();
-            if let Err(e) = client
-                .emit_with_ack(
-                    "searchMessages",
-                    vec![
-                        json!(room_id),
-                        json!(keyword),
-                        json!(offset),
-                        JsonValue::Null,
-                        JsonValue::Null,
-                        JsonValue::Null,
-                    ],
-                    Duration::from_secs(15),
-                    move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
-                        let tx = tx.clone();
-                        let bridge_id = bridge_id.clone();
-                        let keyword = keyword_for_event.clone();
-                        Box::pin(async move {
-                            emit_ui_event(
-                                &tx,
-                                &bridge_id,
-                                "searchMessagesResponse",
-                                json!({
-                                    "roomId": room_id,
-                                    "keyword": keyword,
-                                    "offset": offset,
-                                    "messages": normalize_ack_list(ack_payload_values(&payload)),
-                                }),
-                            );
-                        })
-                    },
-                )
-                .await
-            {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "searchMessages",
-                        "roomId": room_id,
-                        "message": e.to_string(),
-                    }),
-                );
-            }
-        }
+        } => history_commands::search_messages(ctx, room_id, keyword, offset).await,
         IcaCommand::FetchForwardMessages {
             request_id,
             res_id,
             file_name,
             fallback_res_id,
         } => {
-            forward::fetch_forward_messages(
-                client,
-                event_tx,
-                bridge_key,
+            forward_commands::fetch_forward_messages(
+                ctx,
                 request_id,
                 res_id,
                 file_name,
                 fallback_res_id,
             )
-            .await;
+            .await
         }
         IcaCommand::SendMergedForward {
             nodes,
@@ -419,447 +236,88 @@ pub(super) async fn handle_command(
             origin,
             target_room_id,
         } => {
-            forward::send_merged_forward(
-                client,
-                event_tx,
-                bridge_key,
+            forward_commands::send_merged_forward(
+                ctx,
                 nodes,
                 direct_message,
                 origin,
                 target_room_id,
             )
-            .await;
+            .await
         }
         IcaCommand::SocketApiCall {
             event,
             args,
             expect_ack,
-        } => {
-            if expect_ack {
-                let event_for_cb = event.clone();
-                let tx = event_tx.clone();
-                let bridge_id = bridge_key.to_string();
-                if let Err(e) = client
-                    .emit_with_ack(
-                        event.as_str(),
-                        args,
-                        Duration::from_secs(15),
-                        move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
-                            let tx = tx.clone();
-                            let bridge_id = bridge_id.clone();
-                            let event = event_for_cb.clone();
-                            Box::pin(async move {
-                                emit_ui_event(
-                                    &tx,
-                                    &bridge_id,
-                                    "socketApiResponse",
-                                    json!({
-                                        "event": event,
-                                        "ack": ack_payload_values(&payload),
-                                    }),
-                                );
-                            })
-                        },
-                    )
-                    .await
-                {
-                    emit_ui_event(
-                        event_tx,
-                        bridge_key,
-                        "commandFailed",
-                        json!({
-                            "kind": "socketApiCall",
-                            "event": event,
-                            "message": e.to_string(),
-                        }),
-                    );
-                }
-            } else if let Err(e) = client.emit(event.as_str(), args).await {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "socketApiCall",
-                        "event": event,
-                        "message": e.to_string(),
-                    }),
-                );
-            } else {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "socketApiResponse",
-                    json!({
-                        "event": event,
-                        "sent": true,
-                    }),
-                );
-            }
-        }
+        } => bridge_api_commands::socket_api_call(ctx, event, args, expect_ack).await,
         IcaCommand::FileManagerCall {
             gin,
             event,
             args,
             expect_ack,
-        } => {
-            match call_file_manager(
-                client, event_tx, bridge_key, socket_url, gin, event, args, expect_ack,
-            )
-            .await
-            {
-                Ok(()) => {}
-                Err(e) => {
-                    emit_ui_event(
-                        event_tx,
-                        bridge_key,
-                        "commandFailed",
-                        json!({
-                            "kind": "fileManagerCall",
-                            "gin": gin,
-                            "message": e,
-                        }),
-                    );
-                }
-            }
-        }
+        } => bridge_api_commands::file_manager_call(ctx, gin, event, args, expect_ack).await,
         IcaCommand::UploadGroupFile {
             group_id,
             parent_id,
             file_name,
             file_data,
-        } => match file_upload::upload_group_file(
-            client, group_id, &parent_id, &file_name, &file_data,
-        )
-        .await
-        {
-            Ok(()) => emit_ui_event(
-                event_tx,
-                bridge_key,
-                "groupFileUploadCompleted",
-                json!({ "groupId": group_id, "fileName": file_name }),
-            ),
-            Err(error) => emit_ui_event(
-                event_tx,
-                bridge_key,
-                "commandFailed",
-                json!({ "kind": "uploadGroupFile", "roomId": -group_id, "message": error }),
-            ),
-        },
-        IcaCommand::PinRoom { room_id, pin } => {
-            if let Err(e) = client
-                .emit("pinRoom", vec![json!(room_id), json!(pin)])
-                .await
-            {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "pinRoom",
-                        "roomId": room_id,
-                        "message": e.to_string(),
-                    }),
-                );
-            }
+        } => {
+            group_commands::upload_group_file(ctx, group_id, parent_id, file_name, file_data).await
         }
-        IcaCommand::RemoveChat(room_id) => {
-            if let Err(e) = client.emit("removeChat", json!(room_id)).await {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "removeChat",
-                        "roomId": room_id,
-                        "message": e.to_string(),
-                    }),
-                );
-            }
-        }
+        IcaCommand::PinRoom { room_id, pin } => room_commands::pin_room(ctx, room_id, pin).await,
+        IcaCommand::RemoveChat(room_id) => room_commands::remove_chat(ctx, room_id).await,
         IcaCommand::IgnoreChat { room_id, room_name } => {
-            if let Err(e) = client
-                .emit("ignoreChat", json!({"id": room_id, "name": room_name}))
-                .await
-            {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "ignoreChat",
-                        "roomId": room_id,
-                        "message": e.to_string(),
-                    }),
-                );
-            }
+            room_commands::ignore_chat(ctx, room_id, room_name).await
         }
         IcaCommand::RemoveIgnoredChat(room_id) => {
-            if let Err(e) = client.emit("removeIgnoredChat", json!(room_id)).await {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "removeIgnoredChat",
-                        "roomId": room_id,
-                        "message": e.to_string(),
-                    }),
-                );
-            }
+            room_commands::remove_ignored_chat(ctx, room_id).await
         }
         IcaCommand::SetRoomPriority { room_id, priority } => {
-            if let Err(e) = client
-                .emit("setRoomPriority", vec![json!(room_id), json!(priority)])
-                .await
-            {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "setRoomPriority",
-                        "roomId": room_id,
-                        "message": e.to_string(),
-                    }),
-                );
-            }
+            room_commands::set_room_priority(ctx, room_id, priority).await
         }
         IcaCommand::ReportRead {
             room_id,
             message_id,
-        } => {
-            if let Err(e) = client.emit("reportRead", json!(message_id)).await {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "reportRead",
-                        "roomId": room_id,
-                        "message": e.to_string(),
-                    }),
-                );
-            }
-        }
+        } => room_commands::report_read(ctx, room_id, message_id).await,
         IcaCommand::SetOnlineStatus(status) => {
-            if let Err(e) = client.emit("setOnlineStatus", json!(status)).await {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "setOnlineStatus",
-                        "message": e.to_string(),
-                    }),
-                );
-            }
+            account_commands::set_online_status(ctx, status).await
         }
         IcaCommand::SendGroupSign { room_id } => {
-            if !client::send_room_sign_in(client, room_id).await {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "sendGroupSign",
-                        "roomId": room_id,
-                        "message": "sendGroupSign 失败",
-                    }),
-                );
-            }
+            group_commands::send_group_sign(ctx, room_id).await
         }
         IcaCommand::SendGroupPoke { room_id, target_id } => {
-            if !client::send_poke(client, room_id, target_id).await {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "sendGroupPoke",
-                        "roomId": room_id,
-                        "targetId": target_id,
-                        "message": "sendGroupPoke 失败",
-                    }),
-                );
-            }
+            group_commands::send_group_poke(ctx, room_id, target_id).await
         }
-        IcaCommand::StopFetchingHistory => {
-            if let Err(e) = client.emit("stopFetchingHistory", json!(null)).await {
-                tracing::warn!(error = %e, "发送 stopFetchingHistory 事件失败");
-            }
-        }
+        IcaCommand::StopFetchingHistory => history_commands::stop_fetching_history(ctx).await,
         IcaCommand::HideMessage {
             room_id,
             message_id,
-        } => {
-            if let Err(e) = client
-                .emit(
-                    "hideMessage",
-                    vec![json!(room_id), json!(message_id.clone())],
-                )
-                .await
-            {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "hideMessage",
-                        "roomId": room_id,
-                        "messageId": message_id,
-                        "message": e.to_string(),
-                    }),
-                );
-            }
-        }
+        } => message_commands::hide_message(ctx, room_id, message_id).await,
         IcaCommand::RevealMessage {
             room_id,
             message_id,
-        } => {
-            if let Err(e) = client
-                .emit(
-                    "revealMessage",
-                    vec![json!(room_id), json!(message_id.clone())],
-                )
-                .await
-            {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "revealMessage",
-                        "roomId": room_id,
-                        "messageId": message_id,
-                        "message": e.to_string(),
-                    }),
-                );
-            }
-        }
+        } => message_commands::reveal_message(ctx, room_id, message_id).await,
         IcaCommand::RenewMessage {
             room_id,
             message_id,
-        } => {
-            if let Err(e) = client
-                .emit(
-                    "renewMessage",
-                    vec![json!(room_id), json!(message_id.clone()), json!(null)],
-                )
-                .await
-            {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "renewMessage",
-                        "roomId": room_id,
-                        "messageId": message_id,
-                        "message": e.to_string(),
-                    }),
-                );
-            }
-        }
-        IcaCommand::DeleteMessage(message) => {
-            let message_id = message.message_id.clone();
-            if !client::delete_message(client, &message).await {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "deleteMessage",
-                        "messageId": message_id,
-                        "message": "deleteMessage 失败",
-                    }),
-                );
-            }
-        }
+        } => message_commands::renew_message(ctx, room_id, message_id).await,
+        IcaCommand::DeleteMessage(message) => message_commands::delete_message(ctx, message).await,
         IcaCommand::AddChatGroup {
             name,
             rooms,
             include_all_personal,
-        } => {
-            let payload = json!({
-                "name": name,
-                "rooms": rooms,
-                "includeAllPersonal": include_all_personal,
-            });
-            if let Err(e) = client.emit("addChatGroup", payload).await {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "addChatGroup",
-                        "message": e.to_string(),
-                    }),
-                );
-            }
-        }
-        IcaCommand::RemoveChatGroup { name } => {
-            if let Err(e) = client.emit("removeChatGroup", json!(name)).await {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "removeChatGroup",
-                        "message": e.to_string(),
-                    }),
-                );
-            }
-        }
+        } => room_commands::add_chat_group(ctx, name, rooms, include_all_personal).await,
+        IcaCommand::RemoveChatGroup { name } => room_commands::remove_chat_group(ctx, name).await,
         IcaCommand::UpdateChatGroup {
             name,
             rooms,
             include_all_personal,
-        } => {
-            let payload = json!({
-                "name": name,
-                "rooms": rooms,
-                "includeAllPersonal": include_all_personal,
-            });
-            if let Err(e) = client
-                .emit("updateChatGroup", vec![json!(name), payload])
-                .await
-            {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "updateChatGroup",
-                        "message": e.to_string(),
-                    }),
-                );
-            }
-        }
+        } => room_commands::update_chat_group(ctx, name, rooms, include_all_personal).await,
         IcaCommand::HandleRequest {
             request_type,
             flag,
             accept,
-        } => {
-            if let Err(e) = client
-                .emit(
-                    "handleRequest",
-                    vec![json!(request_type), json!(flag), json!(accept)],
-                )
-                .await
-            {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "handleRequest",
-                        "flag": flag,
-                        "message": e.to_string(),
-                    }),
-                );
-            }
-        }
+        } => account_commands::handle_request(ctx, request_type, flag, accept).await,
         IcaCommand::SendFileMessage {
             room_id,
             content,
@@ -869,25 +327,19 @@ pub(super) async fn handle_command(
             file_type,
             file_data,
         } => {
-            match upload_and_send_file(
-                client, room_id, content, reply_to, mentions, &file_name, &file_type, &file_data,
+            message_commands::send_file_message(
+                ctx,
+                room_id,
+                content,
+                reply_to,
+                mentions,
+                message_commands::OutgoingFile {
+                    name: file_name,
+                    file_type,
+                    data: file_data,
+                },
             )
             .await
-            {
-                Ok(()) => {}
-                Err(e) => {
-                    emit_ui_event(
-                        event_tx,
-                        bridge_key,
-                        "commandFailed",
-                        json!({
-                            "kind": "sendFileMessage",
-                            "roomId": room_id,
-                            "message": e,
-                        }),
-                    );
-                }
-            }
         }
     }
 }
