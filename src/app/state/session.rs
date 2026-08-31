@@ -9,7 +9,9 @@ use crate::ica::types::{
 };
 use crate::ica::{BridgeHandle, IcaCommand};
 
-use super::{AuthState, BridgeState, SelectedChatGroup, SocketState, VisibleRoomIndicesCache};
+use crate::app::SelectedChatGroup;
+
+use super::{AuthState, BridgeState, SocketState, VisibleRoomIndicesCache};
 
 const STATUS_HISTORY_LIMIT: usize = 100;
 
