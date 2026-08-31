@@ -20,10 +20,12 @@ use super::SelectedChatGroup;
 use super::contacts::ContactDirectory;
 use super::media::{ImageAction, ImageSource};
 
+mod announcement;
 mod conversation;
 mod session;
 mod ui;
 
+pub use announcement::{GroupAnnouncementAction, GroupAnnouncementViewerState};
 pub use conversation::ConversationState;
 pub use session::{
     BridgeSession, ConnectionState, RoomDirectory, StatusMessage, StatusMessageKind,
@@ -692,6 +694,8 @@ pub struct BridgeState {
     pub forward_target_room_ids: Vec<RoomId>,
     pub forward_target_as_merged: bool,
     pub forward_viewer: Arc<Mutex<ForwardViewerState>>,
+    /// 当前 bridge 的群公告窗口状态。
+    pub group_announcement_viewer: Arc<Mutex<GroupAnnouncementViewerState>>,
     pub room_search_query: String,
     /// 从当前 bridge 获取、用于发起新会话的好友和群列表。
     pub contacts: Arc<Mutex<ContactDirectory>>,
@@ -731,6 +735,9 @@ impl BridgeState {
             forward_target_room_ids: Vec::new(),
             forward_target_as_merged: true,
             forward_viewer: Arc::new(Mutex::new(ForwardViewerState::default())),
+            group_announcement_viewer: Arc::new(
+                Mutex::new(GroupAnnouncementViewerState::default()),
+            ),
             room_search_query: String::new(),
             contacts: Arc::new(Mutex::new(ContactDirectory::default())),
             message_search: MessageSearchState::default(),

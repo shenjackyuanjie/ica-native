@@ -2,6 +2,7 @@ use crate::ica::BridgeEvent;
 
 use super::media::MediaEvent;
 
+mod announcement;
 mod reducer;
 
 #[derive(Debug)]

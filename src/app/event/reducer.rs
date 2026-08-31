@@ -947,6 +947,8 @@ impl IcaApp {
                 state.conversation_mut(room_id).loading_group_members = true;
                 state.last_notice = Some("群管理请求已发送，稍后刷新成员列表".to_string());
             }
+            "groupAnnouncementsResponse" => super::announcement::apply_response(state, payload),
+            "groupAnnouncementsFailed" => super::announcement::apply_failure(state, payload),
             "socketApiResponse" | "fileManagerResponse" => {
                 let response = Self::json_preview(payload, 1024);
                 state.last_socket_api_response = Some(response.clone());
