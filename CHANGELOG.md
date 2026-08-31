@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Added
+- 群聊标题栏新增「群公告」入口，可查看当前群的公告列表。Icalingua++ 是用 Electron 套手Q 的 H5 页实现该功能的，ica-native 没有 WebView，改为向 Bridge 取 `qun.qq.com` 的 Cookie 后直连 QQ 的公告接口；bkn 优先使用 `onlineData` 下发值，缺失时按 Cookie 中的 skey 现算。公告以独立系统窗口展示，支持展开全文、复制正文与复制原始 JSON，等待期间切群或重复刷新不会被过期响应覆盖。本版本仅提供只读查看，暂不支持发布、删除与配图渲染。
+
 ### Changed
 - 已核查 Icalingua++ 2.26.6：Socket.IO Bridge 兼容协议仍为 2.26.5；旧版 @ 消息迁移仅涉及其自身存储维护，客户端既有的新旧 @ 标记显示兼容无需调整。
 - Socket.IO Bridge 兼容协议版本更新至 Icalingua++ 2.26.5，认证时会声明与新版 Bridge 一致的协议版本；历史消息分页改用新版的时间与消息 ID 游标，成员发言记录分页固定快照时间，避免新消息插入造成重复或遗漏。
