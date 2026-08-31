@@ -18,6 +18,14 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use super::{ack_payload_first, ack_payload_values, normalize_ack_list};
 use crate::ica::command::emit_ui_event;
 
+pub(super) struct FetchMessagesBySenderRequest {
+    pub request_id: u64,
+    pub room_id: i64,
+    pub sender_id: i64,
+    pub offset: usize,
+    pub snapshot_time: i64,
+}
+
 /// 构造 Icalingua++ 用于“从最新位置拉取历史”的占位消息 ID。
 ///
 /// bridge 的 `fetchHistory` 接口沿用了旧客户端协议：私聊 ID 是 17 字节，群聊 ID
@@ -90,7 +98,7 @@ pub(super) async fn fetch_messages(
     let result = client
         .emit_with_ack(
             "fetchMessages",
-            vec![json!(room_id), json!(0)],
+            vec![json!(room_id), json!({})],
             timeout,
             move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
                 let ack_received = ack_received_cb.clone();
@@ -162,7 +170,8 @@ pub(super) async fn fetch_older_messages(
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
     room_id: i64,
-    offset: usize,
+    before_time: i64,
+    before_id: String,
 ) {
     let timeout = Duration::from_secs(10);
     let tx = event_tx.clone();
@@ -171,7 +180,10 @@ pub(super) async fn fetch_older_messages(
     let result = client
         .emit_with_ack(
             "fetchMessages",
-            vec![json!(room_id), json!(offset)],
+            vec![
+                json!(room_id),
+                json!({ "before": { "time": before_time, "id": before_id } }),
+            ],
             timeout,
             move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
                 let tx = tx.clone();
@@ -306,17 +318,26 @@ pub(super) async fn fetch_messages_by_sender(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
-    request_id: u64,
-    room_id: i64,
-    sender_id: i64,
-    offset: usize,
+    request: FetchMessagesBySenderRequest,
 ) {
+    let FetchMessagesBySenderRequest {
+        request_id,
+        room_id,
+        sender_id,
+        offset,
+        snapshot_time,
+    } = request;
     let tx = event_tx.clone();
     let bridge_id = bridge_key.to_string();
     let result = client
         .emit_with_ack(
             "fetchMessagesBySender",
-            vec![json!(room_id), json!(sender_id), json!(offset)],
+            vec![
+                json!(room_id),
+                json!(sender_id),
+                json!(offset),
+                json!(snapshot_time),
+            ],
             Duration::from_secs(20),
             move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
                 let tx = tx.clone();

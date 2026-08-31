@@ -300,21 +300,29 @@ impl IcaApp {
         sender_id: i64,
         sender_name: String,
     ) {
-        let history = &mut self.bridge_states[bridge_idx].member_history;
-        history.request_id = history.request_id.wrapping_add(1).max(1);
-        history.open = true;
-        history.room_id = room_id;
-        history.sender_id = sender_id;
-        history.sender_name = sender_name;
-        history.messages.clear();
-        history.exhausted = false;
-        history.loading = true;
-        let request_id = history.request_id;
+        let (request_id, snapshot_time) = {
+            let history = &mut self.bridge_states[bridge_idx].member_history;
+            history.request_id = history.request_id.wrapping_add(1).max(1);
+            history.open = true;
+            history.room_id = room_id;
+            history.sender_id = sender_id;
+            history.sender_name = sender_name;
+            history.messages.clear();
+            history.exhausted = false;
+            history.loading = true;
+            history.snapshot_time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .ok()
+                .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+                .unwrap_or(0);
+            (history.request_id, history.snapshot_time)
+        };
         if let Err(error) = self.bridge_states[bridge_idx].send(IcaCommand::FetchMessagesBySender {
             request_id,
             room_id,
             sender_id,
             offset: 0,
+            snapshot_time,
         }) {
             self.bridge_states[bridge_idx].member_history.loading = false;
             self.bridge_states[bridge_idx].last_error =
@@ -384,12 +392,14 @@ impl IcaApp {
                 let room_id = history.room_id;
                 let sender_id = history.sender_id;
                 let offset = history.messages.len();
+                let snapshot_time = history.snapshot_time;
                 if let Err(error) =
                     self.bridge_states[bridge_idx].send(IcaCommand::FetchMessagesBySender {
                         request_id,
                         room_id,
                         sender_id,
                         offset,
+                        snapshot_time,
                     })
                 {
                     self.bridge_states[bridge_idx].member_history.loading = false;

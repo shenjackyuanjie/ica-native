@@ -132,8 +132,20 @@ pub(super) async fn handle_command(
             )
             .await
         }
-        IcaCommand::FetchOlderMessages { room_id, offset } => {
-            history::fetch_older_messages(client, event_tx, bridge_key, room_id, offset).await
+        IcaCommand::FetchOlderMessages {
+            room_id,
+            before_time,
+            before_id,
+        } => {
+            history::fetch_older_messages(
+                client,
+                event_tx,
+                bridge_key,
+                room_id,
+                before_time,
+                before_id,
+            )
+            .await
         }
         IcaCommand::FetchGroupMembers { room_id } => {
             history::fetch_group_members(client, event_tx, bridge_key, room_id).await
@@ -143,9 +155,19 @@ pub(super) async fn handle_command(
             room_id,
             sender_id,
             offset,
+            snapshot_time,
         } => {
             history::fetch_messages_by_sender(
-                client, event_tx, bridge_key, request_id, room_id, sender_id, offset,
+                client,
+                event_tx,
+                bridge_key,
+                history::FetchMessagesBySenderRequest {
+                    request_id,
+                    room_id,
+                    sender_id,
+                    offset,
+                    snapshot_time,
+                },
             )
             .await
         }
@@ -321,7 +343,14 @@ pub(super) async fn handle_command(
             if let Err(e) = client
                 .emit_with_ack(
                     "searchMessages",
-                    vec![json!(room_id), json!(keyword), json!(offset)],
+                    vec![
+                        json!(room_id),
+                        json!(keyword),
+                        json!(offset),
+                        JsonValue::Null,
+                        JsonValue::Null,
+                        JsonValue::Null,
+                    ],
                     Duration::from_secs(15),
                     move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
                         let tx = tx.clone();

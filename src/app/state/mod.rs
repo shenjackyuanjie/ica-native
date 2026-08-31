@@ -663,6 +663,8 @@ pub struct MemberHistoryState {
     pub loading: bool,
     pub exhausted: bool,
     pub request_id: u64,
+    /// 首次打开成员发言记录时固定的毫秒时间戳，确保分页期间的新消息不会改变结果集。
+    pub snapshot_time: i64,
 }
 
 #[derive(Debug, Clone)]

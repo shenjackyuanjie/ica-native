@@ -112,10 +112,19 @@ impl IcaApp {
         if conversation.loading_older_messages || conversation.no_more_history {
             return;
         }
-        let offset = conversation.messages.len();
+        let Some(oldest_message) = conversation.messages.first() else {
+            conversation.no_more_history = true;
+            return;
+        };
+        let before_time = oldest_message.time.timestamp_millis();
+        let before_id = oldest_message.msg_id.clone();
         conversation.loading_older_messages = true;
 
-        if let Err(e) = command_tx.send(IcaCommand::FetchOlderMessages { room_id, offset }) {
+        if let Err(e) = command_tx.send(IcaCommand::FetchOlderMessages {
+            room_id,
+            before_time,
+            before_id,
+        }) {
             tracing::warn!(error = %e, room_id, "发送 fetchOlderMessages 命令失败");
             if let Some(state) = self.bridge_states.get_mut(bridge_idx) {
                 state.conversation_mut(room_id).loading_older_messages = false;
