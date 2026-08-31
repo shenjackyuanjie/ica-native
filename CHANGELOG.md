@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Changed
+- 已核查 Icalingua++ 2.26.6：Socket.IO Bridge 兼容协议仍为 2.26.5；旧版 @ 消息迁移仅涉及其自身存储维护，客户端既有的新旧 @ 标记显示兼容无需调整。
 - Socket.IO Bridge 兼容协议版本更新至 Icalingua++ 2.26.5，认证时会声明与新版 Bridge 一致的协议版本；历史消息分页改用新版的时间与消息 ID 游标，成员发言记录分页固定快照时间，避免新消息插入造成重复或遗漏。
 
 ### Fixed
