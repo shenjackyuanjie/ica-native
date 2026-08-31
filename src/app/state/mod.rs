@@ -25,7 +25,7 @@ mod conversation;
 mod session;
 mod ui;
 
-pub use announcement::{GroupAnnouncementAction, GroupAnnouncementViewerState};
+pub use announcement::GroupAnnouncementViewerState;
 pub use conversation::ConversationState;
 pub use session::{
     BridgeSession, ConnectionState, RoomDirectory, StatusMessage, StatusMessageKind,

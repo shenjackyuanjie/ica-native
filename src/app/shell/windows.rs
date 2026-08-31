@@ -327,6 +327,7 @@ impl IcaApp {
 
         self.render_forward_viewer_window(&ctx);
         self.render_group_files_window(&ctx);
+        self.render_group_announcements_window(&ctx);
         self.render_member_history_window(&ctx);
 
         // 在线状态

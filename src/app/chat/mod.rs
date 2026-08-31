@@ -6,6 +6,7 @@ mod composer_drop;
 mod composer_helpers;
 mod composer_mentions;
 mod forward;
+mod group_announcements;
 mod group_files;
 mod group_members;
 mod image_viewer;

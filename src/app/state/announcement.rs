@@ -1,18 +1,6 @@
 use crate::ica::types::RoomId;
 use crate::ica::types::announcement::GroupAnnouncement;
 
-/// 群公告窗口回传给主界面的操作。
-///
-/// 独立系统窗口跑在自己的 egui 上下文里，拿不到 `IcaApp`，因此只记录意图，
-/// 真正的命令发送与剪贴板写入仍由主循环统一处理。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GroupAnnouncementAction {
-    /// 重新拉取当前群的公告。
-    Reload,
-    /// 把给定文本写入剪贴板。
-    Copy(String),
-}
-
 /// 群公告查看器状态，通过 `Arc<Mutex<..>>` 在主窗口和公告窗口之间共享。
 #[derive(Debug, Clone, Default)]
 pub struct GroupAnnouncementViewerState {
@@ -24,7 +12,9 @@ pub struct GroupAnnouncementViewerState {
     pub last_error: Option<String>,
     /// 展开正文的公告 fid；同一时刻只展开一条。
     pub expanded_fid: Option<String>,
-    pub pending_action: Option<GroupAnnouncementAction>,
+    /// 公告窗口跑在自己的 egui 上下文里，拿不到 `IcaApp`，
+    /// 因此“刷新”只置位，真正的命令发送仍由主循环完成。
+    pub reload_requested: bool,
     /// 单调递增的请求序号，用于丢弃过期响应。
     request_id: u64,
 }
@@ -43,7 +33,7 @@ impl GroupAnnouncementViewerState {
         self.room_name = room_name;
         self.loading = true;
         self.last_error = None;
-        self.pending_action = None;
+        self.reload_requested = false;
         self.request_id
     }
 
