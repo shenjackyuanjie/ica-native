@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-09-01
+
 ### Added
 - 群聊标题栏新增「群公告」入口，可查看当前群的公告列表。Icalingua++ 是用 Electron 套手Q 的 H5 页实现该功能的，ica-native 没有 WebView，改为向 Bridge 取 `qun.qq.com` 的 Cookie 后直连 QQ 的公告接口；bkn 优先使用 `onlineData` 下发值，缺失时按 Cookie 中的 skey 现算。公告以独立系统窗口展示，支持展开全文、复制正文与复制原始 JSON，等待期间切群或重复刷新不会被过期响应覆盖。公告配图按手Q H5 自身使用的 `gdynamic.qpic.cn` 模板加载，可点击查看原图，置顶公告固定排在最前。本版本仅提供只读查看，暂不支持发布与删除。
 
