@@ -154,7 +154,7 @@ impl IcaApp {
         }
     }
 
-    pub(super) fn continue_relation_network_member_loading(&mut self) {
+    pub fn continue_relation_network_member_loading(&mut self) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
         };
@@ -215,7 +215,7 @@ impl IcaApp {
         );
     }
 
-    pub(super) fn apply_relation_network_auto_degrade(&mut self) {
+    pub fn apply_relation_network_auto_degrade(&mut self) {
         let mut relation_network = self.relation_network.lock().unwrap();
         let node_count = relation_network.graph.nodes.len();
         let render_setting = relation_network.render_setting.clone();
@@ -245,20 +245,20 @@ impl IcaApp {
 /// 由主视口在每帧构建并传给子视口，包含房间数、群加载进度等只读信息，
 /// 使子视口无需直接访问 `BridgeState`。
 #[derive(Debug, Clone)]
-pub(super) struct RelationBridgeSnapshot {
-    pub(super) rooms_len: usize,
+pub struct RelationBridgeSnapshot {
+    pub rooms_len: usize,
     /// 当前桥接房间列表中的群总数，不能使用上一次图谱构建时缓存的总数。
-    pub(super) total_groups: usize,
-    pub(super) loaded_groups: usize,
-    pub(super) loading_groups: usize,
-    pub(super) pending_groups: usize,
+    pub total_groups: usize,
+    pub loaded_groups: usize,
+    pub loading_groups: usize,
+    pub pending_groups: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct RelationMemberLoadProgress {
-    pub(super) loaded: usize,
-    pub(super) total: usize,
-    pub(super) ratio: f32,
+pub struct RelationMemberLoadProgress {
+    pub loaded: usize,
+    pub total: usize,
+    pub ratio: f32,
 }
 
 /// 根据实时桥接快照计算群成员加载进度。
@@ -266,7 +266,7 @@ pub(super) struct RelationMemberLoadProgress {
 /// 总数为零时仍向进度条提供一个安全分母，但展示文本保留真实的 `0 / 0`；同时将
 /// 已加载数量限制在总数以内，避免房间列表刚刷新、旧成员缓存尚未清理时出现超过
 /// 100% 的进度值。
-pub(super) fn relation_member_load_progress(
+pub fn relation_member_load_progress(
     snapshot: &RelationBridgeSnapshot,
 ) -> RelationMemberLoadProgress {
     let loaded = snapshot.loaded_groups.min(snapshot.total_groups);
@@ -282,7 +282,7 @@ pub(super) fn relation_member_load_progress(
     }
 }
 
-pub(super) fn queue_relation_member_requests(
+pub fn queue_relation_member_requests(
     relation_network: &mut RelationNetworkState,
     limit: Option<usize>,
 ) {
@@ -290,7 +290,7 @@ pub(super) fn queue_relation_member_requests(
     tracing::debug!(limit = ?limit, "关系网成员加载动作已排队");
 }
 
-pub(super) fn request_relation_network_members_with_tx(
+pub fn request_relation_network_members_with_tx(
     state: &mut BridgeState,
     command_tx: &UnboundedSender<IcaCommand>,
     limit: Option<usize>,
@@ -328,7 +328,7 @@ pub(super) fn request_relation_network_members_with_tx(
     queued
 }
 
-pub(super) fn relation_login_user_id(state: &BridgeState) -> Option<i64> {
+pub fn relation_login_user_id(state: &BridgeState) -> Option<i64> {
     (state.online_data.qqid > 0).then_some(state.online_data.qqid)
 }
 

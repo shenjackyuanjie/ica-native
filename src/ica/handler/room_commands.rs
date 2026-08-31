@@ -8,7 +8,7 @@ use crate::ica::types::room::Room;
 
 use super::context::CommandContext;
 
-pub(super) async fn add_room(ctx: CommandContext<'_>, room: Room) {
+pub async fn add_room(ctx: CommandContext<'_>, room: Room) {
     let CommandContext {
         client,
         event_tx,
@@ -30,7 +30,7 @@ pub(super) async fn add_room(ctx: CommandContext<'_>, room: Room) {
     }
 }
 
-pub(super) async fn pin_room(ctx: CommandContext<'_>, room_id: RoomId, pin: bool) {
+pub async fn pin_room(ctx: CommandContext<'_>, room_id: RoomId, pin: bool) {
     let CommandContext {
         client,
         event_tx,
@@ -54,7 +54,7 @@ pub(super) async fn pin_room(ctx: CommandContext<'_>, room_id: RoomId, pin: bool
     }
 }
 
-pub(super) async fn remove_chat(ctx: CommandContext<'_>, room_id: RoomId) {
+pub async fn remove_chat(ctx: CommandContext<'_>, room_id: RoomId) {
     let CommandContext {
         client,
         event_tx,
@@ -75,7 +75,7 @@ pub(super) async fn remove_chat(ctx: CommandContext<'_>, room_id: RoomId) {
     }
 }
 
-pub(super) async fn ignore_chat(ctx: CommandContext<'_>, room_id: RoomId, room_name: String) {
+pub async fn ignore_chat(ctx: CommandContext<'_>, room_id: RoomId, room_name: String) {
     let CommandContext {
         client,
         event_tx,
@@ -99,7 +99,7 @@ pub(super) async fn ignore_chat(ctx: CommandContext<'_>, room_id: RoomId, room_n
     }
 }
 
-pub(super) async fn remove_ignored_chat(ctx: CommandContext<'_>, room_id: RoomId) {
+pub async fn remove_ignored_chat(ctx: CommandContext<'_>, room_id: RoomId) {
     let CommandContext {
         client,
         event_tx,
@@ -120,7 +120,7 @@ pub(super) async fn remove_ignored_chat(ctx: CommandContext<'_>, room_id: RoomId
     }
 }
 
-pub(super) async fn set_room_priority(ctx: CommandContext<'_>, room_id: RoomId, priority: u8) {
+pub async fn set_room_priority(ctx: CommandContext<'_>, room_id: RoomId, priority: u8) {
     let CommandContext {
         client,
         event_tx,
@@ -144,7 +144,7 @@ pub(super) async fn set_room_priority(ctx: CommandContext<'_>, room_id: RoomId, 
     }
 }
 
-pub(super) async fn report_read(ctx: CommandContext<'_>, room_id: RoomId, message_id: String) {
+pub async fn report_read(ctx: CommandContext<'_>, room_id: RoomId, message_id: String) {
     let CommandContext {
         client,
         event_tx,
@@ -165,7 +165,7 @@ pub(super) async fn report_read(ctx: CommandContext<'_>, room_id: RoomId, messag
     }
 }
 
-pub(super) async fn add_chat_group(
+pub async fn add_chat_group(
     ctx: CommandContext<'_>,
     name: String,
     rooms: Vec<RoomId>,
@@ -195,7 +195,7 @@ pub(super) async fn add_chat_group(
     }
 }
 
-pub(super) async fn remove_chat_group(ctx: CommandContext<'_>, name: String) {
+pub async fn remove_chat_group(ctx: CommandContext<'_>, name: String) {
     let CommandContext {
         client,
         event_tx,
@@ -215,7 +215,7 @@ pub(super) async fn remove_chat_group(ctx: CommandContext<'_>, name: String) {
     }
 }
 
-pub(super) async fn update_chat_group(
+pub async fn update_chat_group(
     ctx: CommandContext<'_>,
     name: String,
     rooms: Vec<RoomId>,

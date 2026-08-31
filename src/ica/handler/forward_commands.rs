@@ -7,7 +7,7 @@ use crate::ica::types::RoomId;
 use super::context::CommandContext;
 use super::forward;
 
-pub(super) async fn fetch_forward_messages(
+pub async fn fetch_forward_messages(
     ctx: CommandContext<'_>,
     request_id: u64,
     res_id: String,
@@ -32,7 +32,7 @@ pub(super) async fn fetch_forward_messages(
     .await;
 }
 
-pub(super) async fn send_merged_forward(
+pub async fn send_merged_forward(
     ctx: CommandContext<'_>,
     nodes: Vec<JsonValue>,
     direct_message: bool,

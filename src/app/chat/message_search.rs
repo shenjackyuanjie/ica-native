@@ -4,7 +4,7 @@ use crate::app::{IcaApp, MessageAction};
 use super::message_card::MessageRenderOptions;
 
 impl IcaApp {
-    pub(in crate::app) fn render_message_search_window(&mut self, ctx: &egui::Context) {
+    pub fn render_message_search_window(&mut self, ctx: &egui::Context) {
         let Some(active_bridge_idx) = self.active_bridge_idx else {
             return;
         };

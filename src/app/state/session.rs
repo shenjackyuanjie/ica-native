@@ -189,7 +189,7 @@ impl BridgeSession {
         self.handle.send(command)
     }
 
-    pub(crate) fn command_sender(&self) -> UnboundedSender<IcaCommand> {
+    pub fn command_sender(&self) -> UnboundedSender<IcaCommand> {
         self.handle.command_sender()
     }
 

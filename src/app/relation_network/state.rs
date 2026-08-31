@@ -9,20 +9,20 @@ use super::model::RelationGraph;
 
 #[derive(Debug, Clone)]
 pub struct RelationNetworkState {
-    pub(super) layout: RelationLayoutModel,
-    pub(super) include_unloaded_groups: bool,
-    pub(super) show_labels: bool,
-    pub(super) search_query: String,
-    pub(super) group_search_query: String,
-    pub(super) selected_node_id: Option<String>,
-    pub(super) hovered_node_id: Option<String>,
-    pub(super) canvas_zoom: f32,
-    pub(super) canvas_pan: egui::Vec2,
-    pub(super) pending_action: Option<RelationAction>,
-    pub(super) load_all_active: bool,
-    pub(super) load_started_at: Option<Instant>,
-    pub(super) load_start_loaded_groups: usize,
-    pub(super) load_last_rebuild_loaded_groups: usize,
+    pub layout: RelationLayoutModel,
+    pub include_unloaded_groups: bool,
+    pub show_labels: bool,
+    pub search_query: String,
+    pub group_search_query: String,
+    pub selected_node_id: Option<String>,
+    pub hovered_node_id: Option<String>,
+    pub canvas_zoom: f32,
+    pub canvas_pan: egui::Vec2,
+    pub pending_action: Option<RelationAction>,
+    pub load_all_active: bool,
+    pub load_started_at: Option<Instant>,
+    pub load_start_loaded_groups: usize,
+    pub load_last_rebuild_loaded_groups: usize,
 }
 
 impl Default for RelationNetworkState {
@@ -66,7 +66,7 @@ impl RelationNetworkState {
         self
     }
 
-    pub(super) fn replace_graph(&mut self, graph: RelationGraph) {
+    pub fn replace_graph(&mut self, graph: RelationGraph) {
         let should_reset_view = self.graph.nodes.is_empty();
         self.graph = graph;
         self.graph_revision = self.graph_revision.wrapping_add(1);

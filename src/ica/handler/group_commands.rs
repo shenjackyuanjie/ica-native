@@ -11,7 +11,7 @@ use crate::ica::types::RoomId;
 use super::context::CommandContext;
 use super::{announcement, file_upload, history};
 
-pub(super) async fn fetch_group_announcements(
+pub async fn fetch_group_announcements(
     ctx: CommandContext<'_>,
     request_id: u64,
     room_id: RoomId,
@@ -27,7 +27,7 @@ pub(super) async fn fetch_group_announcements(
         .await
 }
 
-pub(super) async fn set_group_ban(
+pub async fn set_group_ban(
     ctx: CommandContext<'_>,
     room_id: RoomId,
     target_id: i64,
@@ -95,7 +95,7 @@ pub(super) async fn set_group_ban(
     }
 }
 
-pub(super) async fn upload_group_file(
+pub async fn upload_group_file(
     ctx: CommandContext<'_>,
     group_id: i64,
     parent_id: String,
@@ -125,7 +125,7 @@ pub(super) async fn upload_group_file(
     }
 }
 
-pub(super) async fn send_group_sign(ctx: CommandContext<'_>, room_id: RoomId) {
+pub async fn send_group_sign(ctx: CommandContext<'_>, room_id: RoomId) {
     let CommandContext {
         client,
         event_tx,
@@ -146,7 +146,7 @@ pub(super) async fn send_group_sign(ctx: CommandContext<'_>, room_id: RoomId) {
     }
 }
 
-pub(super) async fn send_group_poke(ctx: CommandContext<'_>, room_id: RoomId, target_id: i64) {
+pub async fn send_group_poke(ctx: CommandContext<'_>, room_id: RoomId, target_id: i64) {
     let CommandContext {
         client,
         event_tx,

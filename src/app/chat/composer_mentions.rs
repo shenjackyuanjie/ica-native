@@ -3,7 +3,7 @@ use crate::app::IcaApp;
 const MENTION_RESULTS_MAX_HEIGHT: f32 = 260.0;
 
 #[derive(Default)]
-pub(super) struct MentionPickerAction {
+pub struct MentionPickerAction {
     pub selected: Option<(i64, String)>,
     pub refresh: bool,
     pub close: bool,
@@ -11,7 +11,7 @@ pub(super) struct MentionPickerAction {
 }
 
 impl IcaApp {
-    pub(super) fn render_mention_picker_overlay(
+    pub fn render_mention_picker_overlay(
         &mut self,
         ctx: &egui::Context,
         active_bridge_idx: usize,

@@ -235,7 +235,7 @@ impl IcaApp {
         }
     }
 
-    pub(super) fn append_pending_images(
+    pub fn append_pending_images(
         &mut self,
         bridge_idx: usize,
         room_id: RoomId,
@@ -247,12 +247,7 @@ impl IcaApp {
         entry.extend(images);
     }
 
-    pub(super) fn remove_pending_image_at(
-        &mut self,
-        bridge_idx: usize,
-        room_id: RoomId,
-        index: usize,
-    ) {
+    pub fn remove_pending_image_at(&mut self, bridge_idx: usize, room_id: RoomId, index: usize) {
         let images = &mut self.bridge_states[bridge_idx]
             .conversation_mut(room_id)
             .pending_images;

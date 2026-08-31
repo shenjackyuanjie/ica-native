@@ -32,7 +32,7 @@ fn ack_payload_first(payload: &Payload) -> Option<JsonValue> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn call_file_manager(
+pub async fn call_file_manager(
     main_client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,

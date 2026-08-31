@@ -207,13 +207,13 @@ impl BridgeState {
         self.message_search.messages.drain(..remove_count);
     }
 
-    pub(in crate::app) fn invalidate_message_rows(&mut self, room_id: RoomId) {
+    pub fn invalidate_message_rows(&mut self, room_id: RoomId) {
         if let Some(conversation) = self.conversations.get_mut(&room_id) {
             conversation.message_row_layouts.clear();
         }
     }
 
-    pub(in crate::app) fn invalidate_message_height(&mut self, msg_id: &str) {
+    pub fn invalidate_message_height(&mut self, msg_id: &str) {
         for conversation in self.conversations.values_mut() {
             conversation.message_row_heights.remove(msg_id);
             conversation.message_row_layouts.clear();

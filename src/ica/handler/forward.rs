@@ -85,7 +85,7 @@ fn forward_values_summary(values: &[JsonValue]) -> String {
     format!("[{}]", items.join(", "))
 }
 
-pub(super) async fn fetch_forward_messages(
+pub async fn fetch_forward_messages(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
@@ -282,7 +282,7 @@ pub(super) async fn fetch_forward_messages(
     });
 }
 
-pub(super) async fn send_merged_forward(
+pub async fn send_merged_forward(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,

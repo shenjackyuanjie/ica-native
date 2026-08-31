@@ -13,7 +13,7 @@ use crate::ica::{
 use super::ack_payload_first;
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn upload_and_send_file(
+pub async fn upload_and_send_file(
     client: &Client,
     room_id: i64,
     content: String,
@@ -83,7 +83,7 @@ pub(super) async fn upload_and_send_file(
     Ok(())
 }
 
-pub(super) async fn upload_group_file(
+pub async fn upload_group_file(
     client: &Client,
     group_id: i64,
     parent_id: &str,

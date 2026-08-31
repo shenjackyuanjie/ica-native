@@ -4,7 +4,7 @@ use super::format_message_content;
 
 const REPLY_PREVIEW_CHAR_LIMIT: usize = 160;
 
-pub(super) fn reply_preview_text(reply: &ReplyMessage) -> String {
+pub fn reply_preview_text(reply: &ReplyMessage) -> String {
     if reply.content.contains("[Forward: ") || reply.content.contains("[NestedForward: ") {
         return "[合并转发]".to_string();
     }
@@ -30,7 +30,7 @@ pub(super) fn reply_preview_text(reply: &ReplyMessage) -> String {
     preview
 }
 
-pub(super) fn consume_composer_send_key(
+pub fn consume_composer_send_key(
     ui: &egui::Ui,
     composer_id: egui::Id,
     ime_composing: bool,

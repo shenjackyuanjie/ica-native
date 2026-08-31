@@ -112,7 +112,7 @@ async fn request_announcement_list(
     })
 }
 
-pub(super) async fn fetch_group_announcements(
+pub async fn fetch_group_announcements(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,

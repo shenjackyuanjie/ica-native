@@ -35,7 +35,7 @@ pub struct ContactDirectory {
 }
 
 impl ContactDirectory {
-    pub(in crate::app) fn begin_refresh(&mut self) -> u64 {
+    pub fn begin_refresh(&mut self) -> u64 {
         self.request_id = self.request_id.wrapping_add(1).max(1);
         self.requested_once = true;
         self.friends_loading = true;
@@ -45,11 +45,11 @@ impl ContactDirectory {
         self.request_id
     }
 
-    pub(in crate::app) fn needs_initial_load(&self) -> bool {
+    pub fn needs_initial_load(&self) -> bool {
         !self.requested_once
     }
 
-    pub(in crate::app) fn apply_friends(&mut self, request_id: u64, friends: Vec<FriendContact>) {
+    pub fn apply_friends(&mut self, request_id: u64, friends: Vec<FriendContact>) {
         if request_id != self.request_id {
             return;
         }
@@ -59,7 +59,7 @@ impl ContactDirectory {
         self.friends_error = None;
     }
 
-    pub(in crate::app) fn apply_groups(&mut self, request_id: u64, groups: Vec<GroupContact>) {
+    pub fn apply_groups(&mut self, request_id: u64, groups: Vec<GroupContact>) {
         if request_id != self.request_id {
             return;
         }
@@ -69,7 +69,7 @@ impl ContactDirectory {
         self.groups_error = None;
     }
 
-    pub(in crate::app) fn fail_part(&mut self, request_id: u64, part: &str, error: String) -> bool {
+    pub fn fail_part(&mut self, request_id: u64, part: &str, error: String) -> bool {
         if request_id != self.request_id {
             return false;
         }

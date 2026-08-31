@@ -16,12 +16,12 @@ use crate::ica::types::{
 pub const ICA_PROTOCOL_VERSION: &str = "2.26.5";
 pub const GROUP_BAN_MAX_DURATION: u64 = 30 * 24 * 60 * 60;
 /// 自动重连最多尝试 5 次。
-pub(super) const MAX_RECONNECT_ATTEMPTS: usize = 5;
+pub const MAX_RECONNECT_ATTEMPTS: usize = 5;
 /// 指数退避的等待时间上限，避免失败时越等越久。
 const MAX_RECONNECT_BACKOFF_SECS: u64 = 30;
 
 #[derive(Debug, Clone, Copy)]
-pub(super) enum ConnectionSignal {
+pub enum ConnectionSignal {
     Disconnected,
 }
 
@@ -219,12 +219,12 @@ impl BridgeHandle {
             .map_err(|error| error.to_string())
     }
 
-    pub(crate) fn command_sender(&self) -> UnboundedSender<IcaCommand> {
+    pub fn command_sender(&self) -> UnboundedSender<IcaCommand> {
         self.command_tx.clone()
     }
 }
 
-pub(super) fn emit_ui_event(
+pub fn emit_ui_event(
     tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_id: &str,
     event_name: &'static str,
@@ -239,7 +239,7 @@ pub(super) fn emit_ui_event(
     }
 }
 
-pub(super) fn payload_to_json(payload: &Payload) -> JsonValue {
+pub fn payload_to_json(payload: &Payload) -> JsonValue {
     match payload {
         Payload::Text(values) => JsonValue::Array(values.clone()),
         Payload::Binary(bytes) => json!(bytes.to_vec()),
@@ -247,7 +247,7 @@ pub(super) fn payload_to_json(payload: &Payload) -> JsonValue {
     }
 }
 
-pub(super) fn json_preview(value: &JsonValue, max_chars: usize) -> String {
+pub fn json_preview(value: &JsonValue, max_chars: usize) -> String {
     let raw = value.to_string();
     let mut chars = raw.chars();
     let preview = chars.by_ref().take(max_chars).collect::<String>();
@@ -258,7 +258,7 @@ pub(super) fn json_preview(value: &JsonValue, max_chars: usize) -> String {
     }
 }
 
-pub(super) fn reconnect_delay(attempt: usize) -> Duration {
+pub fn reconnect_delay(attempt: usize) -> Duration {
     let exp = attempt.saturating_sub(1).min(5) as u32;
     let seconds = (1_u64 << exp).min(MAX_RECONNECT_BACKOFF_SECS);
     Duration::from_secs(seconds)

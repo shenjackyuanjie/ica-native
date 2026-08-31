@@ -4,7 +4,7 @@
 //! 此动作类型是稳定边界，让子 viewport 无需持有应用也能描述状态转换。
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RelationAction {
+pub enum RelationAction {
     Rebuild,
     LoadGroups(Option<usize>),
     Close,

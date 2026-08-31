@@ -8,7 +8,7 @@ use crate::ica::types::message::SendMessage;
 
 use super::ack_payload_first;
 
-pub(super) async fn request_send_token(client: &Client) -> Result<String, String> {
+pub async fn request_send_token(client: &Client) -> Result<String, String> {
     let token = Arc::new(tokio::sync::Mutex::new(None::<String>));
     let token_cb = token.clone();
     client
@@ -42,7 +42,7 @@ pub(super) async fn request_send_token(client: &Client) -> Result<String, String
     Err("requestToken 超时".to_string())
 }
 
-pub(super) async fn http_send_message(
+pub async fn http_send_message(
     api_base_url: &str,
     token: &str,
     message: &SendMessage,
@@ -50,7 +50,7 @@ pub(super) async fn http_send_message(
     http_send_value(api_base_url, token, &message.as_value()).await
 }
 
-pub(super) async fn http_send_value(
+pub async fn http_send_value(
     api_base_url: &str,
     token: &str,
     value: &JsonValue,

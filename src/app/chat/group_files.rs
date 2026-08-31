@@ -5,7 +5,7 @@ use crate::ica::IcaCommand;
 
 impl IcaApp {
     /// 常用群文件入口。保留 fileMgr 协议能力，同时免去手工填写群号。
-    pub(crate) fn render_group_files_window(&mut self, ctx: &egui::Context) {
+    pub fn render_group_files_window(&mut self, ctx: &egui::Context) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             self.group_file_panel.open = false;
             return;

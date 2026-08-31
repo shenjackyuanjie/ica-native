@@ -90,7 +90,7 @@ impl DerefMut for IcaApp {
 }
 
 impl IcaApp {
-    pub(super) fn update_config(&self, updater: impl FnOnce(&mut crate::config::IcaCfg)) {
+    pub fn update_config(&self, updater: impl FnOnce(&mut crate::config::IcaCfg)) {
         self.config.update(updater);
         if let Err(error) = self.config.save() {
             tracing::error!("保存配置失败: {error}");

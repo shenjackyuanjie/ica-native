@@ -330,7 +330,7 @@ impl IcaApp {
         }
     }
 
-    pub(crate) fn render_member_history_window(&mut self, ctx: &egui::Context) {
+    pub fn render_member_history_window(&mut self, ctx: &egui::Context) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
         };
@@ -410,7 +410,7 @@ impl IcaApp {
         }
     }
 
-    pub(crate) fn render_group_ban_confirmation(&mut self, ctx: &egui::Context) {
+    pub fn render_group_ban_confirmation(&mut self, ctx: &egui::Context) {
         let Some(confirmation) = self.group_member_panel.confirmation.clone() else {
             return;
         };

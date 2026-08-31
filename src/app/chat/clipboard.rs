@@ -16,7 +16,7 @@ impl IcaApp {
         }
     }
 
-    pub(super) fn load_clipboard_image() -> anyhow::Result<PendingImage> {
+    pub fn load_clipboard_image() -> anyhow::Result<PendingImage> {
         #[cfg(windows)]
         if let Ok(image) = Self::load_clipboard_image_windows() {
             return Ok(image);
@@ -149,11 +149,11 @@ impl IcaApp {
         Self::encode_rgba_image_to_pending(rgba)
     }
 
-    pub(in crate::app) fn system_paste_shortcut_pressed() -> bool {
+    pub fn system_paste_shortcut_pressed() -> bool {
         system_paste_shortcut_pressed()
     }
 
-    pub(super) fn load_pending_image(path: &Path) -> anyhow::Result<PendingImage> {
+    pub fn load_pending_image(path: &Path) -> anyhow::Result<PendingImage> {
         let mime_type = Self::image_mime_type(path)
             .ok_or_else(|| anyhow::anyhow!("不支持的图片格式: {}", path.display()))?;
         let data = std::fs::read(path)?;
@@ -165,7 +165,7 @@ impl IcaApp {
         Ok(PendingImage::new(name, mime_type.to_string(), data))
     }
 
-    pub(super) fn guess_mime_type(path: &Path) -> String {
+    pub fn guess_mime_type(path: &Path) -> String {
         let ext = path
             .extension()
             .map(|e| e.to_string_lossy().to_ascii_lowercase())
@@ -190,7 +190,7 @@ impl IcaApp {
         .to_string()
     }
 
-    pub(super) fn load_pending_file(path: &Path) -> anyhow::Result<PendingFile> {
+    pub fn load_pending_file(path: &Path) -> anyhow::Result<PendingFile> {
         let data = std::fs::read(path)?;
         let name = path
             .file_name()

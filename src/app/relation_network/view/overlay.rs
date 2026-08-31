@@ -6,7 +6,7 @@ use super::super::state::RelationNetworkState;
 use super::super::theme::RelationTheme;
 use super::detail::render_relation_node_detail;
 
-pub(super) fn render_relation_canvas_grid(
+pub fn render_relation_canvas_grid(
     painter: &egui::Painter,
     rect: egui::Rect,
     relation_network: &RelationNetworkState,
@@ -26,7 +26,7 @@ pub(super) fn render_relation_canvas_grid(
     }
 }
 
-pub(super) fn render_relation_canvas_controls(
+pub fn render_relation_canvas_controls(
     ui: &mut egui::Ui,
     rect: egui::Rect,
     relation_network: &mut RelationNetworkState,
@@ -87,7 +87,7 @@ pub(super) fn render_relation_canvas_controls(
     zoom_out || zoom_in || fit
 }
 
-pub(super) fn set_relation_canvas_zoom(
+pub fn set_relation_canvas_zoom(
     relation_network: &mut RelationNetworkState,
     zoom: f32,
     anchor: egui::Pos2,
@@ -102,7 +102,7 @@ pub(super) fn set_relation_canvas_zoom(
     relation_network.canvas_zoom = zoom;
 }
 
-pub(super) fn relation_node_draw_radius(
+pub fn relation_node_draw_radius(
     node: &RelationNode,
     performance: RelationPerformanceLevel,
     zoom: f32,
@@ -125,7 +125,7 @@ pub(super) fn relation_node_draw_radius(
     .max(2.0)
 }
 
-pub(super) fn render_relation_network_overlay(
+pub fn render_relation_network_overlay(
     ui: &mut egui::Ui,
     relation_network: &RelationNetworkState,
     rect: egui::Rect,
@@ -195,7 +195,7 @@ pub(super) fn render_relation_network_overlay(
     }
 }
 
-pub(super) fn render_relation_indicator(ui: &mut egui::Ui, rect: egui::Rect, text: &str) {
+pub fn render_relation_indicator(ui: &mut egui::Ui, rect: egui::Rect, text: &str) {
     let fill = ui.visuals().selection.bg_fill;
     let text_color = ui.visuals().selection.stroke.color;
     let painter = ui.painter_at(rect);
@@ -216,7 +216,7 @@ pub(super) fn render_relation_indicator(ui: &mut egui::Ui, rect: egui::Rect, tex
     );
 }
 
-pub(super) fn render_relation_node_popup(
+pub fn render_relation_node_popup(
     ui: &mut egui::Ui,
     canvas_rect: egui::Rect,
     pointer: egui::Pos2,
@@ -275,12 +275,12 @@ pub(super) fn render_relation_node_popup(
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct RelationPerformanceLevel {
-    pub(super) index: usize,
-    pub(super) label: &'static str,
+pub struct RelationPerformanceLevel {
+    pub index: usize,
+    pub label: &'static str,
 }
 
-pub(super) fn relation_performance_level(node_count: usize) -> RelationPerformanceLevel {
+pub fn relation_performance_level(node_count: usize) -> RelationPerformanceLevel {
     match node_count {
         0..=100 => RelationPerformanceLevel {
             index: 0,

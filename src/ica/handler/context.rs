@@ -10,7 +10,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::ica::event::BridgeEvent;
 
 #[derive(Clone, Copy)]
-pub(super) struct CommandContext<'a> {
+pub struct CommandContext<'a> {
     pub client: &'a Client,
     pub event_tx: &'a Option<UnboundedSender<BridgeEvent>>,
     pub bridge_key: &'a str,

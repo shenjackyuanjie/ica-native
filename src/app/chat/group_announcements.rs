@@ -208,7 +208,7 @@ fn render_viewer(ui: &mut egui::Ui, viewer: &mut GroupAnnouncementViewerState) {
 
 impl IcaApp {
     /// 打开群公告窗口并立即拉取一次。
-    pub(crate) fn open_group_announcements(&mut self, bridge_idx: usize, room_id: RoomId) {
+    pub fn open_group_announcements(&mut self, bridge_idx: usize, room_id: RoomId) {
         if room_id >= 0 {
             self.bridge_states[bridge_idx].last_error = Some("只有群聊才有群公告".to_string());
             return;
@@ -251,7 +251,7 @@ impl IcaApp {
         }
     }
 
-    pub(in crate::app) fn render_group_announcements_window(&mut self, ctx: &egui::Context) {
+    pub fn render_group_announcements_window(&mut self, ctx: &egui::Context) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
         };

@@ -9,7 +9,7 @@ use super::{
     saved_cursor_preceded_by,
 };
 
-pub(super) struct ComposerParams {
+pub struct ComposerParams {
     pub active_bridge_idx: usize,
     pub room_id: i64,
     pub composer_id: egui::Id,
@@ -27,7 +27,7 @@ pub(super) struct ComposerParams {
 
 impl IcaApp {
     #[allow(clippy::too_many_lines)]
-    pub(super) fn render_composer(&mut self, ui: &mut egui::Ui, params: ComposerParams) {
+    pub fn render_composer(&mut self, ui: &mut egui::Ui, params: ComposerParams) {
         let ComposerParams {
             active_bridge_idx,
             room_id,

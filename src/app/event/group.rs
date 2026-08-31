@@ -6,7 +6,7 @@ use serde_json::Value as JsonValue;
 use crate::app::state::{BridgeState, GroupMember};
 
 /// 处理本模块负责的事件；返回 false 表示事件不属于这里，交给下一个模块。
-pub(super) fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> bool {
+pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> bool {
     match event_name {
         "groupMembersResponse" => {
             let room_id = payload

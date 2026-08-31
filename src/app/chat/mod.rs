@@ -26,7 +26,7 @@ fn char_index_to_usize(index: egui::text::CharIndex) -> usize {
     index.into()
 }
 
-pub(super) fn format_message_content(content: &str) -> Cow<'_, str> {
+pub fn format_message_content(content: &str) -> Cow<'_, str> {
     if !content.contains("<IcalinguaAt qq=") && !content.contains("<IcaAt qq=") {
         return Cow::Borrowed(content);
     }
@@ -76,7 +76,7 @@ pub(super) fn format_message_content(content: &str) -> Cow<'_, str> {
     Cow::Owned(result)
 }
 
-pub(crate) fn is_image_file_type(file_type: &str) -> bool {
+pub fn is_image_file_type(file_type: &str) -> bool {
     file_type.eq_ignore_ascii_case("image")
         || file_type
             .get(..6)
@@ -84,7 +84,7 @@ pub(crate) fn is_image_file_type(file_type: &str) -> bool {
 }
 
 /// 解码 ICA 新版 `<IcaAt>` 中使用的 XML 文本实体；只解码一层，避免把用户原文二次解释。
-pub(super) fn decode_xml_entities(value: &str) -> Cow<'_, str> {
+pub fn decode_xml_entities(value: &str) -> Cow<'_, str> {
     if !value.contains('&') {
         return Cow::Borrowed(value);
     }
@@ -129,20 +129,20 @@ pub(super) fn decode_xml_entities(value: &str) -> Cow<'_, str> {
     Cow::Owned(decoded)
 }
 
-pub(crate) fn is_video_file_type(file_type: &str) -> bool {
+pub fn is_video_file_type(file_type: &str) -> bool {
     file_type
         .get(..6)
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("video/"))
 }
 
-pub(super) fn image_url_looks_like_gif(url: &str) -> bool {
+pub fn image_url_looks_like_gif(url: &str) -> bool {
     let url = url.to_ascii_lowercase();
     url.split(['?', '#'])
         .next()
         .is_some_and(|path| path.ends_with(".gif") || path.contains(".gif/"))
 }
 
-pub(super) fn should_probe_gif_after_static_error(err: &egui::load::LoadError) -> bool {
+pub fn should_probe_gif_after_static_error(err: &egui::load::LoadError) -> bool {
     matches!(
         err,
         egui::load::LoadError::NoMatchingImageLoader { .. }
@@ -150,7 +150,7 @@ pub(super) fn should_probe_gif_after_static_error(err: &egui::load::LoadError) -
     )
 }
 
-pub(super) fn try_load_gif_texture(
+pub fn try_load_gif_texture(
     ctx: &egui::Context,
     url: &str,
     texture_options: egui::TextureOptions,
@@ -204,11 +204,7 @@ fn gif_frame_index(ctx: &egui::Context, durations: &egui::FrameDurations) -> usi
     0
 }
 
-pub(super) fn replace_text_char_range(
-    text: &mut String,
-    range: Range<usize>,
-    replacement: &str,
-) -> usize {
+pub fn replace_text_char_range(text: &mut String, range: Range<usize>, replacement: &str) -> usize {
     let char_count = text.chars().count();
     let start = range.start.min(char_count);
     let end = range.end.clamp(start, char_count);
@@ -224,7 +220,7 @@ pub(super) fn replace_text_char_range(
     start + replacement.chars().count()
 }
 
-pub(super) fn insert_text_at_saved_cursor(
+pub fn insert_text_at_saved_cursor(
     ctx: &egui::Context,
     id: egui::Id,
     text: &mut String,
@@ -253,7 +249,7 @@ pub(super) fn insert_text_at_saved_cursor(
     }
 }
 
-pub(super) fn saved_cursor_preceded_by(
+pub fn saved_cursor_preceded_by(
     ctx: &egui::Context,
     id: egui::Id,
     text: &str,
@@ -268,7 +264,7 @@ pub(super) fn saved_cursor_preceded_by(
     cursor > 0 && text.chars().nth(cursor - 1) == Some(expected)
 }
 
-pub(super) fn insert_mention_at_saved_cursor(
+pub fn insert_mention_at_saved_cursor(
     ctx: &egui::Context,
     id: egui::Id,
     text: &mut String,
@@ -309,7 +305,7 @@ pub(super) fn insert_mention_at_saved_cursor(
     }
 }
 
-pub(super) fn estimate_composer_rows(text: &str, input_width: f32) -> usize {
+pub fn estimate_composer_rows(text: &str, input_width: f32) -> usize {
     const MIN_ROWS: usize = 1;
     const MAX_ROWS: usize = 6;
 
@@ -330,7 +326,7 @@ pub(super) fn estimate_composer_rows(text: &str, input_width: f32) -> usize {
         .clamp(MIN_ROWS, MAX_ROWS)
 }
 
-pub(super) fn format_pending_size(bytes: usize) -> String {
+pub fn format_pending_size(bytes: usize) -> String {
     let size = bytes as f64;
     if size >= 1024.0 * 1024.0 {
         format!("{:.1} MB", size / (1024.0 * 1024.0))
@@ -361,7 +357,7 @@ fn estimate_text_height(text: &str, width: f32, line_height: f32) -> f32 {
     lines as f32 * line_height
 }
 
-pub(super) fn estimate_message_row_height(
+pub fn estimate_message_row_height(
     message: &crate::ica::types::message::Message,
     row_width: f32,
     line_height: f32,
@@ -444,7 +440,7 @@ pub(super) fn estimate_message_row_height(
     height.max(56.0)
 }
 
-pub(super) fn message_visible_range(
+pub fn message_visible_range(
     rows: &[MessageRowLayout],
     viewport_top: f32,
     viewport_bottom: f32,

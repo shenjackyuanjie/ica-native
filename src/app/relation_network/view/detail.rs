@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn render_relation_node_detail(ui: &mut egui::Ui, node: &RelationNode) {
+pub fn render_relation_node_detail(ui: &mut egui::Ui, node: &RelationNode) {
     ui.strong(&node.name);
     ui.label(node.kind.label());
     if let Some(qq) = node.qq {
@@ -21,7 +21,7 @@ pub(super) fn render_relation_node_detail(ui: &mut egui::Ui, node: &RelationNode
     }
 }
 
-pub(super) fn render_relation_size_legend(ui: &mut egui::Ui) {
+pub fn render_relation_size_legend(ui: &mut egui::Ui) {
     let theme = RelationTheme::from_ui(ui);
     for (label, radius, border, member_count) in [
         ("少量关联 (<10)", 5.0, 0.0, 5),

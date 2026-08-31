@@ -1,7 +1,7 @@
 use super::loading::{queue_relation_member_requests, relation_member_load_progress};
 use super::*;
 
-pub(super) fn render_relation_network_sidebar(
+pub fn render_relation_network_sidebar(
     ui: &mut egui::Ui,
     relation_network: &mut RelationNetworkState,
     bridge_snapshot: &RelationBridgeSnapshot,
@@ -297,7 +297,7 @@ fn render_relation_view_hint(ui: &mut egui::Ui, relation_network: &RelationNetwo
     }
 }
 
-pub(super) fn clear_relation_selection(relation_network: &mut RelationNetworkState) {
+pub fn clear_relation_selection(relation_network: &mut RelationNetworkState) {
     relation_network.focused_node_id = None;
     relation_network.selected_node_id = None;
     relation_network.hovered_node_id = None;
@@ -306,7 +306,7 @@ pub(super) fn clear_relation_selection(relation_network: &mut RelationNetworkSta
     reset_relation_canvas_view(relation_network);
 }
 
-pub(super) fn reset_relation_canvas_view(relation_network: &mut RelationNetworkState) {
+pub fn reset_relation_canvas_view(relation_network: &mut RelationNetworkState) {
     relation_network.canvas_zoom = 1.0;
     relation_network.canvas_pan = egui::Vec2::ZERO;
 }

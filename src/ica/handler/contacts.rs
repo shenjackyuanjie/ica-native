@@ -94,7 +94,7 @@ async fn fetch_contact_part(
     });
 }
 
-pub(super) async fn fetch_contacts(
+pub async fn fetch_contacts(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,

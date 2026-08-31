@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn render_relation_network_canvas(
+pub fn render_relation_network_canvas(
     ui: &mut egui::Ui,
     relation_network: &mut RelationNetworkState,
     force_animation_enabled: bool,

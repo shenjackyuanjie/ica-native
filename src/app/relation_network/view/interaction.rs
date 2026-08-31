@@ -4,10 +4,7 @@ use super::super::layout::*;
 use super::super::state::RelationNetworkState;
 use super::sidebar::reset_relation_canvas_view;
 
-pub(super) fn handle_relation_node_click(
-    relation_network: &mut RelationNetworkState,
-    node_id: String,
-) {
+pub fn handle_relation_node_click(relation_network: &mut RelationNetworkState, node_id: String) {
     relation_network.selected_node_id = Some(node_id.clone());
     match relation_network.view_mode {
         RelationViewMode::MultiSelect | RelationViewMode::MultiSelectRelationship => {
@@ -26,7 +23,7 @@ pub(super) fn handle_relation_node_click(
     }
 }
 
-pub(super) fn exit_relation_focus_or_multiselect(relation_network: &mut RelationNetworkState) {
+pub fn exit_relation_focus_or_multiselect(relation_network: &mut RelationNetworkState) {
     match relation_network.view_mode {
         RelationViewMode::MultiSelectRelationship => {
             relation_network.view_mode = RelationViewMode::MultiSelect;
@@ -46,7 +43,7 @@ pub(super) fn exit_relation_focus_or_multiselect(relation_network: &mut Relation
     }
 }
 
-pub(super) fn toggle_relation_multi_select(relation_network: &mut RelationNetworkState) {
+pub fn toggle_relation_multi_select(relation_network: &mut RelationNetworkState) {
     match relation_network.view_mode {
         RelationViewMode::MultiSelectRelationship => {
             relation_network.view_mode = RelationViewMode::Default;

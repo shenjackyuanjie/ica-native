@@ -14,7 +14,7 @@ use crate::ica::types::RoomId;
 use super::context::CommandContext;
 use super::{ack_payload_values, history, normalize_ack_list};
 
-pub(super) async fn fetch_messages(ctx: CommandContext<'_>, room_id: RoomId) {
+pub async fn fetch_messages(ctx: CommandContext<'_>, room_id: RoomId) {
     let CommandContext {
         client,
         event_tx,
@@ -24,7 +24,7 @@ pub(super) async fn fetch_messages(ctx: CommandContext<'_>, room_id: RoomId) {
     history::fetch_messages(client, event_tx, bridge_key, room_id).await
 }
 
-pub(super) async fn fetch_latest_history(
+pub async fn fetch_latest_history(
     ctx: CommandContext<'_>,
     room_id: RoomId,
     current_loaded_messages: usize,
@@ -45,7 +45,7 @@ pub(super) async fn fetch_latest_history(
     .await
 }
 
-pub(super) async fn fetch_older_messages(
+pub async fn fetch_older_messages(
     ctx: CommandContext<'_>,
     room_id: RoomId,
     before_time: i64,
@@ -68,7 +68,7 @@ pub(super) async fn fetch_older_messages(
     .await
 }
 
-pub(super) async fn fetch_group_members(ctx: CommandContext<'_>, room_id: RoomId) {
+pub async fn fetch_group_members(ctx: CommandContext<'_>, room_id: RoomId) {
     let CommandContext {
         client,
         event_tx,
@@ -78,7 +78,7 @@ pub(super) async fn fetch_group_members(ctx: CommandContext<'_>, room_id: RoomId
     history::fetch_group_members(client, event_tx, bridge_key, room_id).await
 }
 
-pub(super) async fn fetch_messages_by_sender(
+pub async fn fetch_messages_by_sender(
     ctx: CommandContext<'_>,
     request_id: u64,
     room_id: RoomId,
@@ -107,7 +107,7 @@ pub(super) async fn fetch_messages_by_sender(
     .await
 }
 
-pub(super) async fn search_messages(
+pub async fn search_messages(
     ctx: CommandContext<'_>,
     room_id: RoomId,
     keyword: String,
@@ -168,7 +168,7 @@ pub(super) async fn search_messages(
     }
 }
 
-pub(super) async fn stop_fetching_history(ctx: CommandContext<'_>) {
+pub async fn stop_fetching_history(ctx: CommandContext<'_>) {
     let CommandContext { client, .. } = ctx;
     if let Err(e) = client.emit("stopFetchingHistory", json!(null)).await {
         tracing::warn!(error = %e, "发送 stopFetchingHistory 事件失败");

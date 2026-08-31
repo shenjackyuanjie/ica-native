@@ -86,7 +86,7 @@ impl IcaApp {
         }
     }
 
-    pub(crate) fn send_file_manager_event(
+    pub fn send_file_manager_event(
         &mut self,
         gin: i64,
         event: impl Into<String>,

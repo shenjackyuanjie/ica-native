@@ -6,7 +6,7 @@ use crate::app::media::ImageAction;
 use super::{should_probe_gif_after_static_error, try_load_gif_texture};
 
 impl IcaApp {
-    pub(in crate::app) fn render_image_viewer(&mut self, ctx: &egui::Context) {
+    pub fn render_image_viewer(&mut self, ctx: &egui::Context) {
         // 图片查看器关闭信号检测
         if let Some(ref viewer) = self.image_viewer
             && viewer.lock().unwrap().closed.load(Ordering::Relaxed)

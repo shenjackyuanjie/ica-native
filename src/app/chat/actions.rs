@@ -65,11 +65,7 @@ impl IcaApp {
             .cloned()
     }
 
-    pub(super) fn selected_forward_messages(
-        &self,
-        bridge_idx: usize,
-        room_id: RoomId,
-    ) -> Vec<Message> {
+    pub fn selected_forward_messages(&self, bridge_idx: usize, room_id: RoomId) -> Vec<Message> {
         let Some(state) = self.bridge_states.get(bridge_idx) else {
             return Vec::new();
         };
@@ -302,7 +298,7 @@ impl IcaApp {
         }
     }
 
-    pub(super) fn send_add_chat_group(
+    pub fn send_add_chat_group(
         &self,
         bridge_idx: usize,
         name: &str,
@@ -318,7 +314,7 @@ impl IcaApp {
         }
     }
 
-    pub(super) fn send_remove_chat_group(&self, bridge_idx: usize, name: &str) {
+    pub fn send_remove_chat_group(&self, bridge_idx: usize, name: &str) {
         if let Some(session) = self.bridge_states.get(bridge_idx) {
             let _ = session.send(IcaCommand::RemoveChatGroup {
                 name: name.to_string(),
@@ -326,7 +322,7 @@ impl IcaApp {
         }
     }
 
-    pub(in crate::app) fn send_update_chat_group(
+    pub fn send_update_chat_group(
         &self,
         bridge_idx: usize,
         name: &str,
@@ -342,7 +338,7 @@ impl IcaApp {
         }
     }
 
-    pub(in crate::app) fn sync_chat_groups_to_bridge(&self, bridge_idx: usize, old: &ChatGroups) {
+    pub fn sync_chat_groups_to_bridge(&self, bridge_idx: usize, old: &ChatGroups) {
         let Some(new) = self
             .bridge_states
             .get(bridge_idx)

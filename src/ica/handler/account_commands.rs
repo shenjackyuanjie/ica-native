@@ -7,7 +7,7 @@ use crate::ica::command::emit_ui_event;
 use super::context::CommandContext;
 use super::{contacts, history};
 
-pub(super) async fn get_system_msg(ctx: CommandContext<'_>) {
+pub async fn get_system_msg(ctx: CommandContext<'_>) {
     let CommandContext {
         client,
         event_tx,
@@ -17,7 +17,7 @@ pub(super) async fn get_system_msg(ctx: CommandContext<'_>) {
     history::get_system_messages(client, event_tx, bridge_key).await
 }
 
-pub(super) async fn fetch_contacts(ctx: CommandContext<'_>, request_id: u64) {
+pub async fn fetch_contacts(ctx: CommandContext<'_>, request_id: u64) {
     let CommandContext {
         client,
         event_tx,
@@ -27,7 +27,7 @@ pub(super) async fn fetch_contacts(ctx: CommandContext<'_>, request_id: u64) {
     contacts::fetch_contacts(client, event_tx, bridge_key, request_id).await
 }
 
-pub(super) async fn set_online_status(ctx: CommandContext<'_>, status: u8) {
+pub async fn set_online_status(ctx: CommandContext<'_>, status: u8) {
     let CommandContext {
         client,
         event_tx,
@@ -47,7 +47,7 @@ pub(super) async fn set_online_status(ctx: CommandContext<'_>, status: u8) {
     }
 }
 
-pub(super) async fn handle_request(
+pub async fn handle_request(
     ctx: CommandContext<'_>,
     request_type: String,
     flag: String,

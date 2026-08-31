@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::ica::types::message::{Mention, ReplyMessage, SendMessage};
 
-pub(super) fn build_multi_image_message(
+pub fn build_multi_image_message(
     room_id: i64,
     content: &str,
     reply_to: Option<&ReplyMessage>,

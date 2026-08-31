@@ -13,8 +13,8 @@ use super::state::{BridgeSession, BridgeState};
 pub struct AppRuntime {
     tokio: Runtime,
     sessions: Vec<BridgeSession>,
-    pub(super) event_rx: UnboundedReceiver<AppEvent>,
-    pub(super) event_tx: UnboundedSender<AppEvent>,
+    pub event_rx: UnboundedReceiver<AppEvent>,
+    pub event_tx: UnboundedSender<AppEvent>,
 }
 
 impl AppRuntime {

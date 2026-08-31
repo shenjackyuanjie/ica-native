@@ -58,7 +58,7 @@ fn render_changelog(ui: &mut egui::Ui) {
 }
 
 impl IcaApp {
-    pub(super) fn render_about_window(&mut self, ctx: &egui::Context) {
+    pub fn render_about_window(&mut self, ctx: &egui::Context) {
         egui::Window::new("关于 Icalingua++ native")
             .open(&mut self.open_page.about)
             .collapsible(true)

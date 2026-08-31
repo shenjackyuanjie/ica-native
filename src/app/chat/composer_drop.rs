@@ -1,7 +1,7 @@
 use crate::app::{IcaApp, PendingFile, PendingImage};
 
 impl IcaApp {
-    pub(super) fn handle_composer_drop(
+    pub fn handle_composer_drop(
         &mut self,
         ui: &mut egui::Ui,
         active_bridge_idx: usize,

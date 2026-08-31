@@ -14,7 +14,7 @@ use crate::ica::file_manager::call_file_manager;
 use super::ack_payload_values;
 use super::context::CommandContext;
 
-pub(super) async fn socket_api_call(
+pub async fn socket_api_call(
     ctx: CommandContext<'_>,
     event: String,
     args: Vec<JsonValue>,
@@ -89,7 +89,7 @@ pub(super) async fn socket_api_call(
     }
 }
 
-pub(super) async fn file_manager_call(
+pub async fn file_manager_call(
     ctx: CommandContext<'_>,
     gin: i64,
     event: String,

@@ -18,7 +18,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use super::{ack_payload_first, ack_payload_values, normalize_ack_list};
 use crate::ica::command::emit_ui_event;
 
-pub(super) struct FetchMessagesBySenderRequest {
+pub struct FetchMessagesBySenderRequest {
     pub request_id: u64,
     pub room_id: i64,
     pub sender_id: i64,
@@ -38,7 +38,7 @@ fn latest_history_message_id(room_id: i64) -> Option<String> {
     Some(STANDARD.encode(bytes))
 }
 
-pub(super) async fn fetch_latest_history(
+pub async fn fetch_latest_history(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
@@ -83,7 +83,7 @@ pub(super) async fn fetch_latest_history(
     }
 }
 
-pub(super) async fn fetch_messages(
+pub async fn fetch_messages(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
@@ -165,7 +165,7 @@ pub(super) async fn fetch_messages(
     }
 }
 
-pub(super) async fn fetch_older_messages(
+pub async fn fetch_older_messages(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
@@ -224,7 +224,7 @@ pub(super) async fn fetch_older_messages(
     }
 }
 
-pub(super) async fn fetch_group_members(
+pub async fn fetch_group_members(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
@@ -314,7 +314,7 @@ pub(super) async fn fetch_group_members(
     }
 }
 
-pub(super) async fn fetch_messages_by_sender(
+pub async fn fetch_messages_by_sender(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
@@ -373,7 +373,7 @@ pub(super) async fn fetch_messages_by_sender(
     }
 }
 
-pub(super) async fn get_system_messages(
+pub async fn get_system_messages(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,

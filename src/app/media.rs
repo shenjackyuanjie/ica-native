@@ -62,7 +62,7 @@ impl ImageAction {
 }
 
 impl IcaApp {
-    pub(super) fn handle_image_action(
+    pub fn handle_image_action(
         &mut self,
         ctx: &egui::Context,
         bridge_idx: usize,
@@ -153,7 +153,7 @@ impl IcaApp {
         }
     }
 
-    pub(super) fn open_image_viewer_with_sources(
+    pub fn open_image_viewer_with_sources(
         &mut self,
         current: ImageSource,
         sources: Vec<ImageSource>,
@@ -164,7 +164,7 @@ impl IcaApp {
     }
 }
 
-pub(super) fn image_sources_for_messages(
+pub fn image_sources_for_messages(
     room_id: RoomId,
     messages: &[crate::ica::types::message::Message],
 ) -> Vec<ImageSource> {

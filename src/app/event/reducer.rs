@@ -36,7 +36,7 @@ impl IcaApp {
     /// 把某个 bridge 发来的事件应用到对应的本地状态上。
     ///
     /// 没有任何模块认领的事件会被静默忽略，以便新版 Bridge 增加事件时旧客户端仍能运行。
-    pub(in crate::app) fn apply_bridge_event(state: &mut BridgeState, event: &BridgeEventKind) {
+    pub fn apply_bridge_event(state: &mut BridgeState, event: &BridgeEventKind) {
         let event_name = event.name();
         let payload = event.payload();
         for handler in HANDLERS {

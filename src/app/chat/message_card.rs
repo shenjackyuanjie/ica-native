@@ -228,7 +228,7 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
     segments
 }
 
-pub(super) fn has_visible_rich_content(content: &str) -> bool {
+pub fn has_visible_rich_content(content: &str) -> bool {
     parse_content_segments(content)
         .iter()
         .any(|segment| match segment {
@@ -338,7 +338,7 @@ fn render_rich_content_with_prefix(
 }
 
 /// 渲染消息正文中的 QQ 表情和 @ 成员标记。
-pub(super) fn render_rich_content(
+pub fn render_rich_content(
     ui: &mut egui::Ui,
     content: &str,
     high_contrast: bool,
@@ -355,7 +355,7 @@ fn reply_image_file(reply: &ReplyMessage) -> Option<&MessageFile> {
 }
 
 /// 渲染消息中的图片缩略图并返回统一图片动作。
-pub(super) fn render_message_image(
+pub fn render_message_image(
     ui: &mut egui::Ui,
     source: &ImageSource,
     file_type: &str,
@@ -487,7 +487,7 @@ fn show_image_load_error(ui: &mut egui::Ui, err: &egui::load::LoadError) {
     }
 }
 
-pub(in crate::app) struct MessageRenderOptions {
+pub struct MessageRenderOptions {
     pub show_sender_name: bool,
     pub show_separator_before: bool,
     pub forward_mode_active: bool,
@@ -495,7 +495,7 @@ pub(in crate::app) struct MessageRenderOptions {
 }
 
 impl IcaApp {
-    pub(super) fn render_message_card(
+    pub fn render_message_card(
         &self,
         ui: &mut egui::Ui,
         room_id: RoomId,

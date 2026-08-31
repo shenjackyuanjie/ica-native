@@ -10,19 +10,19 @@ use crate::app::state::BridgeState;
 use crate::ica::types::room::JoinRequestRoom;
 
 /// socket.io 的事件 payload 基本都是数组包装，真正的数据通常在第一个元素里。
-pub(super) fn first_payload_value(payload: &JsonValue) -> Option<&JsonValue> {
+pub fn first_payload_value(payload: &JsonValue) -> Option<&JsonValue> {
     payload.as_array().and_then(|values| values.first())
 }
 
 /// 统一提取事件里常见的 `message` 字段，避免每个分支都手动抄一遍。
-pub(super) fn payload_message(payload: &JsonValue) -> Option<String> {
+pub fn payload_message(payload: &JsonValue) -> Option<String> {
     payload
         .get("message")
         .and_then(|value| value.as_str())
         .map(ToString::to_string)
 }
 
-pub(super) fn value_to_display_message(value: &JsonValue) -> Option<String> {
+pub fn value_to_display_message(value: &JsonValue) -> Option<String> {
     if let Some(msg) = value.as_str() {
         return Some(msg.to_string());
     }
@@ -39,11 +39,11 @@ pub(super) fn value_to_display_message(value: &JsonValue) -> Option<String> {
     }
 }
 
-pub(super) fn first_payload_display_message(payload: &JsonValue) -> Option<String> {
+pub fn first_payload_display_message(payload: &JsonValue) -> Option<String> {
     first_payload_value(payload).and_then(value_to_display_message)
 }
 
-pub(super) fn json_preview(value: &JsonValue, max_chars: usize) -> String {
+pub fn json_preview(value: &JsonValue, max_chars: usize) -> String {
     let raw = value.to_string();
     let mut chars = raw.chars();
     let preview = chars.by_ref().take(max_chars).collect::<String>();
@@ -54,7 +54,7 @@ pub(super) fn json_preview(value: &JsonValue, max_chars: usize) -> String {
     }
 }
 
-pub(super) fn json_shape(value: &JsonValue) -> String {
+pub fn json_shape(value: &JsonValue) -> String {
     match value {
         JsonValue::Null => "空值".to_string(),
         JsonValue::Bool(_) => "布尔值".to_string(),
@@ -72,12 +72,7 @@ pub(super) fn json_shape(value: &JsonValue) -> String {
     }
 }
 
-pub(super) fn log_event_parse_failure(
-    state: &BridgeState,
-    event: &str,
-    error: &str,
-    payload: &JsonValue,
-) {
+pub fn log_event_parse_failure(state: &BridgeState, event: &str, error: &str, payload: &JsonValue) {
     tracing::warn!(
         target: "ica_native::protocol",
         bridge = %state.bridge_key,
@@ -94,7 +89,7 @@ pub(super) fn log_event_parse_failure(
     );
 }
 
-pub(super) fn parse_join_request(
+pub fn parse_join_request(
     value: &JsonValue,
     fallback_flag: Option<&str>,
 ) -> Result<JoinRequestRoom, String> {
@@ -115,9 +110,7 @@ pub(super) fn parse_join_request(
     Ok(request)
 }
 
-pub(super) fn parse_join_requests_snapshot(
-    value: &JsonValue,
-) -> Result<Vec<JoinRequestRoom>, String> {
+pub fn parse_join_requests_snapshot(value: &JsonValue) -> Result<Vec<JoinRequestRoom>, String> {
     match value {
         JsonValue::Array(values) => values
             .iter()

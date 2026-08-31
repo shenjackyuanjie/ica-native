@@ -5,7 +5,7 @@ use crate::app::{IcaApp, state::ForwardViewerAction};
 use crate::ica::{IcaCommand, types::message::Message};
 
 #[derive(Debug, Clone)]
-pub(super) struct ForwardReference {
+pub struct ForwardReference {
     pub res_id: String,
     pub file_name: Option<String>,
     pub fallback_res_id: Option<String>,
@@ -139,7 +139,7 @@ fn forward_preview(code: &JsonValue) -> Vec<String> {
     code.as_str().map(xml_forward_preview).unwrap_or_default()
 }
 
-pub(super) fn render_forward_preview(ui: &mut egui::Ui, reference: &ForwardReference) {
+pub fn render_forward_preview(ui: &mut egui::Ui, reference: &ForwardReference) {
     const MAX_VISIBLE_LINES: usize = 4;
 
     for line in reference.preview.iter().take(MAX_VISIBLE_LINES) {
@@ -171,7 +171,7 @@ fn inline_forward_messages(code: &JsonValue) -> Option<Vec<Message>> {
     (!messages.is_empty()).then_some(messages)
 }
 
-pub(super) fn forward_reference(
+pub fn forward_reference(
     message: &Message,
     parent_res_id: Option<&str>,
 ) -> Option<ForwardReference> {
@@ -288,7 +288,7 @@ fn fallback_message_elements(message: &Message) -> Vec<JsonValue> {
     elements
 }
 
-pub(super) fn fake_forward_node(message: &Message) -> JsonValue {
+pub fn fake_forward_node(message: &Message) -> JsonValue {
     json!({
         "user_id": message.sender_id,
         "message": raw_message_elements(message)
@@ -302,7 +302,7 @@ pub(super) fn fake_forward_node(message: &Message) -> JsonValue {
 }
 
 impl IcaApp {
-    pub(super) fn open_forward_reference(
+    pub fn open_forward_reference(
         &mut self,
         res_id: String,
         file_name: Option<String>,
@@ -364,7 +364,7 @@ impl IcaApp {
         }
     }
 
-    pub(super) fn send_selected_messages_as_merged_forward(&mut self, target_room_id: i64) -> bool {
+    pub fn send_selected_messages_as_merged_forward(&mut self, target_room_id: i64) -> bool {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return false;
         };
@@ -403,7 +403,7 @@ impl IcaApp {
         true
     }
 
-    pub(in crate::app) fn render_forward_viewer_window(&mut self, ctx: &egui::Context) {
+    pub fn render_forward_viewer_window(&mut self, ctx: &egui::Context) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
         };

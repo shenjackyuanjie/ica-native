@@ -1,4 +1,4 @@
-pub(super) static FACE_NAMES: &[(u16, &str)] = &[
+pub static FACE_NAMES: &[(u16, &str)] = &[
     (0, "惊讶"),
     (1, "撇嘴"),
     (2, "色"),

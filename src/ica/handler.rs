@@ -120,7 +120,7 @@ async fn send_message(
 ///
 /// 这里刻意保持穷尽匹配：新增 IcaCommand 变体时会在本函数编译失败，
 /// 提醒补上对应的处理函数，而不会被默认分支悄悄吞掉。
-pub(super) async fn handle_command(
+pub async fn handle_command(
     command: IcaCommand,
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,

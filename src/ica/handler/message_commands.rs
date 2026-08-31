@@ -11,7 +11,7 @@ use crate::ica::types::message::{DeleteMessage, Mention, ReplyMessage, SendMessa
 use super::context::CommandContext;
 use super::{build_multi_image_message, send_message, upload_and_send_file};
 
-pub(super) async fn send_chat_message(ctx: CommandContext<'_>, message: SendMessage) {
+pub async fn send_chat_message(ctx: CommandContext<'_>, message: SendMessage) {
     let CommandContext {
         client,
         event_tx,
@@ -22,7 +22,7 @@ pub(super) async fn send_chat_message(ctx: CommandContext<'_>, message: SendMess
     send_message(message, client, event_tx, bridge_key, api_base_url).await;
 }
 
-pub(super) async fn send_image_message(
+pub async fn send_image_message(
     ctx: CommandContext<'_>,
     room_id: RoomId,
     content: String,
@@ -62,7 +62,7 @@ pub(super) async fn send_image_message(
     }
 }
 
-pub(super) async fn send_multi_image_message(
+pub async fn send_multi_image_message(
     ctx: CommandContext<'_>,
     room_id: RoomId,
     content: String,
@@ -98,7 +98,7 @@ pub(super) async fn send_multi_image_message(
     }
 }
 
-pub(super) async fn send_raw_message(ctx: CommandContext<'_>, room_id: RoomId, content: JsonValue) {
+pub async fn send_raw_message(ctx: CommandContext<'_>, room_id: RoomId, content: JsonValue) {
     let CommandContext {
         client,
         event_tx,
@@ -124,7 +124,7 @@ pub(super) async fn send_raw_message(ctx: CommandContext<'_>, room_id: RoomId, c
     }
 }
 
-pub(super) async fn hide_message(ctx: CommandContext<'_>, room_id: RoomId, message_id: String) {
+pub async fn hide_message(ctx: CommandContext<'_>, room_id: RoomId, message_id: String) {
     let CommandContext {
         client,
         event_tx,
@@ -152,7 +152,7 @@ pub(super) async fn hide_message(ctx: CommandContext<'_>, room_id: RoomId, messa
     }
 }
 
-pub(super) async fn reveal_message(ctx: CommandContext<'_>, room_id: RoomId, message_id: String) {
+pub async fn reveal_message(ctx: CommandContext<'_>, room_id: RoomId, message_id: String) {
     let CommandContext {
         client,
         event_tx,
@@ -180,7 +180,7 @@ pub(super) async fn reveal_message(ctx: CommandContext<'_>, room_id: RoomId, mes
     }
 }
 
-pub(super) async fn renew_message(ctx: CommandContext<'_>, room_id: RoomId, message_id: String) {
+pub async fn renew_message(ctx: CommandContext<'_>, room_id: RoomId, message_id: String) {
     let CommandContext {
         client,
         event_tx,
@@ -208,7 +208,7 @@ pub(super) async fn renew_message(ctx: CommandContext<'_>, room_id: RoomId, mess
     }
 }
 
-pub(super) async fn delete_message(ctx: CommandContext<'_>, message: DeleteMessage) {
+pub async fn delete_message(ctx: CommandContext<'_>, message: DeleteMessage) {
     let CommandContext {
         client,
         event_tx,
@@ -234,13 +234,13 @@ pub(super) async fn delete_message(ctx: CommandContext<'_>, message: DeleteMessa
 ///
 /// 文件名、类型与内容总是同进同退，单独铺开会让参数表超过 clippy 的上限，
 /// 打包成结构体后调用处也更难传错顺序。
-pub(super) struct OutgoingFile {
+pub struct OutgoingFile {
     pub name: String,
     pub file_type: String,
     pub data: std::sync::Arc<[u8]>,
 }
 
-pub(super) async fn send_file_message(
+pub async fn send_file_message(
     ctx: CommandContext<'_>,
     room_id: RoomId,
     content: String,
