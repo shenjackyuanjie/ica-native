@@ -42,6 +42,15 @@ pub enum IcaCommand {
     FetchGroupMembers {
         room_id: RoomId,
     },
+    /// 拉取群公告列表。
+    ///
+    /// Bridge 没有公告接口，实际是取 `qun.qq.com` 的 Cookie 后直连 QQ 的 Web CGI；
+    /// `bkn` 由 GUI 侧从 `onlineData` 带入，为 0 或负数时在 IO 线程按 Cookie 现算。
+    FetchGroupAnnouncements {
+        request_id: u64,
+        room_id: RoomId,
+        bkn: i64,
+    },
     FetchMessagesBySender {
         request_id: u64,
         room_id: RoomId,

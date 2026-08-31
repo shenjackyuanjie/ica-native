@@ -17,6 +17,7 @@ use super::client;
 use super::command::{GROUP_BAN_MAX_DURATION, IcaCommand, emit_ui_event};
 use super::file_manager::call_file_manager;
 
+mod announcement;
 mod contacts;
 mod file_upload;
 mod forward;
@@ -149,6 +150,16 @@ pub(super) async fn handle_command(
         }
         IcaCommand::FetchGroupMembers { room_id } => {
             history::fetch_group_members(client, event_tx, bridge_key, room_id).await
+        }
+        IcaCommand::FetchGroupAnnouncements {
+            request_id,
+            room_id,
+            bkn,
+        } => {
+            announcement::fetch_group_announcements(
+                client, event_tx, bridge_key, request_id, room_id, bkn,
+            )
+            .await
         }
         IcaCommand::FetchMessagesBySender {
             request_id,

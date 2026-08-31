@@ -134,6 +134,8 @@ bridge_event_kinds! {
     ForwardMessagesFailed => "forwardMessagesFailed",
     ForwardSendRequested => "forwardSendRequested",
     GroupMembersResponse => "groupMembersResponse",
+    GroupAnnouncementsResponse => "groupAnnouncementsResponse",
+    GroupAnnouncementsFailed => "groupAnnouncementsFailed",
     GroupBanRequested => "groupBanRequested",
     SocketApiResponse => "socketApiResponse",
     FileManagerResponse => "fileManagerResponse",
