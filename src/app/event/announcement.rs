@@ -37,6 +37,14 @@ fn apply_response(state: &mut BridgeState, payload: &JsonValue) {
     let viewer = state.group_announcement_viewer.clone();
     let mut viewer = viewer.lock().unwrap();
 
+    // 先留下整份响应：字段名或结构对不上时，界面上仍能整体复制出来排查。
+    viewer.set_raw_response(
+        request_id,
+        room_id,
+        serde_json::to_string_pretty(&payload["body"])
+            .unwrap_or_else(|_| payload["body"].to_string()),
+    );
+
     match parse_announcement_list(&payload["body"]) {
         Ok(announcements) => {
             let count = announcements.len();

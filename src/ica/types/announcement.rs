@@ -8,8 +8,11 @@
 
 use serde_json::Value as JsonValue;
 
-/// 公告列表 CGI；参数与 oicq `getGroupNotice` 保持一致。
-const ANNOUNCEMENT_LIST_ENDPOINT: &str = "https://web.qun.qq.com/cgi-bin/announce/get_t_list";
+/// 公告列表 CGI。
+///
+/// 这里用的是手Q 群公告 H5 当前在用的 `list_announce`，而不是 oicq 里那个更老的
+/// `get_t_list`：后者只返回 `feeds`，既没有置顶标记，也不返回“发给新成员”的公告。
+const ANNOUNCEMENT_LIST_ENDPOINT: &str = "https://web.qun.qq.com/cgi-bin/announce/list_announce";
 
 /// 拉取公告时使用的 Cookie 域名，必须在 Bridge 的允许列表内。
 pub const ANNOUNCEMENT_COOKIE_DOMAIN: &str = "qun.qq.com";
@@ -17,11 +20,17 @@ pub const ANNOUNCEMENT_COOKIE_DOMAIN: &str = "qun.qq.com";
 /// 单次拉取的公告条数，与手Q H5 的默认分页一致。
 pub const ANNOUNCEMENT_PAGE_SIZE: u32 = 20;
 
-/// 拼接公告列表请求 URL。
-pub fn announcement_list_url(bkn: i64, group_id: i64) -> String {
-    format!(
-        "{ANNOUNCEMENT_LIST_ENDPOINT}?bkn={bkn}&qid={group_id}&ft=23&s=-1&n={ANNOUNCEMENT_PAGE_SIZE}"
-    )
+/// 公告列表请求地址。
+pub fn announcement_list_url() -> &'static str {
+    ANNOUNCEMENT_LIST_ENDPOINT
+}
+
+/// 拼接公告列表的表单请求体。
+///
+/// 参数取自 H5 自身的调用：`ft=23` 固定，`s=-1` 表示从最新一条开始，
+/// `i=1` 是关键——只有带上它，响应里才会出现 `inst`（发给新成员的公告）。
+pub fn announcement_list_form(bkn: i64, group_id: i64) -> String {
+    format!("qid={group_id}&bkn={bkn}&ft=23&s=-1&n={ANNOUNCEMENT_PAGE_SIZE}&i=1")
 }
 
 /// 复刻 JavaScript 的 `ToInt32`：按 2^32 取模后再按有符号 32 位解释。
@@ -133,8 +142,13 @@ pub struct GroupAnnouncement {
     pub read_count: Option<i64>,
     /// 是否要求群成员确认收到。
     pub confirm_required: bool,
-    /// 是否置顶；手Q H5 用 `pinned === 1` 判断。
+    /// 是否置顶；`list_announce` 的 `feeds` 里用 `pinned == 1` 表示。
     pub pinned: bool,
+    /// 是否为“发给新成员”的公告。
+    ///
+    /// 这类公告不在 `feeds` 里，而是单独放在响应的 `inst` 数组；H5 也把
+    /// `type == 20` 当作同一种东西（发布时走 `add_qun_instruction`）。
+    pub to_new: bool,
     /// 原始 feed，供界面复制排查用。
     pub raw: JsonValue,
 }
@@ -256,7 +270,10 @@ fn parse_images(message: &JsonValue) -> Vec<GroupAnnouncementImage> {
         .unwrap_or_default()
 }
 
-fn parse_feed(feed: &JsonValue) -> GroupAnnouncement {
+/// `type == 20` 是 H5 对“发给新成员”的判定（`tonew = 20 === type`）。
+const ANNOUNCEMENT_TYPE_TO_NEW: i64 = 20;
+
+fn parse_feed(feed: &JsonValue, force_to_new: bool) -> GroupAnnouncement {
     let message = &feed["msg"];
     // `text` 是纯文本正文，`text_face` 额外带表情占位；后者缺失时才回退。
     let text = match json_string(&message["text"]) {
@@ -273,6 +290,8 @@ fn parse_feed(feed: &JsonValue) -> GroupAnnouncement {
         read_count: json_i64(&feed["read_num"]),
         confirm_required: json_i64(&feed["settings"]["confirm_required"]).unwrap_or_default() != 0,
         pinned: json_i64(&feed["pinned"]).unwrap_or_default() == 1,
+        to_new: force_to_new
+            || json_i64(&feed["type"]).unwrap_or_default() == ANNOUNCEMENT_TYPE_TO_NEW,
         raw: feed.clone(),
     }
 }
@@ -292,10 +311,28 @@ pub fn parse_announcement_list(value: &JsonValue) -> Result<Vec<GroupAnnouncemen
         });
     }
 
-    Ok(value["feeds"]
+    // 响应把公告分放在两个数组里：`feeds` 是普通公告（自带 pinned 标记），
+    // `inst` 是“发给新成员”的公告。只读 feeds 会同时丢掉置顶信息和新成员公告。
+    let regular = value["feeds"]
         .as_array()
-        .map(|feeds| feeds.iter().map(parse_feed).collect())
-        .unwrap_or_default())
+        .map(|feeds| {
+            feeds
+                .iter()
+                .map(|feed| parse_feed(feed, false))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let to_new = value["inst"]
+        .as_array()
+        .map(|feeds| {
+            feeds
+                .iter()
+                .map(|feed| parse_feed(feed, true))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok(to_new.into_iter().chain(regular).collect())
 }
 #[cfg(test)]
 mod tests {
@@ -408,6 +445,75 @@ mod tests {
             height: Some(10),
         };
         assert_eq!(zero_width.display_height(100.0), None);
+    }
+
+    #[test]
+    fn pinned_and_new_member_announcements_come_from_separate_response_arrays() {
+        // 老接口 get_t_list 只返回 feeds，既没有 pinned 也没有 inst；
+        // 换成 list_announce 之后，置顶靠 feeds[].pinned，发给新成员的公告在 inst 里。
+        let announcements = parse_announcement_list(&json!({
+            "ec": 0,
+            "feeds": [
+                { "fid": "普通", "type": 6, "msg": { "text": "普通公告" } },
+                { "fid": "置顶", "type": 6, "pinned": 1, "msg": { "text": "置顶公告" } }
+            ],
+            "inst": [
+                { "fid": "新成员", "type": 20, "msg": { "text": "欢迎新同学" } }
+            ]
+        }))
+        .expect("应解析成功");
+
+        let flags = announcements
+            .iter()
+            .map(|item| (item.fid.as_str(), item.pinned, item.to_new))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            flags,
+            [
+                ("新成员", false, true),
+                ("普通", false, false),
+                ("置顶", true, false)
+            ]
+        );
+    }
+
+    #[test]
+    fn type_twenty_marks_new_member_announcement_even_inside_feeds() {
+        // H5 的判定是 tonew = (type === 20)，即便这条公告出现在 feeds 里也算。
+        let announcements = parse_announcement_list(&json!({
+            "ec": 0,
+            "feeds": [{ "fid": "1", "type": 20, "msg": { "text": "x" } }]
+        }))
+        .expect("应解析成功");
+        assert!(announcements[0].to_new);
+    }
+
+    #[test]
+    fn real_pinned_feed_text_restores_nbsp_and_entity_newlines() {
+        // 线上真实公告：换行写作 &#10;，空格写作 &nbsp;，正文里还带 ~~ 之类的普通字符。
+        let announcements = parse_announcement_list(&json!({
+            "ec": 0,
+            "feeds": [{
+                "fid": "c4957b3500000000732ede69fab40800",
+                "type": 6,
+                "pubt": 1776168563,
+                "read_num": 38,
+                "u": 3695888,
+                "msg": {
+                    "title": "群公告",
+                    "text": "~~高考结束啦~~&#10;大学生活开始了.png&#10;flag2:&nbsp;大家记得监督&nbsp;msdn"
+                }
+            }]
+        }))
+        .expect("应解析成功");
+
+        let feed = &announcements[0];
+        assert_eq!(
+            feed.text,
+            "~~高考结束啦~~\n大学生活开始了.png\nflag2: 大家记得监督 msdn"
+        );
+        assert_eq!(feed.text.lines().count(), 3);
+        assert_eq!(feed.read_count, Some(38));
     }
 
     #[test]

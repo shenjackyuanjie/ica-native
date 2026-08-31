@@ -9,7 +9,7 @@ use crate::ica::command::emit_ui_event;
 use crate::ica::event::BridgeEvent;
 use crate::ica::types::RoomId;
 use crate::ica::types::announcement::{
-    ANNOUNCEMENT_COOKIE_DOMAIN, announcement_list_url, resolve_bkn,
+    ANNOUNCEMENT_COOKIE_DOMAIN, announcement_list_form, announcement_list_url, resolve_bkn,
 };
 
 use super::ack_payload_first;
@@ -80,9 +80,15 @@ async fn request_announcement_list(
         .timeout(HTTP_TIMEOUT)
         .build()
         .map_err(|error| format!("创建 HTTP 客户端失败: {error}"))?;
+    // `list_announce` 只接受 POST 表单，且必须带 Cookie 才认登录态。
     let response = http
-        .get(announcement_list_url(bkn, group_id))
+        .post(announcement_list_url())
         .header(reqwest::header::COOKIE, cookie)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded",
+        )
+        .body(announcement_list_form(bkn, group_id))
         .send()
         .await
         .map_err(|error| format!("请求群公告失败: {error}"))?;

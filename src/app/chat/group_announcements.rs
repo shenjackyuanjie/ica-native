@@ -60,8 +60,13 @@ fn render_announcement(
     expanded: &mut bool,
     pending_image_url: &mut Option<String>,
 ) {
-    egui::Frame::group(ui.style()).show(ui, |ui| {
+    let frame = egui::Frame::group(ui.style()).show(ui, |ui| {
+        // 让整块公告撑满可用宽度，否则窗口拉宽后卡片只占内容宽度，右键区域也会跟着缩水。
+        ui.set_width(ui.available_width());
         ui.horizontal_wrapped(|ui| {
+            if announcement.to_new {
+                ui.colored_label(egui::Color32::LIGHT_GREEN, "新成员");
+            }
             if announcement.pinned {
                 ui.colored_label(egui::Color32::LIGHT_BLUE, "置顶");
             }
@@ -115,21 +120,25 @@ fn render_announcement(
                 *pending_image_url = Some(image.original_url());
             }
         }
+    });
 
-        ui.horizontal_wrapped(|ui| {
-            if ui.small_button("复制正文").clicked() {
-                ui.ctx().copy_text(announcement.text.clone());
-            }
-            if ui.small_button("复制原始 JSON").clicked() {
-                ui.ctx().copy_text(
-                    serde_json::to_string_pretty(&announcement.raw)
-                        .unwrap_or_else(|_| announcement.raw.to_string()),
-                );
-            }
-            if !announcement.fid.is_empty() {
-                ui.weak(format!("fid {}", announcement.fid));
-            }
-        });
+    // 复制类操作放进右键菜单，正文区域保持干净。
+    frame.response.context_menu(|ui| {
+        if ui.button("复制正文").clicked() {
+            ui.ctx().copy_text(announcement.text.clone());
+            ui.close();
+        }
+        if ui.button("复制原始 JSON").clicked() {
+            ui.ctx().copy_text(
+                serde_json::to_string_pretty(&announcement.raw)
+                    .unwrap_or_else(|_| announcement.raw.to_string()),
+            );
+            ui.close();
+        }
+        if !announcement.fid.is_empty() && ui.button("复制公告 ID").clicked() {
+            ui.ctx().copy_text(announcement.fid.clone());
+            ui.close();
+        }
     });
 }
 
@@ -150,6 +159,14 @@ fn render_viewer(ui: &mut egui::Ui, viewer: &mut GroupAnnouncementViewerState) {
             ui.spinner();
             ui.weak("正在拉取群公告…");
         }
+        if let Some(raw) = viewer.raw_response.clone()
+            && ui
+                .small_button("复制完整响应")
+                .on_hover_text("复制公告接口的原始 JSON，便于反馈字段差异")
+                .clicked()
+        {
+            ui.ctx().copy_text(raw);
+        }
     });
 
     if let Some(error) = &viewer.last_error {
@@ -168,16 +185,19 @@ fn render_viewer(ui: &mut egui::Ui, viewer: &mut GroupAnnouncementViewerState) {
     let mut toggled_fid = None;
     let mut pending_image_url = None;
     let expanded_fid = viewer.expanded_fid.clone();
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for announcement in &viewer.announcements {
-            let mut expanded = expanded_fid.as_deref() == Some(announcement.fid.as_str());
-            let was_expanded = expanded;
-            render_announcement(ui, announcement, &mut expanded, &mut pending_image_url);
-            if expanded != was_expanded {
-                toggled_fid = Some((announcement.fid.clone(), expanded));
+    // auto_shrink 关掉后滚动区始终占满窗口，滚动条贴在窗口右边而不是内容右边。
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for announcement in &viewer.announcements {
+                let mut expanded = expanded_fid.as_deref() == Some(announcement.fid.as_str());
+                let was_expanded = expanded;
+                render_announcement(ui, announcement, &mut expanded, &mut pending_image_url);
+                if expanded != was_expanded {
+                    toggled_fid = Some((announcement.fid.clone(), expanded));
+                }
             }
-        }
-    });
+        });
     if let Some((fid, expanded)) = toggled_fid {
         viewer.expanded_fid = expanded.then_some(fid);
     }

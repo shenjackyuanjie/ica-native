@@ -17,6 +17,8 @@ pub struct GroupAnnouncementViewerState {
     pub reload_requested: bool,
     /// 待打开的配图原图 URL；同样由主循环消费后交给图片预览窗口。
     pub pending_image_url: Option<String>,
+    /// 最近一次公告接口的完整响应，供排查字段差异时整体复制。
+    pub raw_response: Option<String>,
     /// 单调递增的请求序号，用于丢弃过期响应。
     request_id: u64,
 }
@@ -40,6 +42,13 @@ impl GroupAnnouncementViewerState {
         self.request_id
     }
 
+    /// 记录整份响应；与 `apply_response` 分开，失败时也能留下原始报文。
+    pub fn set_raw_response(&mut self, request_id: u64, room_id: RoomId, raw: String) {
+        if self.accepts(request_id, room_id) {
+            self.raw_response = Some(raw);
+        }
+    }
+
     pub fn apply_response(
         &mut self,
         request_id: u64,
@@ -49,9 +58,9 @@ impl GroupAnnouncementViewerState {
         if !self.accepts(request_id, room_id) {
             return false;
         }
-        // 置顶公告固定排在最前；`sort_by_key` 是稳定排序，
-        // 因此两组内部都保持 CGI 下发的发布时间倒序。
-        announcements.sort_by_key(|announcement| !announcement.pinned);
+        // 展示顺序与手Q 一致：发给新成员的公告 > 置顶公告 > 其余。
+        // `sort_by_key` 是稳定排序，因此每组内部都保持 CGI 下发的发布时间倒序。
+        announcements.sort_by_key(|announcement| (!announcement.to_new, !announcement.pinned));
         self.expanded_fid = self
             .expanded_fid
             .take()
