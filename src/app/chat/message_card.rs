@@ -1,3 +1,10 @@
+//! 单条聊天消息的渲染。
+//!
+//! 这个文件只负责「一条消息怎么画」，包括文本富文本（@、表情、链接、合并转发占位）、
+//! 图片/文件附件与回复引用。它本身不做布局缓存——行高估算与可见行裁剪由
+//! `central_panel` 统一处理（`message_row_heights` / `message_row_layouts` 缓存 +
+//! `show_viewport` 只渲染可见行），所以本文件在长列表里即使逐条执行也很轻量。
+
 use std::borrow::Cow;
 
 use crate::app::media::{ImageAction, ImageSource};
