@@ -66,8 +66,10 @@ fn overview_limit_keeps_group_backbone_when_user_nodes_exceed_limit() {
     for i in 0..20 {
         nodes.push(test_node(&format!("g:{i}"), RelationNodeKind::Group));
     }
-    let mut model = RelationLayoutModel::default();
-    model.graph = test_graph(nodes, vec![]);
+    let mut model = RelationLayoutModel {
+        graph: test_graph(nodes, vec![]),
+        ..Default::default()
+    };
     model.render_setting.max_visible_nodes = 100;
 
     let visible = relation_visible_ids_default(&model, "");
