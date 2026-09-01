@@ -1,5 +1,5 @@
 use crate::ica::types::RoomId;
-use crate::ica::types::announcement::GroupAnnouncement;
+use crate::ica::types::announcement::{GroupAnnouncement, GroupAnnouncementDraft};
 
 /// 群公告查看器状态，通过 `Arc<Mutex<..>>` 在主窗口和公告窗口之间共享。
 #[derive(Debug, Clone, Default)]
@@ -19,6 +19,23 @@ pub struct GroupAnnouncementViewerState {
     pub pending_image_url: Option<String>,
     /// 最近一次公告接口的完整响应，供排查字段差异时整体复制。
     pub raw_response: Option<String>,
+
+    // ---- 发布 / 编辑 / 删除 ----
+    /// 编辑器是否展开（就在公告窗口内，不另开窗口）。
+    pub editor_open: bool,
+    /// 当前编辑器里的草稿。
+    pub draft: GroupAnnouncementDraft,
+    /// 写操作进行中，禁用重复提交。
+    pub submitting: bool,
+    /// 编辑器内的错误提示（提交失败等）。
+    pub editor_error: Option<String>,
+    /// 编辑器点了发布；由主循环消费后发命令。
+    pub pending_submit: bool,
+    /// 待删除的公告 fid；由主循环消费后发删除命令。
+    pub pending_delete_fid: Option<String>,
+    /// 右键菜单点删除后、真正提交前的二次确认。
+    pub delete_confirm_fid: Option<String>,
+
     /// 单调递增的请求序号，用于丢弃过期响应。
     request_id: u64,
 }
@@ -80,6 +97,39 @@ impl GroupAnnouncementViewerState {
         self.loading = false;
         self.last_error = Some(error);
         true
+    }
+
+    /// 打开编辑器：新建时草稿为空，编辑时从已有公告预填。
+    pub fn open_editor(&mut self, draft: GroupAnnouncementDraft) {
+        self.draft = draft;
+        self.editor_open = true;
+        self.editor_error = None;
+        self.submitting = false;
+        self.delete_confirm_fid = None;
+    }
+
+    pub fn close_editor(&mut self) {
+        self.editor_open = false;
+        self.editor_error = None;
+        self.submitting = false;
+        self.pending_submit = false;
+    }
+
+    /// 写操作成功：关闭编辑器并请求刷新列表。
+    pub fn action_done(&mut self) {
+        self.submitting = false;
+        self.editor_open = false;
+        self.editor_error = None;
+        self.pending_submit = false;
+        self.delete_confirm_fid = None;
+        self.reload_requested = true;
+    }
+
+    /// 写操作失败：留在编辑器里展示原因。
+    pub fn action_failed(&mut self, error: String) {
+        self.submitting = false;
+        self.pending_submit = false;
+        self.editor_error = Some(error);
     }
 
     /// 只接受“当前群的最新一次请求”的响应。

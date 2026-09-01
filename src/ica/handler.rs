@@ -154,6 +154,18 @@ pub async fn handle_command(
             room_id,
             bkn,
         } => group_commands::fetch_group_announcements(ctx, request_id, room_id, bkn).await,
+        IcaCommand::PublishGroupAnnouncement {
+            request_id,
+            room_id,
+            bkn,
+            draft,
+        } => group_commands::publish_group_announcement(ctx, request_id, room_id, bkn, draft).await,
+        IcaCommand::DeleteGroupAnnouncement {
+            request_id,
+            room_id,
+            bkn,
+            fid,
+        } => group_commands::delete_group_announcement(ctx, request_id, room_id, bkn, fid).await,
         IcaCommand::FetchMessagesBySender {
             request_id,
             room_id,

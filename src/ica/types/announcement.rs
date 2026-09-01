@@ -14,6 +14,19 @@ use serde_json::Value as JsonValue;
 /// `get_t_list`：后者只返回 `feeds`，既没有置顶标记，也不返回“发给新成员”的公告。
 const ANNOUNCEMENT_LIST_ENDPOINT: &str = "https://web.qun.qq.com/cgi-bin/announce/list_announce";
 
+/// 发布与编辑普通公告的 CGI。带上 `fid` 即为编辑已有公告。
+const ANNOUNCEMENT_ADD_ENDPOINT: &str = "https://web.qun.qq.com/cgi-bin/announce/add_qun_notice";
+
+/// 发布与编辑「发给新成员」公告的 CGI。
+///
+/// 手Q H5 按 `toNew` 在 `addQunNotice` 与 `addQunInstruction` 之间二选一，
+/// 两者参数一致，只是入口不同。
+const ANNOUNCEMENT_ADD_INSTRUCTION_ENDPOINT: &str =
+    "https://web.qun.qq.com/cgi-bin/announce/add_qun_instruction";
+
+/// 删除公告的 CGI。
+const ANNOUNCEMENT_DELETE_ENDPOINT: &str = "https://web.qun.qq.com/cgi-bin/announce/del_feed";
+
 /// 拉取公告时使用的 Cookie 域名，必须在 Bridge 的允许列表内。
 pub const ANNOUNCEMENT_COOKIE_DOMAIN: &str = "qun.qq.com";
 
@@ -142,6 +155,10 @@ pub struct GroupAnnouncement {
     pub read_count: Option<i64>,
     /// 是否要求群成员确认收到。
     pub confirm_required: bool,
+    /// 是否允许成员在公告里直接修改群名片。
+    pub show_edit_card: bool,
+    /// 提醒方式：0 = 弹窗提醒，1 = 仅发到群里。
+    pub tip_window_type: i64,
     /// 是否置顶；`list_announce` 的 `feeds` 里用 `pinned == 1` 表示。
     pub pinned: bool,
     /// 是否为“发给新成员”的公告。
@@ -289,6 +306,8 @@ fn parse_feed(feed: &JsonValue, force_to_new: bool) -> GroupAnnouncement {
         images: parse_images(message),
         read_count: json_i64(&feed["read_num"]),
         confirm_required: json_i64(&feed["settings"]["confirm_required"]).unwrap_or_default() != 0,
+        show_edit_card: json_i64(&feed["settings"]["is_show_edit_card"]).unwrap_or_default() != 0,
+        tip_window_type: json_i64(&feed["settings"]["tip_window_type"]).unwrap_or_default(),
         pinned: json_i64(&feed["pinned"]).unwrap_or_default() == 1,
         to_new: force_to_new
             || json_i64(&feed["type"]).unwrap_or_default() == ANNOUNCEMENT_TYPE_TO_NEW,
@@ -334,6 +353,133 @@ pub fn parse_announcement_list(value: &JsonValue) -> Result<Vec<GroupAnnouncemen
 
     Ok(to_new.into_iter().chain(regular).collect())
 }
+
+/// 公告草稿：新建与编辑共用同一份数据。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupAnnouncementDraft {
+    /// 为空表示新建；带上已有公告的 fid 即为编辑该条公告。
+    pub fid: Option<String>,
+    pub text: String,
+    /// 是否置顶。
+    pub pinned: bool,
+    /// 是否作为「发给新成员」的公告发布。
+    pub to_new: bool,
+    /// 是否要求群成员确认收到。
+    pub confirm_required: bool,
+    /// 是否允许成员在公告里直接改群名片。
+    pub show_edit_card: bool,
+    /// 提醒方式：0 = 弹窗提醒，1 = 仅发到群里。
+    pub tip_window_type: i64,
+}
+
+impl Default for GroupAnnouncementDraft {
+    /// 新建公告的默认值，与手Q H5 编辑器的初始状态一致：
+    /// 默认要求确认收到、只发到群里而不弹窗。
+    fn default() -> Self {
+        Self {
+            fid: None,
+            text: String::new(),
+            pinned: false,
+            to_new: false,
+            confirm_required: true,
+            show_edit_card: false,
+            tip_window_type: 1,
+        }
+    }
+}
+
+impl GroupAnnouncementDraft {
+    /// 由已有公告构造编辑草稿。
+    pub fn from_announcement(announcement: &GroupAnnouncement) -> Self {
+        Self {
+            fid: (!announcement.fid.is_empty()).then(|| announcement.fid.clone()),
+            text: announcement.text.clone(),
+            pinned: announcement.pinned,
+            to_new: announcement.to_new,
+            confirm_required: announcement.confirm_required,
+            show_edit_card: announcement.show_edit_card,
+            tip_window_type: announcement.tip_window_type,
+        }
+    }
+
+    pub fn is_edit(&self) -> bool {
+        self.fid.is_some()
+    }
+}
+
+/// 发布/编辑公告的请求地址。
+pub fn announcement_publish_url(to_new: bool) -> &'static str {
+    if to_new {
+        ANNOUNCEMENT_ADD_INSTRUCTION_ENDPOINT
+    } else {
+        ANNOUNCEMENT_ADD_ENDPOINT
+    }
+}
+
+/// 规整待发布的正文。
+///
+/// 只统一换行符：手Q H5 额外会把连续空格与连续空行各自压成一个，
+/// 那是纯展示层的取舍，会悄悄改掉用户排版（比如缩进和空行分段），这里不跟随。
+pub fn normalize_draft_text(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// 拼接发布/编辑公告的表单请求体。
+pub fn announcement_publish_form(
+    bkn: i64,
+    group_id: i64,
+    draft: &GroupAnnouncementDraft,
+) -> String {
+    let settings = format!(
+        r#"{{"is_show_edit_card":{},"tip_window_type":{},"confirm_required":{}}}"#,
+        i32::from(draft.show_edit_card),
+        draft.tip_window_type,
+        i32::from(draft.confirm_required),
+    );
+    // type 与入口一起决定公告种类：普通公告为 1，发给新成员为 20。
+    let announcement_type = if draft.to_new {
+        ANNOUNCEMENT_TYPE_TO_NEW
+    } else {
+        1
+    };
+    let mut form = format!(
+        "qid={group_id}&bkn={bkn}&text={}&pinned={}&type={announcement_type}&settings={}",
+        urlencoding::encode(&normalize_draft_text(&draft.text)),
+        i32::from(draft.pinned),
+        urlencoding::encode(&settings),
+    );
+    if let Some(fid) = draft.fid.as_deref().filter(|fid| !fid.is_empty()) {
+        form.push_str(&format!("&fid={}", urlencoding::encode(fid)));
+    }
+    form
+}
+
+/// 删除公告的请求地址。
+pub fn announcement_delete_url() -> &'static str {
+    ANNOUNCEMENT_DELETE_ENDPOINT
+}
+
+/// 拼接删除公告的表单请求体。
+pub fn announcement_delete_form(bkn: i64, group_id: i64, fid: &str) -> String {
+    format!("qid={group_id}&bkn={bkn}&fid={}", urlencoding::encode(fid))
+}
+
+/// 解析发布/编辑/删除的响应。
+///
+/// 与列表接口一样恒返回 HTTP 200，成败只看响应体的 `ec`。
+pub fn parse_announcement_action(value: &JsonValue) -> Result<(), String> {
+    let code = json_i64(&value["ec"]).unwrap_or_default();
+    if code == 0 {
+        return Ok(());
+    }
+    let reason = decode_announcement_text(&json_string(&value["em"]));
+    Err(if reason.trim().is_empty() {
+        format!("群公告接口返回错误码 {code}")
+    } else {
+        format!("{reason} (ec={code})")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -445,6 +591,59 @@ mod tests {
             height: Some(10),
         };
         assert_eq!(zero_width.display_height(100.0), None);
+    }
+
+    #[test]
+    fn publish_form_encodes_text_settings_and_picks_endpoint_by_kind() {
+        use super::{
+            GroupAnnouncementDraft, announcement_delete_form, announcement_publish_form,
+            announcement_publish_url, parse_announcement_action,
+        };
+
+        let draft = GroupAnnouncementDraft {
+            text: "第一行\r\n第二行&符".to_string(),
+            pinned: true,
+            to_new: false,
+            confirm_required: true,
+            show_edit_card: false,
+            tip_window_type: 1,
+            fid: None,
+        };
+
+        // 普通公告走 add_qun_notice，换行统一成 %0A，正文里的 & 要转义成 %26。
+        assert!(announcement_publish_url(false).ends_with("add_qun_notice"));
+        let form = announcement_publish_form(5381, -123, &draft);
+        assert!(form.contains("qid=-123"));
+        assert!(form.contains("bkn=5381"));
+        assert!(form.contains("pinned=1"));
+        assert!(form.contains("type=1"));
+        assert!(form.contains(
+            "text=%E7%AC%AC%E4%B8%80%E8%A1%8C%0A%E7%AC%AC%E4%BA%8C%E8%A1%8C%26%E7%AC%A6"
+        ));
+        // settings 里的布尔以 1/0 编码（i32::from(bool)），与手Q 一致。
+        assert!(form.contains("confirm_required%22%3A1"));
+        assert!(!form.contains("fid="), "新建公告不带 fid");
+
+        // 发给新成员走 add_qun_instruction，type 变成 20。
+        let mut instruction = draft.clone();
+        instruction.to_new = true;
+        instruction.fid = Some("abc123".to_string());
+        assert!(announcement_publish_url(true).ends_with("add_qun_instruction"));
+        let form = announcement_publish_form(5381, -123, &instruction);
+        assert!(form.contains("type=20"));
+        assert!(form.contains("fid=abc123"), "编辑已有公告要带 fid");
+
+        // 删除表单只要 qid/bkn/fid。
+        assert_eq!(
+            announcement_delete_form(5381, -123, "abc123"),
+            "qid=-123&bkn=5381&fid=abc123"
+        );
+
+        // 写操作的成败同样只看 ec。
+        assert_eq!(parse_announcement_action(&json!({ "ec": 0 })), Ok(()));
+        let err = parse_announcement_action(&json!({ "ec": 22, "em": "no&nbsp;privilege" }))
+            .expect_err("ec 非 0 应失败");
+        assert!(err.contains("no privilege") && err.contains("22"));
     }
 
     #[test]

@@ -7,6 +7,7 @@ use serde_json::json;
 use crate::ica::client;
 use crate::ica::command::{GROUP_BAN_MAX_DURATION, emit_ui_event};
 use crate::ica::types::RoomId;
+use crate::ica::types::announcement::GroupAnnouncementDraft;
 
 use super::context::CommandContext;
 use super::{announcement, file_upload, history};
@@ -166,4 +167,41 @@ pub async fn send_group_poke(ctx: CommandContext<'_>, room_id: RoomId, target_id
             }),
         );
     }
+}
+pub async fn publish_group_announcement(
+    ctx: CommandContext<'_>,
+    request_id: u64,
+    room_id: RoomId,
+    bkn: i64,
+    draft: GroupAnnouncementDraft,
+) {
+    let CommandContext {
+        client,
+        event_tx,
+        bridge_key,
+        ..
+    } = ctx;
+    announcement::publish_group_announcement(
+        client, event_tx, bridge_key, request_id, room_id, bkn, draft,
+    )
+    .await
+}
+
+pub async fn delete_group_announcement(
+    ctx: CommandContext<'_>,
+    request_id: u64,
+    room_id: RoomId,
+    bkn: i64,
+    fid: String,
+) {
+    let CommandContext {
+        client,
+        event_tx,
+        bridge_key,
+        ..
+    } = ctx;
+    announcement::delete_group_announcement(
+        client, event_tx, bridge_key, request_id, room_id, bkn, fid,
+    )
+    .await
 }

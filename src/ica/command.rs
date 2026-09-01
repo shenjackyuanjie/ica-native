@@ -8,6 +8,7 @@ use super::event::BridgeEvent;
 
 use crate::ica::types::{
     RoomId,
+    announcement::GroupAnnouncementDraft,
     message::{DeleteMessage, Mention, ReplyMessage, SendMessage},
     room::Room,
 };
@@ -50,6 +51,20 @@ pub enum IcaCommand {
         request_id: u64,
         room_id: RoomId,
         bkn: i64,
+    },
+    /// 发布或编辑群公告；草稿带 fid 即为编辑已有公告。
+    PublishGroupAnnouncement {
+        request_id: u64,
+        room_id: RoomId,
+        bkn: i64,
+        draft: GroupAnnouncementDraft,
+    },
+    /// 删除指定群公告。
+    DeleteGroupAnnouncement {
+        request_id: u64,
+        room_id: RoomId,
+        bkn: i64,
+        fid: String,
     },
     FetchMessagesBySender {
         request_id: u64,

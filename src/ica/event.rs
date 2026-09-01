@@ -136,6 +136,8 @@ bridge_event_kinds! {
     GroupMembersResponse => "groupMembersResponse",
     GroupAnnouncementsResponse => "groupAnnouncementsResponse",
     GroupAnnouncementsFailed => "groupAnnouncementsFailed",
+    GroupAnnouncementActionDone => "groupAnnouncementActionDone",
+    GroupAnnouncementActionFailed => "groupAnnouncementActionFailed",
     GroupBanRequested => "groupBanRequested",
     SocketApiResponse => "socketApiResponse",
     FileManagerResponse => "fileManagerResponse",

@@ -3,7 +3,7 @@ use crate::app::media::ImageSource;
 use crate::app::state::GroupAnnouncementViewerState;
 use crate::ica::IcaCommand;
 use crate::ica::types::RoomId;
-use crate::ica::types::announcement::GroupAnnouncement;
+use crate::ica::types::announcement::{GroupAnnouncement, GroupAnnouncementDraft};
 
 /// 折叠状态下正文最多展示的行数。
 const COLLAPSED_TEXT_LINES: usize = 4;
@@ -54,11 +54,20 @@ fn announcement_headline(announcement: &GroupAnnouncement) -> String {
         .unwrap_or_else(|| "(无标题公告)".to_string())
 }
 
+/// 右键菜单里产生的、需要回写 viewer 的动作。
+enum MenuAction {
+    /// 用这条公告预填编辑器。
+    Edit(GroupAnnouncementDraft),
+    /// 请求删除，回到 viewer 后二次确认。
+    RequestDelete(String),
+}
+
 fn render_announcement(
     ui: &mut egui::Ui,
     announcement: &GroupAnnouncement,
     expanded: &mut bool,
     pending_image_url: &mut Option<String>,
+    menu_action: &mut Option<MenuAction>,
 ) {
     let frame = egui::Frame::group(ui.style()).show(ui, |ui| {
         // 让整块公告撑满可用宽度，否则窗口拉宽后卡片只占内容宽度，右键区域也会跟着缩水。
@@ -135,9 +144,74 @@ fn render_announcement(
             );
             ui.close();
         }
+        if !announcement.fid.is_empty() {
+            ui.separator();
+            if ui.button("编辑").clicked() {
+                *menu_action = Some(MenuAction::Edit(GroupAnnouncementDraft::from_announcement(
+                    announcement,
+                )));
+                ui.close();
+            }
+            if ui.button("删除").clicked() {
+                *menu_action = Some(MenuAction::RequestDelete(announcement.fid.clone()));
+                ui.close();
+            }
+        }
         if !announcement.fid.is_empty() && ui.button("复制公告 ID").clicked() {
             ui.ctx().copy_text(announcement.fid.clone());
             ui.close();
+        }
+    });
+}
+
+/// 发布/编辑公告的表单。
+fn render_editor(ui: &mut egui::Ui, viewer: &mut GroupAnnouncementViewerState) {
+    ui.strong(if viewer.draft.is_edit() {
+        "编辑公告"
+    } else {
+        "发布新公告"
+    });
+    ui.add(
+        egui::TextEdit::multiline(&mut viewer.draft.text)
+            .hint_text("公告正文")
+            .desired_rows(8)
+            .desired_width(f32::INFINITY),
+    );
+
+    ui.horizontal_wrapped(|ui| {
+        ui.checkbox(&mut viewer.draft.pinned, "置顶");
+        ui.checkbox(&mut viewer.draft.to_new, "发给新成员");
+        ui.checkbox(&mut viewer.draft.confirm_required, "需确认收到");
+        ui.checkbox(&mut viewer.draft.show_edit_card, "允许改群名片");
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.label("提醒方式");
+        ui.radio_value(&mut viewer.draft.tip_window_type, 0, "弹窗提醒");
+        ui.radio_value(&mut viewer.draft.tip_window_type, 1, "仅发到群里");
+    });
+
+    if let Some(error) = viewer.editor_error.clone() {
+        ui.colored_label(egui::Color32::LIGHT_RED, error);
+    }
+
+    ui.horizontal_wrapped(|ui| {
+        let can_submit = !viewer.submitting && !viewer.draft.text.trim().is_empty();
+        if ui
+            .add_enabled(can_submit, egui::Button::new("发布"))
+            .clicked()
+        {
+            viewer.editor_error = None;
+            viewer.pending_submit = true;
+        }
+        if viewer.submitting {
+            ui.spinner();
+            ui.weak("正在提交…");
+        }
+        if ui
+            .add_enabled(!viewer.submitting, egui::Button::new("取消"))
+            .clicked()
+        {
+            viewer.close_editor();
         }
     });
 }
@@ -159,6 +233,9 @@ fn render_viewer(ui: &mut egui::Ui, viewer: &mut GroupAnnouncementViewerState) {
             ui.spinner();
             ui.weak("正在拉取群公告…");
         }
+        if ui.button("新建公告").clicked() {
+            viewer.open_editor(GroupAnnouncementDraft::default());
+        }
         if let Some(raw) = viewer.raw_response.clone()
             && ui
                 .small_button("复制完整响应")
@@ -174,6 +251,30 @@ fn render_viewer(ui: &mut egui::Ui, viewer: &mut GroupAnnouncementViewerState) {
     }
     ui.separator();
 
+    if viewer.editor_open {
+        render_editor(ui, viewer);
+        return;
+    }
+
+    if let Some(fid) = viewer.delete_confirm_fid.clone() {
+        let headline = viewer
+            .announcements
+            .iter()
+            .find(|item| item.fid == fid)
+            .map(announcement_headline)
+            .unwrap_or_else(|| "这条公告".to_string());
+        ui.horizontal_wrapped(|ui| {
+            ui.colored_label(egui::Color32::YELLOW, format!("确认删除「{headline}」？"));
+            if ui.button("确认删除").clicked() {
+                viewer.pending_delete_fid = Some(fid);
+                viewer.delete_confirm_fid = None;
+            }
+            if ui.button("取消").clicked() {
+                viewer.delete_confirm_fid = None;
+            }
+        });
+    }
+
     if viewer.announcements.is_empty() {
         if !viewer.loading && viewer.last_error.is_none() {
             ui.weak("这个群没有公告");
@@ -184,6 +285,7 @@ fn render_viewer(ui: &mut egui::Ui, viewer: &mut GroupAnnouncementViewerState) {
     // 借用期内不能直接改 `viewer`，先把交互结果收集起来，滚动区结束后统一写回。
     let mut toggled_fid = None;
     let mut pending_image_url = None;
+    let mut menu_action = None;
     let expanded_fid = viewer.expanded_fid.clone();
     // auto_shrink 关掉后滚动区始终占满窗口，滚动条贴在窗口右边而不是内容右边。
     egui::ScrollArea::vertical()
@@ -192,7 +294,13 @@ fn render_viewer(ui: &mut egui::Ui, viewer: &mut GroupAnnouncementViewerState) {
             for announcement in &viewer.announcements {
                 let mut expanded = expanded_fid.as_deref() == Some(announcement.fid.as_str());
                 let was_expanded = expanded;
-                render_announcement(ui, announcement, &mut expanded, &mut pending_image_url);
+                render_announcement(
+                    ui,
+                    announcement,
+                    &mut expanded,
+                    &mut pending_image_url,
+                    &mut menu_action,
+                );
                 if expanded != was_expanded {
                     toggled_fid = Some((announcement.fid.clone(), expanded));
                 }
@@ -203,6 +311,11 @@ fn render_viewer(ui: &mut egui::Ui, viewer: &mut GroupAnnouncementViewerState) {
     }
     if pending_image_url.is_some() {
         viewer.pending_image_url = pending_image_url;
+    }
+    match menu_action {
+        Some(MenuAction::Edit(draft)) => viewer.open_editor(draft),
+        Some(MenuAction::RequestDelete(fid)) => viewer.delete_confirm_fid = Some(fid),
+        None => {}
     }
 }
 
@@ -284,6 +397,52 @@ impl IcaApp {
                 .unwrap()
                 .begin_request(room_id, room_name);
             self.send_group_announcements_request(bridge_idx, room_id, request_id);
+        }
+
+        // 编辑器与删除确认都发生在子视口里，真正的命令发送只能回到主循环。
+        let pending_submit = {
+            let mut viewer = viewer_state.lock().unwrap();
+            std::mem::take(&mut viewer.pending_submit)
+        };
+        if pending_submit {
+            let (room_id, draft) = {
+                let viewer = viewer_state.lock().unwrap();
+                (viewer.room_id, viewer.draft.clone())
+            };
+            viewer_state.lock().unwrap().submitting = true;
+            let bkn = self.bridge_states[bridge_idx].online_data.bkn;
+            if let Err(error) =
+                self.bridge_states[bridge_idx].send(IcaCommand::PublishGroupAnnouncement {
+                    request_id: 0,
+                    room_id,
+                    bkn,
+                    draft,
+                })
+            {
+                viewer_state
+                    .lock()
+                    .unwrap()
+                    .action_failed(format!("发布请求发送失败: {error}"));
+            }
+        }
+
+        if let Some(fid) = viewer_state.lock().unwrap().pending_delete_fid.take() {
+            viewer_state.lock().unwrap().submitting = true;
+            let room_id = viewer_state.lock().unwrap().room_id;
+            let bkn = self.bridge_states[bridge_idx].online_data.bkn;
+            if let Err(error) =
+                self.bridge_states[bridge_idx].send(IcaCommand::DeleteGroupAnnouncement {
+                    request_id: 0,
+                    room_id,
+                    bkn,
+                    fid,
+                })
+            {
+                viewer_state
+                    .lock()
+                    .unwrap()
+                    .action_failed(format!("删除请求发送失败: {error}"));
+            }
         }
 
         let (open, room_name) = {

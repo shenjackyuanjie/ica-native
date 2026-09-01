@@ -22,6 +22,8 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
     match event_name {
         "groupAnnouncementsResponse" => apply_response(state, payload),
         "groupAnnouncementsFailed" => apply_failure(state, payload),
+        "groupAnnouncementActionDone" => apply_action_done(state, payload),
+        "groupAnnouncementActionFailed" => apply_action_failed(state, payload),
         _ => return false,
     }
     true
@@ -83,4 +85,31 @@ fn apply_failure(state: &mut BridgeState, payload: &JsonValue) {
         .unwrap_or_else(|| "拉取群公告失败".to_string());
     let viewer = state.group_announcement_viewer.clone();
     viewer.lock().unwrap().fail(request_id, room_id, message);
+}
+
+fn apply_action_done(state: &mut BridgeState, payload: &JsonValue) {
+    let action = payload
+        .get("action")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("发布");
+    let viewer = state.group_announcement_viewer.clone();
+    let mut viewer = viewer.lock().unwrap();
+    viewer.action_done();
+    state.last_notice = Some(format!("群公告已{action}"));
+}
+
+fn apply_action_failed(state: &mut BridgeState, payload: &JsonValue) {
+    let action = payload
+        .get("action")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("发布");
+    let message = payload
+        .get("message")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("操作失败");
+    let viewer = state.group_announcement_viewer.clone();
+    viewer
+        .lock()
+        .unwrap()
+        .action_failed(format!("{action}失败：{message}"));
 }
