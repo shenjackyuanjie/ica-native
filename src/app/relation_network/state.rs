@@ -4,7 +4,7 @@ use std::time::Instant;
 use crate::config::RelationNetworkSetting;
 
 use super::controller::RelationAction;
-use super::layout::{RelationLayoutCache, RelationLayoutModel};
+use super::layout::{RELATION_LAYOUT_SCALE, RelationLayoutCache, RelationLayoutModel};
 use super::model::RelationGraph;
 
 #[derive(Debug, Clone)]
@@ -35,7 +35,8 @@ impl Default for RelationNetworkState {
             group_search_query: String::new(),
             selected_node_id: None,
             hovered_node_id: None,
-            canvas_zoom: 1.0,
+            // 单位坐标乘了 RELATION_LAYOUT_SCALE，首帧用其倒数把图缩回画布内。
+            canvas_zoom: 1.0 / RELATION_LAYOUT_SCALE,
             canvas_pan: egui::Vec2::ZERO,
             pending_action: None,
             load_all_active: false,
@@ -72,7 +73,7 @@ impl RelationNetworkState {
         self.graph_revision = self.graph_revision.wrapping_add(1);
         self.layout_cache = RelationLayoutCache::default();
         if should_reset_view {
-            self.canvas_zoom = 1.0;
+            self.canvas_zoom = 1.0 / RELATION_LAYOUT_SCALE;
             self.canvas_pan = egui::Vec2::ZERO;
         }
     }

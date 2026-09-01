@@ -750,18 +750,45 @@ fn relation_node_kind_ordered_ids(graph: &RelationGraph, ids: HashSet<String>) -
     ids
 }
 
-fn relation_visible_ids_default(
+pub fn relation_visible_ids_default(
     relation_network: &RelationLayoutModel,
     query: &str,
 ) -> Vec<String> {
-    relation_network
+    let limit = relation_view_limit(relation_network);
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    // 群与自己是关系网的骨架：边只在这两类节点与用户节点之间产生，用户之间没有直接边。
+    // 若像朴素 take 那样按图内排序截断，节点排序里群排在最后，一旦用户节点数超过上限，
+    // 群会被整体截掉，画布退化成一片没有连线的散点。因此骨架节点优先占名额。
+    let is_backbone = |kind: RelationNodeKind| {
+        matches!(kind, RelationNodeKind::SelfUser | RelationNodeKind::Group)
+    };
+    let visible = relation_network
         .graph
         .nodes
         .iter()
+        .filter(|node| is_backbone(node.kind))
         .filter(|node| relation_network.options.allows(node.kind) && node.matches_query(query))
-        .take(relation_view_limit(relation_network))
-        .map(|node| node.id.clone())
-        .collect()
+        .map(|node| node.id.clone());
+    let mut visible_ids: Vec<String> = visible.collect();
+
+    // 剩余名额按图中既有顺序填充用户节点；finalize 已经把用户节点按
+    // 类型（好友优先）与关联数排序，这里无需再排一遍。
+    for node in relation_network
+        .graph
+        .nodes
+        .iter()
+        .filter(|node| !is_backbone(node.kind))
+        .filter(|node| relation_network.options.allows(node.kind) && node.matches_query(query))
+    {
+        if visible_ids.len() >= limit {
+            break;
+        }
+        visible_ids.push(node.id.clone());
+    }
+    visible_ids
 }
 
 fn relation_visible_ids_from_focus(

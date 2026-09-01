@@ -162,7 +162,9 @@ pub fn render_relation_network_overlay(
         egui::Align2::LEFT_BOTTOM,
         format!(
             "拖动画布  ·  滚轮缩放  ·  当前 {}%",
-            (relation_network.canvas_zoom * 100.0).round() as i32
+            // 缩放以“适应画布”为 100% 展示，直接乘 100 会显示成 10%。
+            (relation_network.canvas_zoom * super::super::layout::RELATION_LAYOUT_SCALE * 100.0)
+                .round() as i32
         ),
         egui::FontId::proportional(11.0),
         theme.canvas_hint,

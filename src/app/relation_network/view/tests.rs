@@ -54,6 +54,36 @@ fn test_graph(nodes: Vec<RelationNode>, links: Vec<RelationLink>) -> RelationGra
 }
 
 #[test]
+fn overview_limit_keeps_group_backbone_when_user_nodes_exceed_limit() {
+    use crate::app::relation_network::layout::{RelationLayoutModel, relation_visible_ids_default};
+    use crate::app::relation_network::model::RelationNodeKind;
+
+    let mut nodes = vec![test_node("u:self", RelationNodeKind::SelfUser)];
+    // 用默认可见的「共同群好友」充当海量用户节点，避免被默认筛选挡在门外。
+    for i in 0..500 {
+        nodes.push(test_node(&format!("u:{i}"), RelationNodeKind::Acquaintance));
+    }
+    for i in 0..20 {
+        nodes.push(test_node(&format!("g:{i}"), RelationNodeKind::Group));
+    }
+    let mut model = RelationLayoutModel::default();
+    model.graph = test_graph(nodes, vec![]);
+    model.render_setting.max_visible_nodes = 100;
+
+    let visible = relation_visible_ids_default(&model, "");
+
+    // 自己与全部群节点是骨架，必须优先保留，否则画布会退化成没有连线的散点。
+    assert!(visible.contains(&"u:self".to_string()));
+    for i in 0..20 {
+        assert!(
+            visible.contains(&format!("g:{i}")),
+            "群骨架节点不应被用户节点挤掉"
+        );
+    }
+    assert_eq!(visible.len(), 100);
+}
+
+#[test]
 fn topology_layout_clusters_member_around_its_group() {
     let graph = test_graph(
         vec![

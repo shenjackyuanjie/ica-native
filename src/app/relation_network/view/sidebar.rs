@@ -307,6 +307,6 @@ pub fn clear_relation_selection(relation_network: &mut RelationNetworkState) {
 }
 
 pub fn reset_relation_canvas_view(relation_network: &mut RelationNetworkState) {
-    relation_network.canvas_zoom = 1.0;
+    relation_network.canvas_zoom = 1.0 / super::super::layout::RELATION_LAYOUT_SCALE;
     relation_network.canvas_pan = egui::Vec2::ZERO;
 }
