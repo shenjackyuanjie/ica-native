@@ -23,6 +23,8 @@ pub struct RelationLayoutCache {
     pub unit_positions: HashMap<String, egui::Vec2>,
     pub velocities: HashMap<String, egui::Vec2>,
     pub force_next_tick_at: Option<Instant>,
+    /// 力导向已经稳定，无需再请求重绘；任何会改变布局的操作都会把它重置。
+    pub converged: bool,
 }
 
 /// 布局引擎使用的全部图数据和参数。
@@ -69,6 +71,9 @@ const MAX_REPULSION_NEIGHBORS: usize = 24;
 /// 每个节点最多检查的空间候选数；即使许多候选落在相邻网格但超出作用半径，
 /// 单个 step 的总工作量也不会退化成遍历整个节点集合。
 const MAX_REPULSION_CANDIDATES: usize = 96;
+/// 判定布局收敛的每个节点平均动能阈值（速度平方和 / 节点数）。
+/// 低于它说明节点几乎不再移动，继续迭代只会空转烧 CPU。
+const CONVERGENCE_ENERGY_PER_NODE: f32 = 1e-4;
 /// 先检查节点自身所在网格，再向周围八格扩展，提高有限候选预算命中真近邻的概率。
 const REPULSION_CELL_OFFSETS: [(i32, i32); 9] = [
     (0, 0),
@@ -284,6 +289,7 @@ pub fn build_relation_layout_cache(
         unit_positions,
         velocities: HashMap::new(),
         force_next_tick_at: None,
+        converged: false,
     };
     if cache.visible_ids.len() >= 2 && focused.is_some() {
         // 在缓存交给绘制层前先推进少量步数，使首帧已经具有基本合理的相对位置。
@@ -316,6 +322,10 @@ pub fn advance_relation_force_layout(
     if relation_network.layout_cache.visible_ids.len() < 2 {
         return None;
     }
+    if relation_network.layout_cache.converged {
+        // 布局已稳定，不再安排下一次迭代；重建缓存、换图或重新预热时会把该标志清掉。
+        return None;
+    }
     if let Some(next_tick_at) = relation_network.layout_cache.force_next_tick_at
         && let Some(wait) = next_tick_at.checked_duration_since(now)
         && !wait.is_zero()
@@ -335,8 +345,13 @@ pub fn advance_relation_force_layout(
         1,
         parameters,
     );
-    relation_network.layout_cache.force_next_tick_at = Some(now + FORCE_TICK_INTERVAL);
-    Some(FORCE_TICK_INTERVAL)
+    if relation_network.layout_cache.converged {
+        relation_network.layout_cache.force_next_tick_at = None;
+        None
+    } else {
+        relation_network.layout_cache.force_next_tick_at = Some(now + FORCE_TICK_INTERVAL);
+        Some(FORCE_TICK_INTERVAL)
+    }
 }
 
 /// 暂停力导向动画的计时，但保留尚未执行的 step。
@@ -553,6 +568,7 @@ fn step_relation_force_layout(
 
         // 半隐式地更新速度和位置：弱中心引力防止图形漂走，阻尼帮助布局逐渐稳定，
         // 速度与画布半径限制则避免某一帧位移过大或节点跑到可视范围外。
+        let mut total_energy = 0.0_f32;
         for slot in 0..node_count {
             if Some(slot) == anchor_slot {
                 // 中心节点是当前关系网的视觉锚点，始终固定在画布中心。
@@ -572,7 +588,10 @@ fn step_relation_force_layout(
                 positions[slot] *= parameters.max_radius / radius;
                 velocities[slot] *= 0.45;
             }
+            total_energy += velocities[slot].length_sq();
         }
+        // 以平均动能衡量是否稳定；阈值对应平均速度约 0.01 单位/步。
+        cache.converged = total_energy <= node_count as f32 * CONVERGENCE_ENERGY_PER_NODE;
     }
 
     // 保存本次计算结果，下一帧从当前速度继续演化，而不是重新开始。

@@ -242,7 +242,7 @@ fn focused_force_layout_anchors_focus_and_spreads_neighbors() {
 }
 
 #[test]
-fn overview_force_layout_runs_continuously_with_a_real_time_gap() {
+fn overview_force_layout_respects_tick_gap_and_settles_into_idle() {
     let mut state = RelationNetworkState::default();
     state.replace_graph(test_graph(
         vec![
@@ -275,13 +275,21 @@ fn overview_force_layout_runs_continuously_with_a_real_time_gap() {
         positions_after_first_tick
     );
 
-    // 即使已经运行了远超旧上限的次数，布局仍会继续安排下一次迭代。
+    // 布局稳定后应停止请求重绘，避免窗口空转烧 CPU。
     let mut tick_at = now + interval + next_interval;
-    for _ in 0..200 {
-        let wait = advance_relation_force_layout(&mut state, tick_at).unwrap();
-        tick_at += wait;
-    }
-    assert!(advance_relation_force_layout(&mut state, tick_at).is_some());
+    let mut steps = 0;
+    let wait = loop {
+        match advance_relation_force_layout(&mut state, tick_at) {
+            Some(wait) => {
+                tick_at += wait;
+                steps += 1;
+                assert!(steps < 10_000, "布局迟迟不收敛");
+            }
+            None => break tick_at,
+        }
+    };
+    // 收敛之后，任何后续调用都继续返回 None，不再安排新的迭代。
+    assert!(advance_relation_force_layout(&mut state, wait).is_none());
 }
 
 #[test]
@@ -308,9 +316,11 @@ fn configured_group_and_friend_lengths_form_separate_layers() {
     state.layout_cache = build_relation_layout_cache(&state, 1, visible);
 
     let mut tick_at = Instant::now();
-    for _ in 0..100 {
-        let wait = advance_relation_force_layout(&mut state, tick_at).unwrap();
-        tick_at += wait;
+    for _ in 0..10_000 {
+        match advance_relation_force_layout(&mut state, tick_at) {
+            Some(wait) => tick_at += wait,
+            None => break,
+        }
     }
 
     let friend_radius = state.layout_cache.unit_positions["u:friend"].length();
@@ -336,9 +346,12 @@ fn dense_friends_use_a_wide_radial_band_instead_of_one_outer_ring() {
     state.layout_cache = build_relation_layout_cache(&state, 1, visible);
 
     let mut tick_at = Instant::now();
-    for _ in 0..180 {
-        let wait = advance_relation_force_layout(&mut state, tick_at).unwrap();
-        tick_at += wait;
+    // 推进到布局收敛；收敛后 advance 返回 None，此时再测量最终半径分布。
+    for _ in 0..10_000 {
+        match advance_relation_force_layout(&mut state, tick_at) {
+            Some(wait) => tick_at += wait,
+            None => break,
+        }
     }
 
     let mut radii = state
@@ -383,9 +396,12 @@ fn dense_groups_use_a_wide_radius_without_hitting_the_layout_boundary() {
     state.layout_cache = build_relation_layout_cache(&state, 1, visible);
 
     let mut tick_at = Instant::now();
-    for _ in 0..180 {
-        let wait = advance_relation_force_layout(&mut state, tick_at).unwrap();
-        tick_at += wait;
+    // 推进到布局收敛；收敛后 advance 返回 None，此时再测量最终半径分布。
+    for _ in 0..10_000 {
+        match advance_relation_force_layout(&mut state, tick_at) {
+            Some(wait) => tick_at += wait,
+            None => break,
+        }
     }
 
     let mut friend_radii = Vec::new();
