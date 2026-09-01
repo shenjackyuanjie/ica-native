@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- 拉取群公告首屏时补齐手Q `list_announce` 所需的 `ni=1` 参数。此前虽已传入 `i=1`，服务端仍只返回普通 `feeds` 而省略 `inst`，导致「发给新成员」的公告无法显示；现会与普通公告一起展示，并保留公告卡片右键菜单。
+
 ## [0.1.18] - 2026-09-01
 
 > Powered By DeepSeek V4Pro High 0831 灰测

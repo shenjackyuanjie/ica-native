@@ -40,10 +40,11 @@ pub fn announcement_list_url() -> &'static str {
 
 /// 拼接公告列表的表单请求体。
 ///
-/// 参数取自 H5 自身的调用：`ft=23` 固定，`s=-1` 表示从最新一条开始，
-/// `i=1` 是关键——只有带上它，响应里才会出现 `inst`（发给新成员的公告）。
+/// 参数取自 H5 自身的首屏调用：`ft=23` 固定，`s=-1` 表示从最新一条开始。
+/// `i=1` 允许返回公告说明，`ni=1` 才会要求服务端一并返回 `inst`
+/// （发给新成员的公告）；两者缺一不可。
 pub fn announcement_list_form(bkn: i64, group_id: i64) -> String {
-    format!("qid={group_id}&bkn={bkn}&ft=23&s=-1&n={ANNOUNCEMENT_PAGE_SIZE}&i=1")
+    format!("qid={group_id}&bkn={bkn}&ft=23&s=-1&n={ANNOUNCEMENT_PAGE_SIZE}&i=1&ni=1")
 }
 
 /// 复刻 JavaScript 的 `ToInt32`：按 2^32 取模后再按有符号 32 位解释。
@@ -485,9 +486,19 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        GroupAnnouncement, GroupAnnouncementImage, bkn_from_skey, decode_announcement_text,
-        parse_announcement_list, resolve_bkn, skey_from_cookie,
+        GroupAnnouncement, GroupAnnouncementImage, announcement_list_form, bkn_from_skey,
+        decode_announcement_text, parse_announcement_list, resolve_bkn, skey_from_cookie,
     };
+
+    #[test]
+    fn first_page_request_asks_for_new_member_announcements() {
+        // 手Q首屏除了 i=1 还会带 ni=1；漏掉后服务端只返回 feeds，
+        // 即便群内设有发给新成员的公告，响应也没有 inst 可供展示。
+        assert_eq!(
+            announcement_list_form(5381, 123),
+            "qid=123&bkn=5381&ft=23&s=-1&n=20&i=1&ni=1"
+        );
+    }
 
     /// 线上真实公告的响应片段，用来锁住正文与配图的还原结果。
     fn real_world_feed() -> GroupAnnouncement {
