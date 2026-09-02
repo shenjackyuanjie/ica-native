@@ -92,6 +92,41 @@ impl IcaApp {
             let status_history = self.bridge_states[active_bridge_idx].status_history.clone();
             let is_shut_up = self.bridge_states[active_bridge_idx].is_shut_up;
             let selected_room_id = self.bridge_states[active_bridge_idx].selected_room_id;
+            let db_upgrade_progress = self.bridge_states[active_bridge_idx]
+                .db_upgrade_progress
+                .clone();
+
+            if db_upgrade_progress.active {
+                egui::Frame::group(ui.style())
+                    .fill(ui.visuals().faint_bg_color)
+                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.strong(if db_upgrade_progress.message.is_empty() {
+                                "正在升级 Bridge 数据库"
+                            } else {
+                                &db_upgrade_progress.message
+                            });
+                        });
+                        if db_upgrade_progress.total > 0 {
+                            ui.add(egui::ProgressBar::new(db_upgrade_progress.ratio()).text(
+                                format!(
+                                    "{} / {}（{:.1}%）",
+                                    db_upgrade_progress.step,
+                                    db_upgrade_progress.total,
+                                    db_upgrade_progress.ratio() * 100.0,
+                                ),
+                            ));
+                        } else {
+                            ui.label(format!(
+                                "已处理 {} 条，正在等待总数",
+                                db_upgrade_progress.step
+                            ));
+                        }
+                    });
+                ui.add_space(4.0);
+            }
 
             if let Some(room_id) = selected_room_id {
                 let room_name = self.bridge_states[active_bridge_idx]

@@ -118,6 +118,7 @@ bridge_event_kinds! {
     NotifyMessage => "notifyMessage",
     CloseLoading => "closeLoading",
     NotifyError => "notifyError",
+    DbUpgradeProgress => "dbUpgradeProgress",
     RequestSetup => "requestSetup",
     Fatal => "fatal",
     LoginVerify => "login-verify",

@@ -55,6 +55,7 @@ const KNOWN_SOCKET_EVENTS: &[&str] = &[
     "notifyMessage",
     "closeLoading",
     "notifyError",
+    "dbUpgradeProgress",
     "requestSetup",
     "fatal",
     "login-verify",
@@ -62,6 +63,17 @@ const KNOWN_SOCKET_EVENTS: &[&str] = &[
     "login-smsCodeVerify",
     "login-error",
     "login-slider",
+];
+
+/// Bridge 会向 GUI 客户端广播、但当前原生客户端不消费的事件。
+///
+/// 这些事件参考 `ica-bot` 的 `any_event` 忽略列表维护：它们不是兼容性未知事件，
+/// 因此不应触发兜底日志。`notify` 是 Bridge 为远端 Electron 客户端准备的桌面通知
+/// 请求；原生端尚未实现系统通知，普通消息仍会由 `addMessage`、`updateRoom` 等事件更新。
+const IGNORED_SOCKET_EVENTS: &[&str] = &[
+    "authRequired", // 旧版 Bridge 的认证请求
+    "login",        // Milky adapter 的额外登录成功通知
+    "notify",       // 远端客户端桌面通知请求；原生端暂不支持系统通知
 ];
 
 /// 启动 socketio client，并把服务端事件用 unbounded channel 发回 GUI 主线程
@@ -185,7 +197,9 @@ pub async fn run_bridge(
                     let bridge_id = bridge_id.clone();
                     Box::pin(async move {
                         let event_name = event.as_str().to_string();
-                        if KNOWN_SOCKET_EVENTS.contains(&event_name.as_str()) {
+                        if KNOWN_SOCKET_EVENTS.contains(&event_name.as_str())
+                            || IGNORED_SOCKET_EVENTS.contains(&event_name.as_str())
+                        {
                             return;
                         }
                         let payload_json = payload_to_json(&payload);
@@ -227,6 +241,7 @@ pub async fn run_bridge(
         builder = builder.on("notifyMessage", make_event_cb("notifyMessage"));
         builder = builder.on("closeLoading", make_event_cb("closeLoading"));
         builder = builder.on("notifyError", make_event_cb("notifyError"));
+        builder = builder.on("dbUpgradeProgress", make_event_cb("dbUpgradeProgress"));
         builder = builder.on("requestSetup", make_event_cb("requestSetup"));
         builder = builder.on("fatal", make_event_cb("fatal"));
         builder = builder.on("login-verify", make_event_cb("login-verify"));

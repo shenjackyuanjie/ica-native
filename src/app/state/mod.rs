@@ -17,7 +17,7 @@ mod session;
 mod ui;
 
 pub use announcement::GroupAnnouncementViewerState;
-pub use bridge::{BridgeState, VisibleRoomIndicesCache};
+pub use bridge::{BridgeState, DatabaseUpgradeProgress, VisibleRoomIndicesCache};
 pub use connection::{AuthState, SocketState};
 pub use conversation::ConversationState;
 pub use forward::{ForwardViewerAction, ForwardViewerState};

@@ -23,6 +23,25 @@ pub struct VisibleRoomIndicesCache {
     pub indices: Vec<usize>,
 }
 
+/// Bridge 数据库升级（例如重建消息搜索索引）的当前进度。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DatabaseUpgradeProgress {
+    pub active: bool,
+    pub step: u64,
+    pub total: u64,
+    pub message: String,
+}
+
+impl DatabaseUpgradeProgress {
+    /// 返回 0 到 1 之间的进度；未知总量时保持在 0，交给界面以不定进度展示。
+    pub fn ratio(&self) -> f32 {
+        if self.total == 0 {
+            return 0.0;
+        }
+        (self.step as f64 / self.total as f64).clamp(0.0, 1.0) as f32
+    }
+}
+
 #[derive(Debug, Clone)]
 /// 单个 bridge 在 GUI 侧维护的完整状态。
 ///
@@ -47,6 +66,8 @@ pub struct BridgeState {
     /// 当前 bridge 的聊天记录搜索窗口状态。
     pub message_search: MessageSearchState,
     pub member_history: MemberHistoryState,
+    /// Bridge 数据库升级进度；非活跃时保留最后一次完成状态，界面不显示横幅。
+    pub db_upgrade_progress: DatabaseUpgradeProgress,
 }
 
 impl Deref for BridgeState {
@@ -87,6 +108,7 @@ impl BridgeState {
             contacts: Arc::new(Mutex::new(ContactDirectory::default())),
             message_search: MessageSearchState::default(),
             member_history: MemberHistoryState::default(),
+            db_upgrade_progress: DatabaseUpgradeProgress::default(),
         }
     }
 

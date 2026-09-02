@@ -7,6 +7,10 @@
 ### Added
 - Socket.IO 主连接新增兜底回调：收到未注册的事件时输出 `info` 日志（含事件名与 payload 摘要），避免 Bridge 新增事件后客户端静默无响应、排查时看不到任何线索。
 
+### Changed
+- Socket.IO 未知事件兜底会忽略 Bridge 面向远端 Electron 客户端的 `notify` 以及旧/特定 adapter 登录通知；`notify` 是新消息的系统桌面通知请求，原生端尚未实现系统通知，但正常消息仍由 `addMessage`、`updateRoom` 等事件更新，因此不再将其误报为未知事件。
+- Bridge 发来的 `dbUpgradeProgress` 现会显示数据库升级横幅，包含进度条、已处理数、总数与百分比；无总数时显示不定进度状态，不再忽略这类高频事件。
+
 ### Fixed
 - 开启「选中会话时自动发送已读」后，选中会话会立即清除本地未读数与 @ 标记，并通过 Bridge 的 `updateRoom` 将清除结果持久化，不再等待 `syncRead` 才更新聊天列表和分组红点。
 - 拉取群公告首屏时补齐手Q `list_announce` 所需的 `ni=1` 参数。此前虽已传入 `i=1`，服务端仍只返回普通 `feeds` 而省略 `inst`，导致「发给新成员」的公告无法显示；现会与普通公告一起展示，并保留公告卡片右键菜单。
