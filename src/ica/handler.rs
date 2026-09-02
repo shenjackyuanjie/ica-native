@@ -287,6 +287,9 @@ pub async fn handle_command(
         IcaCommand::SetRoomPriority { room_id, priority } => {
             room_commands::set_room_priority(ctx, room_id, priority).await
         }
+        IcaCommand::ClearRoomUnread { room_id } => {
+            room_commands::clear_room_unread(ctx, room_id).await
+        }
         IcaCommand::ReportRead {
             room_id,
             message_id,

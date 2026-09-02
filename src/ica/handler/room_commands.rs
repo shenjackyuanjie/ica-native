@@ -144,6 +144,36 @@ pub async fn set_room_priority(ctx: CommandContext<'_>, room_id: RoomId, priorit
     }
 }
 
+pub async fn clear_room_unread(ctx: CommandContext<'_>, room_id: RoomId) {
+    let CommandContext {
+        client,
+        event_tx,
+        bridge_key,
+        ..
+    } = ctx;
+    if let Err(e) = client
+        .emit(
+            "updateRoom",
+            vec![
+                json!(room_id),
+                json!({ "unreadCount": 0, "at": false, "atMessageId": null }),
+            ],
+        )
+        .await
+    {
+        emit_ui_event(
+            event_tx,
+            bridge_key,
+            "commandFailed",
+            json!({
+                "kind": "clearRoomUnread",
+                "roomId": room_id,
+                "message": e.to_string(),
+            }),
+        );
+    }
+}
+
 pub async fn report_read(ctx: CommandContext<'_>, room_id: RoomId, message_id: String) {
     let CommandContext {
         client,

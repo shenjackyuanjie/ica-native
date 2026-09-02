@@ -1,6 +1,6 @@
 use crate::config::ReEditDraftConflictMode;
 use crate::ica::IcaCommand;
-use crate::ica::types::RoomId;
+use crate::ica::types::{RoomId, message::At, room::Room};
 
 use crate::app::{CompactChatPanel, IcaApp, SelectedChatGroup, VisibleRoomIndicesCache};
 
@@ -14,6 +14,23 @@ fn should_request_messages_on_room_select(
     auto_fetch_history_on_select: bool,
 ) -> bool {
     !has_requested_snapshot || (room_changed && auto_fetch_history_on_select)
+}
+
+/// 将刚被打开会话的本地未读状态立即清除，不依赖 bridge 稍后广播 `syncRead`。
+///
+/// 远端已读回执仍由调用方发送；这里仅让会话列表、分组红点和当前聊天视图立即保持一致。
+fn clear_room_unread(rooms: &mut [Room], room_id: RoomId) -> bool {
+    let Some(room) = rooms.iter_mut().find(|room| room.room_id == room_id) else {
+        return false;
+    };
+    let has_unread_state = room.unread_count > 0 || matches!(room.at, At::All | At::Bool(true));
+    if !has_unread_state {
+        return false;
+    }
+
+    room.unread_count = 0;
+    room.at = At::Bool(false);
+    true
 }
 
 impl IcaApp {
@@ -276,6 +293,7 @@ impl IcaApp {
             self.group_member_panel.confirmation = None;
         }
         let mut should_request = false;
+        let mut should_clear_remote_unread = false;
         let clear_search_on_room_select = self.clear_search_on_room_select;
         let auto_fetch_history_on_select = self.auto_fetch_history_on_room_select;
         let auto_read = self.custom_chat.auto_read_on_select;
@@ -284,6 +302,11 @@ impl IcaApp {
         if let Some(state) = self.active_bridge_state_mut() {
             let room_changed = state.selected_room_id != Some(room_id);
             state.selected_room_id = Some(room_id);
+            // 仅在开启自动已读时清除本地标记并同步到 Bridge/QQ。
+            if auto_read && clear_room_unread(&mut state.rooms, room_id) {
+                state.bump_rooms_revision();
+                should_clear_remote_unread = true;
+            }
             state.trim_message_caches(Some(room_id));
             if clear_search_on_room_select {
                 state.room_search_query.clear();
@@ -307,6 +330,14 @@ impl IcaApp {
             if auto_read {
                 last_msg_id = conversation.messages.last().map(|m| m.msg_id.clone());
             }
+        }
+
+        if should_clear_remote_unread
+            && let Some(bridge_idx) = self.active_bridge_idx
+            && let Some(session) = self.bridge_states.get(bridge_idx)
+            && let Err(e) = session.send(IcaCommand::ClearRoomUnread { room_id })
+        {
+            tracing::warn!(error = %e, room_id, "发送 clearRoomUnread 命令失败");
         }
 
         if should_request && let Some(bridge_idx) = self.active_bridge_idx {
@@ -342,7 +373,41 @@ impl IcaApp {
 
 #[cfg(test)]
 mod tests {
-    use super::should_request_messages_on_room_select;
+    use super::{clear_room_unread, should_request_messages_on_room_select};
+    use crate::ica::types::{
+        message::{At, LastMessage},
+        room::Room,
+    };
+
+    fn room(room_id: i64, unread_count: u64, at: At) -> Room {
+        Room {
+            room_id,
+            room_name: format!("会话 {room_id}"),
+            index: 0,
+            unread_count,
+            priority: 1,
+            utime: 0,
+            users: serde_json::Value::Null,
+            at,
+            last_message: LastMessage {
+                content: None,
+                timestamp: None,
+                username: None,
+                user_id: None,
+            },
+        }
+    }
+
+    #[test]
+    fn selecting_room_clears_only_its_unread_and_mention_state() {
+        let mut rooms = vec![room(-100, 3, At::All), room(200, 2, At::Bool(true))];
+
+        assert!(clear_room_unread(&mut rooms, -100));
+        assert_eq!(rooms[0].unread_count, 0);
+        assert_eq!(rooms[0].at, At::Bool(false));
+        assert_eq!(rooms[1].unread_count, 2);
+        assert_eq!(rooms[1].at, At::Bool(true));
+    }
 
     #[test]
     fn first_room_open_always_requests_complete_snapshot() {

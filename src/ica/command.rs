@@ -97,6 +97,10 @@ pub enum IcaCommand {
         room_id: RoomId,
         priority: u8,
     },
+    /// 持久化清除会话未读数和 @ 标记。
+    ClearRoomUnread {
+        room_id: RoomId,
+    },
     ReportRead {
         room_id: RoomId,
         message_id: String,
