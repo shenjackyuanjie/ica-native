@@ -1,5 +1,5 @@
 use rust_socketio::asynchronous::{Client, ClientBuilder};
-use rust_socketio::{Payload, TransportType};
+use rust_socketio::{Event, Payload, TransportType};
 
 use crate::StopGetter;
 use crate::config::IcaBridge;
@@ -18,10 +18,51 @@ mod file_manager;
 mod handler;
 pub use command::{BridgeHandle, GROUP_BAN_MAX_DURATION, ICA_PROTOCOL_VERSION, IcaCommand};
 use command::{
-    ConnectionSignal, MAX_RECONNECT_ATTEMPTS, emit_ui_event, payload_to_json, reconnect_delay,
+    ConnectionSignal, MAX_RECONNECT_ATTEMPTS, emit_ui_event, json_preview, payload_to_json,
+    reconnect_delay,
 };
 pub use event::{BridgeEvent, BridgeEventKind};
 pub mod types;
+
+/// 主 socket 连接已注册专用回调的事件名；`on_any` 兜底里命中这些名字的事件视为已处理，
+/// 不再打日志。新增 `.on(...)` 注册时记得同步维护这份清单。
+const KNOWN_SOCKET_EVENTS: &[&str] = &[
+    "requireAuth",
+    "disconnect",
+    "message",
+    "authSucceed",
+    "authFailed",
+    "onlineData",
+    "addMessage",
+    "deleteMessage",
+    "hideMessage",
+    "revealMessage",
+    "setAllRooms",
+    "setAllChatGroups",
+    "setMessages",
+    "handleRequest",
+    "sendAddRequest",
+    "updateRoom",
+    "syncRead",
+    "renewMessage",
+    "renewMessageURL",
+    "setOnline",
+    "setOffline",
+    "setShutUp",
+    "messageSuccess",
+    "messageError",
+    "addMessageText",
+    "notifyMessage",
+    "closeLoading",
+    "notifyError",
+    "requestSetup",
+    "fatal",
+    "login-verify",
+    "login-qrcodeLogin",
+    "login-smsCodeVerify",
+    "login-error",
+    "login-slider",
+];
 
 /// 启动 socketio client，并把服务端事件用 unbounded channel 发回 GUI 主线程
 ///
@@ -129,6 +170,32 @@ pub async fn run_bridge(
                     let signal_tx = signal_tx.clone();
                     Box::pin(async move {
                         let _ = signal_tx.send(ConnectionSignal::Disconnected);
+                    })
+                },
+            );
+        }
+
+        {
+            // 兜底回调：`on_any` 会收到所有 Message/Custom 事件（含已注册专用回调的），
+            // 这里只对没有专用回调的未知事件打一条 info 日志，便于排查 Bridge 新增事件后
+            // 客户端静默无响应的兼容问题。
+            let bridge_id = bridge_key.clone();
+            builder = builder.on_any(
+                move |event: Event, payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
+                    let bridge_id = bridge_id.clone();
+                    Box::pin(async move {
+                        let event_name = event.as_str().to_string();
+                        if KNOWN_SOCKET_EVENTS.contains(&event_name.as_str()) {
+                            return;
+                        }
+                        let payload_json = payload_to_json(&payload);
+                        tracing::info!(
+                            bridge = %bridge_id,
+                            socket = "main",
+                            event = %event_name,
+                            payload = %json_preview(&payload_json, 512),
+                            "收到未处理的 Socket.IO 事件"
+                        );
                     })
                 },
             );
