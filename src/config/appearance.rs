@@ -37,6 +37,9 @@ pub struct ChatAppearanceSettings {
     pub enable_topic_button: bool,
     #[serde(default)]
     pub hide_group_member_avatar: bool,
+    /// 在群聊中显示其他成员的消息头像。
+    #[serde(default = "default_true")]
+    pub show_message_avatar: bool,
     #[serde(default)]
     pub high_contrast_chat: bool,
     /// 仅隐藏最左侧的聊天分组导航，不改变会话列表和分组数据。
@@ -70,6 +73,7 @@ impl Default for ChatAppearanceSettings {
             disable_file_type_selection: false,
             enable_topic_button: true,
             hide_group_member_avatar: false,
+            show_message_avatar: true,
             high_contrast_chat: false,
             hide_chat_group_sidebar: false,
             auto_read_on_select: true,

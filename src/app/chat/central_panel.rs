@@ -5,7 +5,10 @@ use crate::app::{
 };
 
 use super::message_card::MessageRenderOptions;
-use super::{estimate_composer_rows, estimate_message_row_height, message_visible_range};
+use super::{
+    MessageRowEstimateOptions, estimate_composer_rows, estimate_message_row_height,
+    message_visible_range,
+};
 
 const DATE_SEPARATOR_ESTIMATED_HEIGHT: f32 = 42.0;
 
@@ -374,12 +377,15 @@ impl IcaApp {
             let composer_is_constrained = composer_reserved_height < desired_composer_height;
             let mut pending_action = None;
             let pure_text_mode = self.custom_chat.hide_group_member_avatar;
+            let show_message_avatar =
+                !pure_text_mode && self.custom_chat.show_message_avatar && room_id < 0;
             let message_row_width = ui.available_width().max(48.0);
             let message_layout_width =
                 (message_row_width - if forward_mode_active { 24.0 } else { 0.0 }).max(48.0);
             let message_layout_key = MessageLayoutCacheKey {
                 width: message_layout_width,
                 pure_text_mode,
+                show_message_avatar,
                 forward_mode_active,
             };
             {
@@ -451,10 +457,15 @@ impl IcaApp {
                                         message,
                                         row_width,
                                         line_height,
-                                        pure_text_mode,
-                                        forward_mode_active,
-                                        show_sender_name,
-                                        show_separator_before,
+                                        MessageRowEstimateOptions {
+                                            pure_text_mode,
+                                            show_message_avatar: show_message_avatar
+                                                && message.sender_id != self_id
+                                                && message.sender_id > 0,
+                                            forward_mode_active,
+                                            show_sender_name,
+                                            show_separator_before,
+                                        },
                                     ) + if show_date_separator {
                                         DATE_SEPARATOR_ESTIMATED_HEIGHT
                                     } else {

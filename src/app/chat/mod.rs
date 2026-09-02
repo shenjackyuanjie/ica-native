@@ -357,35 +357,51 @@ fn estimate_text_height(text: &str, width: f32, line_height: f32) -> f32 {
     lines as f32 * line_height
 }
 
+/// 估算消息行高度所需的布局参数。
+#[derive(Debug, Clone, Copy)]
+pub struct MessageRowEstimateOptions {
+    pub pure_text_mode: bool,
+    pub show_message_avatar: bool,
+    pub forward_mode_active: bool,
+    pub show_sender_name: bool,
+    pub show_separator_before: bool,
+}
+
 pub fn estimate_message_row_height(
     message: &crate::ica::types::message::Message,
     row_width: f32,
     line_height: f32,
-    pure_text_mode: bool,
-    forward_mode_active: bool,
-    show_sender_name: bool,
-    show_separator_before: bool,
+    options: MessageRowEstimateOptions,
 ) -> f32 {
     if message.system {
         return 36.0;
     }
 
-    let selection_width = if forward_mode_active { 24.0 } else { 0.0 };
-    let content_row_width = (row_width - selection_width).max(48.0);
-    let bubble_width = if pure_text_mode {
+    let selection_width = if options.forward_mode_active {
+        24.0
+    } else {
+        0.0
+    };
+    let avatar_width = if options.show_message_avatar {
+        40.0
+    } else {
+        0.0
+    };
+    let content_row_width = (row_width - selection_width - avatar_width).max(48.0);
+    let bubble_width = if options.pure_text_mode {
         content_row_width
     } else {
         (content_row_width * 0.78)
             .clamp(72.0, 680.0)
             .min(content_row_width)
     };
-    let content_width = if pure_text_mode {
+    let content_width = if options.pure_text_mode {
         bubble_width
     } else {
         (bubble_width - 28.0).max(44.0)
     };
 
-    let mut height = if pure_text_mode && show_separator_before {
+    let mut height = if options.pure_text_mode && options.show_separator_before {
         10.0
     } else {
         0.0
@@ -401,8 +417,8 @@ pub fn estimate_message_row_height(
 
     if let Some(reply) = &message.reply {
         height += line_height + estimate_text_height(&reply.content, content_width, line_height);
-        height += if pure_text_mode { 8.0 } else { 24.0 };
-        if !pure_text_mode
+        height += if options.pure_text_mode { 8.0 } else { 24.0 };
+        if !options.pure_text_mode
             && reply
                 .file
                 .iter()
@@ -432,11 +448,11 @@ pub fn estimate_message_row_height(
         height += line_height + 6.0;
     }
 
-    if show_sender_name {
+    if options.show_sender_name {
         height += 0.0;
     }
 
-    height += if pure_text_mode { 6.0 } else { 16.0 };
+    height += if options.pure_text_mode { 6.0 } else { 16.0 };
     height.max(56.0)
 }
 

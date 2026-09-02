@@ -4,6 +4,7 @@
 pub struct MessageLayoutCacheKey {
     pub width: f32,
     pub pure_text_mode: bool,
+    pub show_message_avatar: bool,
     pub forward_mode_active: bool,
 }
 
@@ -11,6 +12,7 @@ impl MessageLayoutCacheKey {
     pub fn matches(self, other: Self) -> bool {
         (self.width - other.width).abs() <= 8.0
             && self.pure_text_mode == other.pure_text_mode
+            && self.show_message_avatar == other.show_message_avatar
             && self.forward_mode_active == other.forward_mode_active
     }
 }

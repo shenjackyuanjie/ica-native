@@ -108,6 +108,13 @@ impl ChatAppearanceSettings {
                 let _ = ui.checkbox(&mut self.hide_group_member_avatar, "");
                 ui.end_row();
 
+                ui.vertical(|ui| {
+                    ui.label("显示群聊消息头像");
+                    ui.weak("显示其他成员的 QQ 头像；自己、私聊和系统消息不显示");
+                });
+                let _ = ui.checkbox(&mut self.show_message_avatar, "");
+                ui.end_row();
+
                 ui.label("高对比度聊天界面");
                 let _ = ui.checkbox(&mut self.high_contrast_chat, "");
                 ui.end_row();

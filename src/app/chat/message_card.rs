@@ -28,6 +28,8 @@ const AT_CLOSE_TAG: &str = "</IcaAt>";
 const FACE_OPEN_TAG: &str = "[Face: ";
 const FORWARD_OPEN_TAG: &str = "[Forward: ";
 const NESTED_FORWARD_OPEN_TAG: &str = "[NestedForward: ";
+const MESSAGE_AVATAR_SIZE: f32 = 32.0;
+const MESSAGE_AVATAR_ROW_WIDTH: f32 = MESSAGE_AVATAR_SIZE + 8.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContentMarker {
@@ -66,6 +68,28 @@ fn display_timestamp(message: &crate::ica::types::message::Message) -> String {
         return local_time.format("%m/%d %H:%M:%S").to_string();
     }
     local_time.format("%Y/%m/%d %H:%M:%S").to_string()
+}
+
+/// 按 Icalingua++ 的优先级选择聊天消息头像：Mirai 明示头像优先，否则使用 QQ 头像服务。
+fn message_avatar_url(sender_id: i64, mirai: &serde_json::Value) -> Option<String> {
+    if let Some(md5) = mirai
+        .pointer("/eqq/avatarMd5")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(format!(
+            "https://gchat.qpic.cn/gchatpic_new/0/0-0-{}/0",
+            md5.to_ascii_uppercase()
+        ));
+    }
+    if let Some(url) = mirai
+        .pointer("/eqq/avatarUrl")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(url.to_string());
+    }
+    (sender_id > 0).then(|| format!("https://q1.qlogo.cn/g?b=qq&nk={sender_id}&s=140"))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -515,6 +539,11 @@ impl IcaApp {
         let forward_reference = forward_reference(message, None);
         let message_is_hidden = (message.deleted || message.hide) && !message.reveal;
         let pure_text_mode = self.custom_chat.hide_group_member_avatar;
+        // 与 Icalingua++ 一致：只在群聊中为其他成员显示头像；自己、私聊和系统消息不显示。
+        let sender_avatar_url =
+            (!pure_text_mode && self.custom_chat.show_message_avatar && room_id < 0 && !is_self)
+                .then(|| message_avatar_url(message.sender_id, &message.mirai))
+                .flatten();
 
         // ── 系统消息：居中小字卡片，不显示头像/发送者 ──
         if message.system {
@@ -571,7 +600,12 @@ impl IcaApp {
         } else {
             0.0
         };
-        let content_row_width = (row_width - selection_width).max(48.0);
+        let avatar_row_width = if sender_avatar_url.is_some() {
+            MESSAGE_AVATAR_ROW_WIDTH
+        } else {
+            0.0
+        };
+        let content_row_width = (row_width - selection_width - avatar_row_width).max(48.0);
         let pure_text_mode = self.custom_chat.hide_group_member_avatar;
         let bubble_width = if pure_text_mode {
             content_row_width
@@ -595,204 +629,248 @@ impl IcaApp {
             egui::vec2(row_width, 0.0),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
-                ui.horizontal(|ui| {
-                    if options.forward_mode_active {
-                        let mut checked = options.forward_selected;
-                        if ui.checkbox(&mut checked, "").changed() {
-                            action = Some(MessageAction::ToggleForwardSelection {
-                                room_id,
-                                message_id: message.msg_id.clone(),
-                            });
+                // 与 Icalingua++ 一致：头像、气泡等元素沿行底部对齐（flex-end）。
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), 0.0),
+                    egui::Layout::left_to_right(egui::Align::Max),
+                    |ui| {
+                        if options.forward_mode_active {
+                            let mut checked = options.forward_selected;
+                            if ui.checkbox(&mut checked, "").changed() {
+                                action = Some(MessageAction::ToggleForwardSelection {
+                                    room_id,
+                                    message_id: message.msg_id.clone(),
+                                });
+                            }
                         }
-                    }
 
-                    if is_self {
-                        let leading_space = (content_row_width - bubble_width).max(0.0);
-                        if leading_space > 0.0 {
-                            ui.add_space(leading_space);
+                        if let Some(avatar_url) = &sender_avatar_url {
+                            ui.add(
+                                Image::from_uri(avatar_url.clone())
+                                    .fit_to_exact_size(egui::vec2(
+                                        MESSAGE_AVATAR_SIZE,
+                                        MESSAGE_AVATAR_SIZE,
+                                    ))
+                                    .corner_radius(MESSAGE_AVATAR_SIZE / 2.0),
+                            );
+                            ui.add_space(8.0);
                         }
-                    }
 
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(bubble_width, 0.0),
-                        egui::Layout::top_down(content_align),
-                        |ui| {
-                            let mut render_message_contents = |ui: &mut egui::Ui| {
-                                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                                    ui.horizontal_wrapped(|ui| {
-                                        if options.show_sender_name {
-                                            ui.colored_label(title_color, &message.sender_name);
-                                            if should_show_group_identity(room_id, &message.mirai) {
-                                                if let Some(role) = sender_role_label(&message.role)
-                                                {
-                                                    let role_color = if message.deleted {
-                                                        egui::Color32::GRAY
-                                                    } else if role == "群主" {
-                                                        ui.visuals().warn_fg_color
-                                                    } else if role == "管理员" {
-                                                        ui.visuals().hyperlink_color
-                                                    } else {
-                                                        ui.visuals().weak_text_color()
-                                                    };
-                                                    ui.colored_label(role_color, role.as_ref());
-                                                }
-                                                let group_title = message.title.trim();
-                                                if !group_title.is_empty() {
+                        if is_self {
+                            let leading_space = (content_row_width - bubble_width).max(0.0);
+                            if leading_space > 0.0 {
+                                ui.add_space(leading_space);
+                            }
+                        }
+
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(bubble_width, 0.0),
+                            egui::Layout::top_down(content_align),
+                            |ui| {
+                                let mut render_message_contents = |ui: &mut egui::Ui| {
+                                    ui.with_layout(
+                                        egui::Layout::top_down(egui::Align::Min),
+                                        |ui| {
+                                            ui.horizontal_wrapped(|ui| {
+                                                if options.show_sender_name {
                                                     ui.colored_label(
-                                                        if message.deleted {
-                                                            egui::Color32::GRAY
-                                                        } else {
-                                                            ui.visuals().weak_text_color()
-                                                        },
-                                                        group_title,
-                                                    )
-                                                    .on_hover_text("群头衔");
-                                                }
-                                            }
-                                        }
-                                        ui.weak(display_timestamp(message));
-                                        if message.deleted {
-                                            ui.weak("已撤回");
-                                        }
-                                        if message.deleted
-                                            && is_self
-                                            && !message.content.trim().is_empty()
-                                            && ui.small_button("重新编辑").clicked()
-                                        {
-                                            action = Some(MessageAction::ReEdit {
-                                                room_id,
-                                                content: message.content.clone(),
-                                            });
-                                        }
-                                        if !message.deleted
-                                            && !message.hide
-                                            && ui.small_button("回复").clicked()
-                                        {
-                                            action = Some(MessageAction::Reply {
-                                                room_id,
-                                                reply: message.as_reply(),
-                                            });
-                                        }
-                                        if is_self
-                                            && !message.deleted
-                                            && ui.small_button("撤回").clicked()
-                                        {
-                                            action = Some(MessageAction::Delete {
-                                                room_id,
-                                                message_id: message.msg_id.clone(),
-                                            });
-                                        }
-                                    });
-
-                                    if message_is_hidden {
-                                        ui.weak(if message.deleted {
-                                            "消息已撤回，右键显示"
-                                        } else {
-                                            "消息已隐藏，右键显示"
-                                        });
-                                        return;
-                                    }
-
-                                    if let Some(reply) = &message.reply {
-                                        let reply_msg_id = reply.msg_id.clone();
-                                        let reply_image = reply_image_file(reply);
-                                        if pure_text_mode {
-                                            let prefix = egui::RichText::new(format!(
-                                                "回复 {}: ",
-                                                reply.sender_name
-                                            ))
-                                            .color(ui.visuals().weak_text_color());
-                                            let content = if reply_image.is_some() {
-                                                Cow::Owned(if reply.content.trim().is_empty() {
-                                                    "[图片]".to_string()
-                                                } else {
-                                                    format!("[图片] {}", reply.content)
-                                                })
-                                            } else {
-                                                Cow::Borrowed(reply.content.as_str())
-                                            };
-                                            if render_rich_content_with_prefix(
-                                                ui,
-                                                Some(prefix),
-                                                &content,
-                                                self.custom_chat.high_contrast_chat,
-                                            )
-                                            .response
-                                            .interact(egui::Sense::click())
-                                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                            .clicked()
-                                            {
-                                                action = Some(MessageAction::ScrollToMessage {
-                                                    msg_id: reply_msg_id,
-                                                });
-                                            }
-                                        } else {
-                                            let mut reply_image_action = None;
-                                            let reply_resp =
-                                                egui::Frame::group(ui.style()).show(ui, |ui| {
-                                                    ui.weak(format!("回复 {}", reply.sender_name));
-                                                    if let Some(file) = reply_image {
-                                                        if file.url.is_empty() {
-                                                            ui.weak("[图片]");
-                                                        } else if self.custom_chat.hide_chat_img {
-                                                            ui.weak("[图片已隐藏]");
-                                                        } else {
-                                                            let source = ImageSource::message(
-                                                                file.url.clone(),
-                                                                room_id,
-                                                                reply.msg_id.clone(),
+                                                        title_color,
+                                                        &message.sender_name,
+                                                    );
+                                                    if should_show_group_identity(
+                                                        room_id,
+                                                        &message.mirai,
+                                                    ) {
+                                                        if let Some(role) =
+                                                            sender_role_label(&message.role)
+                                                        {
+                                                            let role_color = if message.deleted {
+                                                                egui::Color32::GRAY
+                                                            } else if role == "群主" {
+                                                                ui.visuals().warn_fg_color
+                                                            } else if role == "管理员" {
+                                                                ui.visuals().hyperlink_color
+                                                            } else {
+                                                                ui.visuals().weak_text_color()
+                                                            };
+                                                            ui.colored_label(
+                                                                role_color,
+                                                                role.as_ref(),
                                                             );
-                                                            reply_image_action =
-                                                                render_message_image(
-                                                                    ui,
-                                                                    &source,
-                                                                    &file.file_type,
-                                                                    96.0,
-                                                                    96.0,
-                                                                );
+                                                        }
+                                                        let group_title = message.title.trim();
+                                                        if !group_title.is_empty() {
+                                                            ui.colored_label(
+                                                                if message.deleted {
+                                                                    egui::Color32::GRAY
+                                                                } else {
+                                                                    ui.visuals().weak_text_color()
+                                                                },
+                                                                group_title,
+                                                            )
+                                                            .on_hover_text("群头衔");
                                                         }
                                                     }
-                                                    if !reply.content.trim().is_empty() {
-                                                        render_rich_content(
-                                                            ui,
-                                                            &reply.content,
-                                                            self.custom_chat.high_contrast_chat,
-                                                        );
-                                                    }
+                                                }
+                                                ui.weak(display_timestamp(message));
+                                                if message.deleted {
+                                                    ui.weak("已撤回");
+                                                }
+                                                if message.deleted
+                                                    && is_self
+                                                    && !message.content.trim().is_empty()
+                                                    && ui.small_button("重新编辑").clicked()
+                                                {
+                                                    action = Some(MessageAction::ReEdit {
+                                                        room_id,
+                                                        content: message.content.clone(),
+                                                    });
+                                                }
+                                                if !message.deleted
+                                                    && !message.hide
+                                                    && ui.small_button("回复").clicked()
+                                                {
+                                                    action = Some(MessageAction::Reply {
+                                                        room_id,
+                                                        reply: message.as_reply(),
+                                                    });
+                                                }
+                                                if is_self
+                                                    && !message.deleted
+                                                    && ui.small_button("撤回").clicked()
+                                                {
+                                                    action = Some(MessageAction::Delete {
+                                                        room_id,
+                                                        message_id: message.msg_id.clone(),
+                                                    });
+                                                }
+                                            });
+
+                                            if message_is_hidden {
+                                                ui.weak(if message.deleted {
+                                                    "消息已撤回，右键显示"
+                                                } else {
+                                                    "消息已隐藏，右键显示"
                                                 });
-                                            if let Some(image_action) = reply_image_action {
-                                                action = Some(MessageAction::Image(image_action));
-                                            } else if reply_resp
-                                                .response
-                                                .interact(egui::Sense::click())
-                                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                                .clicked()
-                                            {
-                                                action = Some(MessageAction::ScrollToMessage {
-                                                    msg_id: reply_msg_id,
-                                                });
+                                                return;
                                             }
-                                        }
-                                    }
 
-                                    let mut has_body = false;
+                                            if let Some(reply) = &message.reply {
+                                                let reply_msg_id = reply.msg_id.clone();
+                                                let reply_image = reply_image_file(reply);
+                                                if pure_text_mode {
+                                                    let prefix = egui::RichText::new(format!(
+                                                        "回复 {}: ",
+                                                        reply.sender_name
+                                                    ))
+                                                    .color(ui.visuals().weak_text_color());
+                                                    let content = if reply_image.is_some() {
+                                                        Cow::Owned(
+                                                            if reply.content.trim().is_empty() {
+                                                                "[图片]".to_string()
+                                                            } else {
+                                                                format!("[图片] {}", reply.content)
+                                                            },
+                                                        )
+                                                    } else {
+                                                        Cow::Borrowed(reply.content.as_str())
+                                                    };
+                                                    if render_rich_content_with_prefix(
+                                                        ui,
+                                                        Some(prefix),
+                                                        &content,
+                                                        self.custom_chat.high_contrast_chat,
+                                                    )
+                                                    .response
+                                                    .interact(egui::Sense::click())
+                                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                                    .clicked()
+                                                    {
+                                                        action =
+                                                            Some(MessageAction::ScrollToMessage {
+                                                                msg_id: reply_msg_id,
+                                                            });
+                                                    }
+                                                } else {
+                                                    let mut reply_image_action = None;
+                                                    let reply_resp = egui::Frame::group(ui.style())
+                                                        .show(ui, |ui| {
+                                                            ui.weak(format!(
+                                                                "回复 {}",
+                                                                reply.sender_name
+                                                            ));
+                                                            if let Some(file) = reply_image {
+                                                                if file.url.is_empty() {
+                                                                    ui.weak("[图片]");
+                                                                } else if self
+                                                                    .custom_chat
+                                                                    .hide_chat_img
+                                                                {
+                                                                    ui.weak("[图片已隐藏]");
+                                                                } else {
+                                                                    let source =
+                                                                        ImageSource::message(
+                                                                            file.url.clone(),
+                                                                            room_id,
+                                                                            reply.msg_id.clone(),
+                                                                        );
+                                                                    reply_image_action =
+                                                                        render_message_image(
+                                                                            ui,
+                                                                            &source,
+                                                                            &file.file_type,
+                                                                            96.0,
+                                                                            96.0,
+                                                                        );
+                                                                }
+                                                            }
+                                                            if !reply.content.trim().is_empty() {
+                                                                render_rich_content(
+                                                                    ui,
+                                                                    &reply.content,
+                                                                    self.custom_chat
+                                                                        .high_contrast_chat,
+                                                                );
+                                                            }
+                                                        });
+                                                    if let Some(image_action) = reply_image_action {
+                                                        action = Some(MessageAction::Image(
+                                                            image_action,
+                                                        ));
+                                                    } else if reply_resp
+                                                        .response
+                                                        .interact(egui::Sense::click())
+                                                        .on_hover_cursor(
+                                                            egui::CursorIcon::PointingHand,
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        action =
+                                                            Some(MessageAction::ScrollToMessage {
+                                                                msg_id: reply_msg_id,
+                                                            });
+                                                    }
+                                                }
+                                            }
 
-                                    let has_visible_content =
-                                        has_visible_rich_content(&message.content);
-                                    if has_visible_content {
-                                        has_body = true;
-                                        let rendered = render_rich_content_with_prefix(
-                                            ui,
-                                            None,
-                                            &message.content,
-                                            self.custom_chat.high_contrast_chat,
-                                        );
-                                        body_text_response = rendered.text_response;
-                                    }
+                                            let mut has_body = false;
 
-                                    if !message.files.is_empty() {
-                                        has_body = true;
-                                        ui.with_layout(
+                                            let has_visible_content =
+                                                has_visible_rich_content(&message.content);
+                                            if has_visible_content {
+                                                has_body = true;
+                                                let rendered = render_rich_content_with_prefix(
+                                                    ui,
+                                                    None,
+                                                    &message.content,
+                                                    self.custom_chat.high_contrast_chat,
+                                                );
+                                                body_text_response = rendered.text_response;
+                                            }
+
+                                            if !message.files.is_empty() {
+                                                has_body = true;
+                                                ui.with_layout(
                                             egui::Layout::top_down(content_align),
                                             |ui| {
                                                 for file in &message.files {
@@ -847,181 +925,193 @@ impl IcaApp {
                                                 }
                                             },
                                         );
-                                    }
+                                            }
 
-                                    if let Some(reference) = &forward_reference {
-                                        has_body = true;
-                                        if !has_visible_content {
-                                            super::forward::render_forward_preview(ui, reference);
-                                        }
-                                        let mut response = ui.button("查看合并转发");
-                                        if !reference.preview.is_empty() {
-                                            response = response
-                                                .on_hover_text(reference.preview.join("\n"));
-                                        }
-                                        if response.clicked() {
-                                            action = Some(MessageAction::OpenForward {
-                                                res_id: reference.res_id.clone(),
-                                                file_name: reference.file_name.clone(),
-                                                fallback_res_id: reference.fallback_res_id.clone(),
-                                                inline_messages: reference.inline_messages.clone(),
-                                            });
-                                        }
-                                    }
+                                            if let Some(reference) = &forward_reference {
+                                                has_body = true;
+                                                if !has_visible_content {
+                                                    super::forward::render_forward_preview(
+                                                        ui, reference,
+                                                    );
+                                                }
+                                                let mut response = ui.button("查看合并转发");
+                                                if !reference.preview.is_empty() {
+                                                    response = response.on_hover_text(
+                                                        reference.preview.join("\n"),
+                                                    );
+                                                }
+                                                if response.clicked() {
+                                                    action = Some(MessageAction::OpenForward {
+                                                        res_id: reference.res_id.clone(),
+                                                        file_name: reference.file_name.clone(),
+                                                        fallback_res_id: reference
+                                                            .fallback_res_id
+                                                            .clone(),
+                                                        inline_messages: reference
+                                                            .inline_messages
+                                                            .clone(),
+                                                    });
+                                                }
+                                            }
 
-                                    if !has_body {
-                                        ui.weak("[空消息]");
-                                    }
-                                });
-                            };
-
-                            let frame = if pure_text_mode {
-                                egui::Frame::NONE
-                            } else {
-                                egui::Frame::group(ui.style())
-                            };
-                            let response = ui
-                                .scope_builder(
-                                    egui::UiBuilder::new().sense(egui::Sense::click()),
-                                    |ui| {
-                                        frame.show(ui, |ui| {
-                                            render_message_contents(ui);
-                                        });
-                                    },
-                                )
-                                .response;
-
-                            // 可选择文字会优先接收点击；合并其响应后，正文上的右键也能打开消息菜单。
-                            let response =
-                                if let Some(body_text_response) = body_text_response.take() {
-                                    response.union(body_text_response)
-                                } else {
-                                    response
+                                            if !has_body {
+                                                ui.weak("[空消息]");
+                                            }
+                                        },
+                                    );
                                 };
 
-                            response.context_menu(|ui| {
-                                if message_is_hidden {
-                                    if ui.button("显示").clicked() {
-                                        action = Some(MessageAction::SetReveal {
+                                let frame = if pure_text_mode {
+                                    egui::Frame::NONE
+                                } else {
+                                    egui::Frame::group(ui.style())
+                                };
+                                let response = ui
+                                    .scope_builder(
+                                        egui::UiBuilder::new().sense(egui::Sense::click()),
+                                        |ui| {
+                                            frame.show(ui, |ui| {
+                                                render_message_contents(ui);
+                                            });
+                                        },
+                                    )
+                                    .response;
+
+                                // 可选择文字会优先接收点击；合并其响应后，正文上的右键也能打开消息菜单。
+                                let response =
+                                    if let Some(body_text_response) = body_text_response.take() {
+                                        response.union(body_text_response)
+                                    } else {
+                                        response
+                                    };
+
+                                response.context_menu(|ui| {
+                                    if message_is_hidden {
+                                        if ui.button("显示").clicked() {
+                                            action = Some(MessageAction::SetReveal {
+                                                room_id,
+                                                message_id: message.msg_id.clone(),
+                                                reveal: true,
+                                            });
+                                            ui.close();
+                                        }
+                                        return;
+                                    }
+
+                                    if !message.deleted
+                                        && !message.hide
+                                        && ui.button("回复").clicked()
+                                    {
+                                        action = Some(MessageAction::Reply {
                                             room_id,
-                                            message_id: message.msg_id.clone(),
-                                            reveal: true,
+                                            reply: message.as_reply(),
                                         });
                                         ui.close();
                                     }
-                                    return;
-                                }
-
-                                if !message.deleted && !message.hide && ui.button("回复").clicked()
-                                {
-                                    action = Some(MessageAction::Reply {
-                                        room_id,
-                                        reply: message.as_reply(),
-                                    });
-                                    ui.close();
-                                }
-                                if ui.button("复制到编辑区").clicked() {
-                                    action = Some(MessageAction::CopyToDraft {
-                                        room_id,
-                                        message_id: message.msg_id.clone(),
-                                    });
-                                    ui.close();
-                                }
-                                if !message.content.trim().is_empty()
-                                    && ui.button("复制文本").clicked()
-                                {
-                                    ui.ctx().copy_text(message.content.clone());
-                                    ui.close();
-                                }
-                                if ui.button("重新获取该消息内容").clicked() {
-                                    action = Some(MessageAction::RenewMessage {
-                                        room_id,
-                                        message_id: message.msg_id.clone(),
-                                    });
-                                    ui.close();
-                                }
-                                if ui.button("复制消息 ID").clicked() {
-                                    ui.ctx().copy_text(message.msg_id.clone());
-                                    ui.close();
-                                }
-                                if ui.button("+1").clicked() {
-                                    action = Some(MessageAction::PlusOne {
-                                        room_id,
-                                        message_id: message.msg_id.clone(),
-                                    });
-                                    ui.close();
-                                }
-                                if ui.button("转发").clicked() {
-                                    action = Some(MessageAction::StartForward {
-                                        room_id,
-                                        message_id: message.msg_id.clone(),
-                                    });
-                                    ui.close();
-                                }
-                                if let Some(reference) = &forward_reference
-                                    && ui.button("查看合并转发").clicked()
-                                {
-                                    action = Some(MessageAction::OpenForward {
-                                        res_id: reference.res_id.clone(),
-                                        file_name: reference.file_name.clone(),
-                                        fallback_res_id: reference.fallback_res_id.clone(),
-                                        inline_messages: reference.inline_messages.clone(),
-                                    });
-                                    ui.close();
-                                }
-                                if !is_self && ui.button("戳一戳").clicked() {
-                                    action = Some(MessageAction::Poke {
-                                        room_id,
-                                        target_id: message.sender_id,
-                                    });
-                                    ui.close();
-                                }
-                                if ui
-                                    .button(if options.forward_selected {
-                                        "移出多选"
-                                    } else {
-                                        "多选"
-                                    })
-                                    .clicked()
-                                {
-                                    action = Some(MessageAction::ToggleForwardSelection {
-                                        room_id,
-                                        message_id: message.msg_id.clone(),
-                                    });
-                                    ui.close();
-                                }
-                                if is_self && !message.deleted && ui.button("撤回").clicked() {
-                                    action = Some(MessageAction::Delete {
-                                        room_id,
-                                        message_id: message.msg_id.clone(),
-                                    });
-                                    ui.close();
-                                }
-                                if message.deleted
-                                    && is_self
-                                    && !message.content.trim().is_empty()
-                                    && ui.button("重新编辑").clicked()
-                                {
-                                    action = Some(MessageAction::ReEdit {
-                                        room_id,
-                                        content: message.content.clone(),
-                                    });
-                                    ui.close();
-                                }
-                                if (message.deleted || message.hide || message.reveal)
-                                    && ui.button("隐藏").clicked()
-                                {
-                                    action = Some(MessageAction::SetReveal {
-                                        room_id,
-                                        message_id: message.msg_id.clone(),
-                                        reveal: false,
-                                    });
-                                    ui.close();
-                                }
-                            });
-                        },
-                    );
-                });
+                                    if ui.button("复制到编辑区").clicked() {
+                                        action = Some(MessageAction::CopyToDraft {
+                                            room_id,
+                                            message_id: message.msg_id.clone(),
+                                        });
+                                        ui.close();
+                                    }
+                                    if !message.content.trim().is_empty()
+                                        && ui.button("复制文本").clicked()
+                                    {
+                                        ui.ctx().copy_text(message.content.clone());
+                                        ui.close();
+                                    }
+                                    if ui.button("重新获取该消息内容").clicked() {
+                                        action = Some(MessageAction::RenewMessage {
+                                            room_id,
+                                            message_id: message.msg_id.clone(),
+                                        });
+                                        ui.close();
+                                    }
+                                    if ui.button("复制消息 ID").clicked() {
+                                        ui.ctx().copy_text(message.msg_id.clone());
+                                        ui.close();
+                                    }
+                                    if ui.button("+1").clicked() {
+                                        action = Some(MessageAction::PlusOne {
+                                            room_id,
+                                            message_id: message.msg_id.clone(),
+                                        });
+                                        ui.close();
+                                    }
+                                    if ui.button("转发").clicked() {
+                                        action = Some(MessageAction::StartForward {
+                                            room_id,
+                                            message_id: message.msg_id.clone(),
+                                        });
+                                        ui.close();
+                                    }
+                                    if let Some(reference) = &forward_reference
+                                        && ui.button("查看合并转发").clicked()
+                                    {
+                                        action = Some(MessageAction::OpenForward {
+                                            res_id: reference.res_id.clone(),
+                                            file_name: reference.file_name.clone(),
+                                            fallback_res_id: reference.fallback_res_id.clone(),
+                                            inline_messages: reference.inline_messages.clone(),
+                                        });
+                                        ui.close();
+                                    }
+                                    if !is_self && ui.button("戳一戳").clicked() {
+                                        action = Some(MessageAction::Poke {
+                                            room_id,
+                                            target_id: message.sender_id,
+                                        });
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(if options.forward_selected {
+                                            "移出多选"
+                                        } else {
+                                            "多选"
+                                        })
+                                        .clicked()
+                                    {
+                                        action = Some(MessageAction::ToggleForwardSelection {
+                                            room_id,
+                                            message_id: message.msg_id.clone(),
+                                        });
+                                        ui.close();
+                                    }
+                                    if is_self && !message.deleted && ui.button("撤回").clicked()
+                                    {
+                                        action = Some(MessageAction::Delete {
+                                            room_id,
+                                            message_id: message.msg_id.clone(),
+                                        });
+                                        ui.close();
+                                    }
+                                    if message.deleted
+                                        && is_self
+                                        && !message.content.trim().is_empty()
+                                        && ui.button("重新编辑").clicked()
+                                    {
+                                        action = Some(MessageAction::ReEdit {
+                                            room_id,
+                                            content: message.content.clone(),
+                                        });
+                                        ui.close();
+                                    }
+                                    if (message.deleted || message.hide || message.reveal)
+                                        && ui.button("隐藏").clicked()
+                                    {
+                                        action = Some(MessageAction::SetReveal {
+                                            room_id,
+                                            message_id: message.msg_id.clone(),
+                                            reveal: false,
+                                        });
+                                        ui.close();
+                                    }
+                                });
+                            },
+                        );
+                    },
+                );
             },
         );
         ui.add_space(if pure_text_mode { 2.0 } else { 4.0 });
@@ -1055,6 +1145,26 @@ mod tests {
             -123,
             &json!({ "eqq": { "type": "tg" } })
         ));
+    }
+
+    #[test]
+    fn message_avatar_prefers_mirai_avatar_before_qq_fallback() {
+        assert_eq!(
+            message_avatar_url(123, &json!({ "eqq": { "avatarMd5": "aBcD" } })),
+            Some("https://gchat.qpic.cn/gchatpic_new/0/0-0-ABCD/0".to_string())
+        );
+        assert_eq!(
+            message_avatar_url(
+                123,
+                &json!({ "eqq": { "avatarUrl": "https://example.com/avatar.png" } })
+            ),
+            Some("https://example.com/avatar.png".to_string())
+        );
+        assert_eq!(
+            message_avatar_url(123, &serde_json::Value::Null),
+            Some("https://q1.qlogo.cn/g?b=qq&nk=123&s=140".to_string())
+        );
+        assert_eq!(message_avatar_url(-1, &serde_json::Value::Null), None);
     }
 
     #[test]
