@@ -644,16 +644,9 @@ impl IcaApp {
                             }
                         }
 
-                        if let Some(avatar_url) = &sender_avatar_url {
-                            ui.add(
-                                Image::from_uri(avatar_url.clone())
-                                    .fit_to_exact_size(egui::vec2(
-                                        MESSAGE_AVATAR_SIZE,
-                                        MESSAGE_AVATAR_SIZE,
-                                    ))
-                                    .corner_radius(MESSAGE_AVATAR_SIZE / 2.0),
-                            );
-                            ui.add_space(8.0);
+                        if sender_avatar_url.is_some() {
+                            // 为头像预留横向空间；图片本身在气泡画完之后按底部对齐放置。
+                            ui.add_space(MESSAGE_AVATAR_ROW_WIDTH);
                         }
 
                         if is_self {
@@ -663,7 +656,7 @@ impl IcaApp {
                             }
                         }
 
-                        ui.allocate_ui_with_layout(
+                        let bubble_inner = ui.allocate_ui_with_layout(
                             egui::vec2(bubble_width, 0.0),
                             egui::Layout::top_down(content_align),
                             |ui| {
@@ -1110,6 +1103,26 @@ impl IcaApp {
                                 });
                             },
                         );
+                        // 与 Icalingua++ 的 flex-end 一致：头像底边与消息气泡底边对齐。
+                        if let Some(avatar_url) = &sender_avatar_url {
+                            let bubble_rect = bubble_inner.response.rect;
+                            let avatar_rect = egui::Rect::from_min_size(
+                                egui::pos2(
+                                    bubble_rect.left() - MESSAGE_AVATAR_ROW_WIDTH,
+                                    bubble_rect.bottom() - MESSAGE_AVATAR_SIZE,
+                                ),
+                                egui::vec2(MESSAGE_AVATAR_SIZE, MESSAGE_AVATAR_SIZE),
+                            );
+                            ui.put(
+                                avatar_rect,
+                                Image::from_uri(avatar_url.clone())
+                                    .fit_to_exact_size(egui::vec2(
+                                        MESSAGE_AVATAR_SIZE,
+                                        MESSAGE_AVATAR_SIZE,
+                                    ))
+                                    .corner_radius(MESSAGE_AVATAR_SIZE / 2.0),
+                            );
+                        }
                     },
                 );
             },
