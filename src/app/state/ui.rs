@@ -62,7 +62,7 @@ impl Default for GroupMemberPanelState {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct GroupFilePanelState {
     pub open: bool,
     pub directory_fid: String,
@@ -112,15 +112,7 @@ pub struct AppState {
     pub active_bridge_idx: Option<usize>,
     /// bridge 句柄、停止信号和 UI 状态统一存放在一个会话对象中。
     pub bridge_states: Vec<BridgeSession>,
-    pub clipboard_paste_failed: bool,
-    pub ime_composing: bool,
-    pub ime_event_this_frame: bool,
-    pub show_face_picker: bool,
-    pub show_mention_picker: bool,
-    pub mention_search_query: String,
-    pub mention_search_focus_requested: bool,
-    pub mention_replace_trigger: bool,
-    pub mention_selected_index: usize,
+    pub chat_ui: ChatWindowUiState,
     pub image_viewer: Option<std::sync::Arc<std::sync::Mutex<ImageViewerState>>>,
     /// 联系人独立窗口关闭后通知主视口更新打开状态。
     pub contacts_viewport_closed: Arc<AtomicBool>,
@@ -145,8 +137,6 @@ pub struct AppState {
     pub sticker_new_category: String,
     pub media_notice: Option<String>,
     pub media_error: Option<String>,
-    pub group_member_panel: GroupMemberPanelState,
-    pub group_file_panel: GroupFilePanelState,
 }
 
 impl AppState {
@@ -173,15 +163,7 @@ impl AppState {
             reedit_draft_conflict_mode: config.ui_setting.reedit_draft_conflict_mode,
             active_bridge_idx: (!bridge_states.is_empty()).then_some(0),
             bridge_states,
-            clipboard_paste_failed: false,
-            ime_composing: false,
-            ime_event_this_frame: false,
-            show_face_picker: false,
-            show_mention_picker: false,
-            mention_search_query: String::new(),
-            mention_search_focus_requested: false,
-            mention_replace_trigger: false,
-            mention_selected_index: 0,
+            chat_ui: ChatWindowUiState::default(),
             image_viewer: None,
             contacts_viewport_closed: Arc::new(AtomicBool::new(false)),
             custom_chat_ica_viewport_closed: Arc::new(AtomicBool::new(false)),
@@ -209,11 +191,47 @@ impl AppState {
             sticker_new_category: String::new(),
             media_notice: None,
             media_error: None,
-            group_member_panel: GroupMemberPanelState::default(),
-            group_file_panel: GroupFilePanelState {
-                list_start: "0".to_string(),
-                ..Default::default()
-            },
+        }
+    }
+}
+
+/// 每个聊天窗口各自维护输入法、输入弹层和群面板状态。
+#[derive(Debug, Default)]
+pub struct ChatWindowUiState {
+    pub clipboard_paste_failed: bool,
+    pub ime_composing: bool,
+    pub ime_event_this_frame: bool,
+    pub show_face_picker: bool,
+    pub show_mention_picker: bool,
+    pub mention_search_query: String,
+    pub mention_search_focus_requested: bool,
+    pub mention_replace_trigger: bool,
+    pub mention_selected_index: usize,
+    pub group_member_panel: GroupMemberPanelState,
+    pub group_file_panel: GroupFilePanelState,
+}
+
+impl std::ops::Deref for AppState {
+    type Target = ChatWindowUiState;
+    fn deref(&self) -> &Self::Target {
+        &self.chat_ui
+    }
+}
+
+impl std::ops::DerefMut for AppState {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.chat_ui
+    }
+}
+
+impl Default for GroupFilePanelState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            directory_fid: String::new(),
+            file_fid: String::new(),
+            folder_name: String::new(),
+            list_start: "0".into(),
         }
     }
 }

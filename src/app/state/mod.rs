@@ -30,5 +30,6 @@ pub use session::{
     BridgeSession, ConnectionState, RoomDirectory, StatusMessage, StatusMessageKind,
 };
 pub use ui::{
-    AppState, CompactChatPanel, GroupBanConfirmation, GroupFilePanelState, GroupMemberFilter,
+    AppState, ChatWindowUiState, CompactChatPanel, GroupBanConfirmation, GroupFilePanelState,
+    GroupMemberFilter,
 };

@@ -183,152 +183,13 @@ impl IcaApp {
             );
         }
 
-        if let Some(active_bridge_idx) = self.active_bridge_idx {
-            let picker_state = self.bridge_states.get(active_bridge_idx).and_then(|state| {
-                let source_room_id = state.forward_room_id?;
-                if !state.forward_target_picker_open
-                    || state.forward_selected_message_ids.is_empty()
-                {
-                    return None;
-                }
-                Some((
-                    source_room_id,
-                    state.forward_selected_message_ids.len(),
-                    state.rooms.clone(),
-                ))
-            });
-
-            if let Some((source_room_id, selected_count, rooms)) = picker_state {
-                let source_room_name = rooms
-                    .iter()
-                    .find(|room| room.room_id == source_room_id)
-                    .map(|room| room.room_name.clone())
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or_else(|| source_room_id.to_string());
-                let mut picker_open =
-                    self.bridge_states[active_bridge_idx].forward_target_picker_open;
-                let mut target_room_ids = None;
-
-                egui::Window::new("选择转发目标")
-                    .open(&mut picker_open)
-                    .default_size(egui::vec2(360.0, 420.0))
-                    .show(&ctx, |ui| {
-                        ui.label(format!("来源会话: {}", source_room_name));
-                        ui.label(format!("已选 {} 条消息", selected_count));
-                        ui.horizontal(|ui| {
-                            ui.label("发送方式");
-                            ui.selectable_value(
-                                &mut self.bridge_states[active_bridge_idx].forward_target_as_merged,
-                                true,
-                                "合并转发",
-                            );
-                            ui.selectable_value(
-                                &mut self.bridge_states[active_bridge_idx].forward_target_as_merged,
-                                false,
-                                "逐条转发",
-                            );
-                        });
-                        ui.add_space(6.0);
-                        ui.add_sized(
-                            [ui.available_width(), 0.0],
-                            egui::TextEdit::singleline(
-                                &mut self.bridge_states[active_bridge_idx]
-                                    .forward_target_search_query,
-                            )
-                            .hint_text("搜索会话名或 QQ/群号"),
-                        );
-                        ui.separator();
-
-                        let query = self.bridge_states[active_bridge_idx]
-                            .forward_target_search_query
-                            .trim()
-                            .to_uppercase();
-                        let visible_room_ids = rooms
-                            .iter()
-                            .filter(|room| {
-                                query.is_empty()
-                                    || room.room_name.to_uppercase().contains(&query)
-                                    || room.room_id.to_string().contains(query.as_str())
-                            })
-                            .map(|room| room.room_id)
-                            .collect::<Vec<_>>();
-                        ui.horizontal_wrapped(|ui| {
-                            if ui.button("全选当前结果").clicked() {
-                                self.bridge_states[active_bridge_idx]
-                                    .add_forward_targets(visible_room_ids.iter().copied());
-                            }
-                            if ui.button("清空目标").clicked() {
-                                self.bridge_states[active_bridge_idx]
-                                    .forward_target_room_ids
-                                    .clear();
-                            }
-                            ui.weak(format!(
-                                "已选 {} 个会话",
-                                self.bridge_states[active_bridge_idx]
-                                    .forward_target_room_ids
-                                    .len()
-                            ));
-                        });
-                        egui::ScrollArea::vertical()
-                            .max_height(300.0)
-                            .show(ui, |ui| {
-                                for room in &rooms {
-                                    if !visible_room_ids.contains(&room.room_id) {
-                                        continue;
-                                    }
-
-                                    let title = if room.room_name.is_empty() {
-                                        room.room_id.to_string()
-                                    } else if room.room_id == source_room_id {
-                                        format!("{} (当前会话)", room.room_name)
-                                    } else {
-                                        room.room_name.clone()
-                                    };
-
-                                    let mut selected = self.bridge_states[active_bridge_idx]
-                                        .forward_target_room_ids
-                                        .contains(&room.room_id);
-                                    if ui.checkbox(&mut selected, title).changed() {
-                                        self.bridge_states[active_bridge_idx]
-                                            .set_forward_target_selected(room.room_id, selected);
-                                    }
-                                }
-                            });
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            let selected_count = self.bridge_states[active_bridge_idx]
-                                .forward_target_room_ids
-                                .len();
-                            if ui
-                                .add_enabled(
-                                    selected_count > 0,
-                                    egui::Button::new(format!("发送到 {selected_count} 个会话")),
-                                )
-                                .clicked()
-                            {
-                                target_room_ids = Some(
-                                    self.bridge_states[active_bridge_idx]
-                                        .forward_target_room_ids
-                                        .clone(),
-                                );
-                            }
-                            if ui.button("取消").clicked() {
-                                ui.close();
-                            }
-                        });
-                    });
-
-                self.bridge_states[active_bridge_idx].forward_target_picker_open = picker_open;
-                if let Some(target_room_ids) = target_room_ids {
-                    self.forward_selected_messages_to_rooms(target_room_ids);
-                }
-            }
+        let active_bridge = self.active_bridge_idx;
+        for bridge_idx in 0..self.bridge_states.len() {
+            self.active_bridge_idx = Some(bridge_idx);
+            self.render_bridge_chat_windows(&ctx);
         }
-
-        self.render_forward_viewer_window(&ctx);
+        self.active_bridge_idx = active_bridge;
         self.render_group_files_window(&ctx);
-        self.render_group_announcements_window(&ctx);
-        self.render_member_history_window(&ctx);
 
         // 在线状态
         let mut online_status_open = self.open_page.online_status;
@@ -582,7 +443,6 @@ impl IcaApp {
         self.render_account_tools_window(&ctx);
         self.render_file_tools_window(&ctx);
         self.render_message_tools_window(&ctx);
-        self.render_message_search_window(&ctx);
         self.render_room_tools_window(&ctx);
         self.render_auto_sign_window(&ctx);
         self.render_relation_network_window(&ctx);
@@ -657,5 +517,158 @@ impl IcaApp {
         }
 
         self.render_image_viewer(&ctx);
+    }
+}
+
+impl IcaApp {
+    pub fn render_bridge_chat_windows(&mut self, ctx: &egui::Context) {
+        if let Some(active_bridge_idx) = self.active_bridge_idx {
+            let picker_state = self.bridge_states.get(active_bridge_idx).and_then(|state| {
+                let source_room_id = state.forward_room_id?;
+                if !state.forward_target_picker_open
+                    || state.forward_selected_message_ids.is_empty()
+                {
+                    return None;
+                }
+                Some((
+                    source_room_id,
+                    state.forward_selected_message_ids.len(),
+                    state.rooms.clone(),
+                ))
+            });
+
+            if let Some((source_room_id, selected_count, rooms)) = picker_state {
+                let source_room_name = rooms
+                    .iter()
+                    .find(|room| room.room_id == source_room_id)
+                    .map(|room| room.room_name.clone())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| source_room_id.to_string());
+                let mut picker_open =
+                    self.bridge_states[active_bridge_idx].forward_target_picker_open;
+                let mut target_room_ids = None;
+
+                egui::Window::new("选择转发目标")
+                    .id(egui::Id::new(("forward_target_window", active_bridge_idx)))
+                    .open(&mut picker_open)
+                    .default_size(egui::vec2(360.0, 420.0))
+                    .show(ctx, |ui| {
+                        ui.label(format!("来源会话: {}", source_room_name));
+                        ui.label(format!("已选 {} 条消息", selected_count));
+                        ui.horizontal(|ui| {
+                            ui.label("发送方式");
+                            ui.selectable_value(
+                                &mut self.bridge_states[active_bridge_idx].forward_target_as_merged,
+                                true,
+                                "合并转发",
+                            );
+                            ui.selectable_value(
+                                &mut self.bridge_states[active_bridge_idx].forward_target_as_merged,
+                                false,
+                                "逐条转发",
+                            );
+                        });
+                        ui.add_space(6.0);
+                        ui.add_sized(
+                            [ui.available_width(), 0.0],
+                            egui::TextEdit::singleline(
+                                &mut self.bridge_states[active_bridge_idx]
+                                    .forward_target_search_query,
+                            )
+                            .hint_text("搜索会话名或 QQ/群号"),
+                        );
+                        ui.separator();
+
+                        let query = self.bridge_states[active_bridge_idx]
+                            .forward_target_search_query
+                            .trim()
+                            .to_uppercase();
+                        let visible_room_ids = rooms
+                            .iter()
+                            .filter(|room| {
+                                query.is_empty()
+                                    || room.room_name.to_uppercase().contains(&query)
+                                    || room.room_id.to_string().contains(query.as_str())
+                            })
+                            .map(|room| room.room_id)
+                            .collect::<Vec<_>>();
+                        ui.horizontal_wrapped(|ui| {
+                            if ui.button("全选当前结果").clicked() {
+                                self.bridge_states[active_bridge_idx]
+                                    .add_forward_targets(visible_room_ids.iter().copied());
+                            }
+                            if ui.button("清空目标").clicked() {
+                                self.bridge_states[active_bridge_idx]
+                                    .forward_target_room_ids
+                                    .clear();
+                            }
+                            ui.weak(format!(
+                                "已选 {} 个会话",
+                                self.bridge_states[active_bridge_idx]
+                                    .forward_target_room_ids
+                                    .len()
+                            ));
+                        });
+                        egui::ScrollArea::vertical()
+                            .max_height(300.0)
+                            .show(ui, |ui| {
+                                for room in &rooms {
+                                    if !visible_room_ids.contains(&room.room_id) {
+                                        continue;
+                                    }
+
+                                    let title = if room.room_name.is_empty() {
+                                        room.room_id.to_string()
+                                    } else if room.room_id == source_room_id {
+                                        format!("{} (当前会话)", room.room_name)
+                                    } else {
+                                        room.room_name.clone()
+                                    };
+
+                                    let mut selected = self.bridge_states[active_bridge_idx]
+                                        .forward_target_room_ids
+                                        .contains(&room.room_id);
+                                    if ui.checkbox(&mut selected, title).changed() {
+                                        self.bridge_states[active_bridge_idx]
+                                            .set_forward_target_selected(room.room_id, selected);
+                                    }
+                                }
+                            });
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            let selected_count = self.bridge_states[active_bridge_idx]
+                                .forward_target_room_ids
+                                .len();
+                            if ui
+                                .add_enabled(
+                                    selected_count > 0,
+                                    egui::Button::new(format!("发送到 {selected_count} 个会话")),
+                                )
+                                .clicked()
+                            {
+                                target_room_ids = Some(
+                                    self.bridge_states[active_bridge_idx]
+                                        .forward_target_room_ids
+                                        .clone(),
+                                );
+                            }
+                            if ui.button("取消").clicked() {
+                                ui.close();
+                            }
+                        });
+                    });
+
+                self.bridge_states[active_bridge_idx].forward_target_picker_open = picker_open;
+                if let Some(target_room_ids) = target_room_ids {
+                    self.forward_selected_messages_to_rooms(target_room_ids);
+                }
+            }
+        }
+
+        self.render_forward_viewer_window(ctx);
+        self.render_group_announcements_window(ctx);
+        self.render_member_history_window(ctx);
+
+        self.render_message_search_window(ctx);
     }
 }

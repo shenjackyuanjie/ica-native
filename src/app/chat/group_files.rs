@@ -31,6 +31,7 @@ impl IcaApp {
         let mut open = self.group_file_panel.open;
 
         egui::Window::new("群文件")
+            .id(egui::Id::new(("group_files_window", ctx.viewport_id())))
             .open(&mut open)
             .default_size(egui::vec2(520.0, 420.0))
             .min_size(egui::vec2(360.0, 280.0))

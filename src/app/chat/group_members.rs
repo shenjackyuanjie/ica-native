@@ -341,6 +341,7 @@ impl IcaApp {
         let mut open = snapshot.open;
         let mut load_more = false;
         egui::Window::new("成员发言记录")
+            .id(egui::Id::new(("member_history_window", bridge_idx)))
             .open(&mut open)
             .default_size(egui::vec2(560.0, 560.0))
             .min_size(egui::vec2(360.0, 300.0))

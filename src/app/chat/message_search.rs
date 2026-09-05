@@ -52,6 +52,7 @@ impl IcaApp {
         let mut pending_action = None;
 
         egui::Window::new(format!("{} - 搜索聊天记录", room_name))
+            .id(egui::Id::new(("message_search_window", active_bridge_idx)))
             .open(&mut open)
             .default_size(egui::vec2(560.0, 640.0))
             .min_size(egui::vec2(360.0, 300.0))

@@ -11,6 +11,7 @@ use rand::RngExt;
 pub mod auto_sign;
 mod chat;
 pub mod chat_groups;
+mod chat_windows;
 mod contacts;
 mod event;
 mod media;
@@ -73,6 +74,7 @@ pub struct IcaApp {
     runtime: AppRuntime,
     config: ConfigStore,
     state: state::AppState,
+    chat_windows: Vec<chat_windows::ChatWindow>,
 }
 
 impl Deref for IcaApp {
@@ -141,6 +143,59 @@ impl IcaApp {
         ctx.set_fonts(fonts);
     }
 
+    pub fn handle_chat_escape(&mut self, ctx: &egui::Context) {
+        // ESC 优先关闭输入区弹层，再处理会话内的选择状态。
+        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            if self.show_mention_picker {
+                self.show_mention_picker = false;
+                self.mention_search_query.clear();
+                self.mention_search_focus_requested = false;
+                self.mention_replace_trigger = false;
+                self.mention_selected_index = 0;
+                if let Some(bridge_idx) = self.active_bridge_idx
+                    && let Some(room_id) = self.bridge_states[bridge_idx].selected_room_id
+                {
+                    let composer_id = egui::Id::new(("message_composer", bridge_idx, room_id));
+                    ctx.memory_mut(|memory| memory.request_focus(composer_id));
+                }
+            } else if let Some(state) = self.active_bridge_state_mut() {
+                if state.forward_target_picker_open {
+                    state.forward_target_picker_open = false;
+                } else if let Some(room_id) = state.selected_room_id {
+                    if state.is_forward_selection_active(room_id) {
+                        state.clear_forward_selection();
+                    } else if ctx.viewport_id() == egui::ViewportId::ROOT {
+                        state.selected_room_id = None;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn update_chat_input(&mut self, ctx: &egui::Context) {
+        let raw_input = ctx.input(|input| input.raw.clone());
+        self.ime_event_this_frame = false;
+        for event in &raw_input.events {
+            match event {
+                egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => {
+                    self.ime_event_this_frame = true;
+                    self.ime_composing = !text.is_empty();
+                }
+                egui::Event::Ime(egui::ImeEvent::Commit(_)) => {
+                    self.ime_event_this_frame = true;
+                    self.ime_composing = false;
+                }
+                _ => {}
+            }
+        }
+
+        // 检测 Ctrl+V 但没有文字粘贴事件的情况（剪贴板可能是图片）。
+        // 即使窗口失焦也读取一次系统按键状态，避免重新聚焦后消费到陈旧的按下事件。
+        let system_paste_shortcut_pressed = Self::system_paste_shortcut_pressed();
+        self.clipboard_paste_failed =
+            clipboard_image_paste_requested(&raw_input, system_paste_shortcut_pressed);
+    }
+
     fn setup_interaction_style(ctx: &egui::Context) {
         ctx.all_styles_mut(|style| {
             style.visuals.widgets.hovered.expansion = 0.0;
@@ -154,7 +209,9 @@ impl IcaApp {
     /// 保留现有的 `disable_adaptive_single_panel_mode` 配置语义：勾选时始终使用
     /// 三栏布局，取消勾选后才会在窄窗口自动切换。
     pub fn uses_compact_chat_layout(&self, ctx: &egui::Context) -> bool {
-        !self.custom_chat.disable_adaptive_single_panel_mode && ctx.content_rect().width() < 720.0
+        ctx.viewport_id() == egui::ViewportId::ROOT
+            && !self.custom_chat.disable_adaptive_single_panel_mode
+            && ctx.content_rect().width() < 720.0
     }
 
     /// 生成测试用的聊天室数据
@@ -287,6 +344,7 @@ impl IcaApp {
             runtime,
             config: config_store,
             state,
+            chat_windows: Vec::new(),
         };
         app.media_notice = sticker_store.fallback_notice();
         app.spawn_media_task(
@@ -468,29 +526,6 @@ impl IcaApp {
 }
 
 impl eframe::App for IcaApp {
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        self.ime_event_this_frame = false;
-        for event in &raw_input.events {
-            match event {
-                egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => {
-                    self.ime_event_this_frame = true;
-                    self.ime_composing = !text.is_empty();
-                }
-                egui::Event::Ime(egui::ImeEvent::Commit(_)) => {
-                    self.ime_event_this_frame = true;
-                    self.ime_composing = false;
-                }
-                _ => {}
-            }
-        }
-
-        // 检测 Ctrl+V 但没有文字粘贴事件的情况（剪贴板可能是图片）。
-        // 即使窗口失焦也读取一次系统按键状态，避免重新聚焦后消费到陈旧的按下事件。
-        let system_paste_shortcut_pressed = Self::system_paste_shortcut_pressed();
-        self.clipboard_paste_failed =
-            clipboard_image_paste_requested(raw_input, system_paste_shortcut_pressed);
-    }
-
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         for session in &mut self.state.bridge_states {
             session.stop();
@@ -498,36 +533,11 @@ impl eframe::App for IcaApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.update_chat_input(ui.ctx());
         self.poll_socketio_events(ui.ctx());
         self.tick_auto_sign(ui.ctx());
 
-        // ESC 优先关闭输入区弹层，再处理会话内的选择状态。
-        if ui.ctx().input(|input| input.key_pressed(egui::Key::Escape)) {
-            if self.show_mention_picker {
-                self.show_mention_picker = false;
-                self.mention_search_query.clear();
-                self.mention_search_focus_requested = false;
-                self.mention_replace_trigger = false;
-                self.mention_selected_index = 0;
-                if let Some(bridge_idx) = self.active_bridge_idx
-                    && let Some(room_id) = self.bridge_states[bridge_idx].selected_room_id
-                {
-                    let composer_id = egui::Id::new(("message_composer", bridge_idx, room_id));
-                    ui.ctx()
-                        .memory_mut(|memory| memory.request_focus(composer_id));
-                }
-            } else if let Some(state) = self.active_bridge_state_mut() {
-                if state.forward_target_picker_open {
-                    state.forward_target_picker_open = false;
-                } else if let Some(room_id) = state.selected_room_id {
-                    if state.is_forward_selection_active(room_id) {
-                        state.clear_forward_selection();
-                    } else {
-                        state.selected_room_id = None;
-                    }
-                }
-            }
-        }
+        self.handle_chat_escape(ui.ctx());
 
         // 功能视图由 `chat` 和顶层 `shell` 实现。窄窗口只显示一个主面板，避免
         // 左侧导航、会话列表、成员面板和聊天正文互相挤压。
@@ -552,10 +562,15 @@ impl eframe::App for IcaApp {
             self.render_chat_list_panel(ui);
         }
         if show_chat {
-            self.render_group_members_panel(ui);
-            self.render_central_panel(ui);
+            if self.active_chat_is_detached() {
+                self.render_detached_chat_placeholder(ui);
+            } else {
+                self.render_group_members_panel(ui);
+                self.render_central_panel(ui);
+            }
         }
         self.render_group_ban_confirmation(ui.ctx());
         self.render_windows(ui);
+        self.render_chat_windows(ui.ctx());
     }
 }

@@ -123,6 +123,7 @@ impl IcaApp {
                 let mut pending_ignore_chat: Option<(i64, String)> = None;
                 let mut pending_message_search: Option<(i64, String)> = None;
                 let mut pending_room_selection = None;
+                let mut pending_chat_window = None;
 
                 let scroll_area =
                     egui::ScrollArea::vertical().id_salt(("chat_list_scroll", active_bridge_idx));
@@ -216,6 +217,10 @@ impl IcaApp {
                             );
                             ui.separator();
 
+                            if ui.button("在独立窗口打开").clicked() {
+                                pending_chat_window = Some(room_id);
+                                ui.close();
+                            }
                             let label = if is_pinned { "取消置顶" } else { "置顶" };
                             if ui.button(label).clicked() {
                                 pending_pin_change = Some((room_id, !is_pinned));
@@ -248,6 +253,9 @@ impl IcaApp {
                             }
                         });
 
+                        if response.double_clicked() {
+                            pending_chat_window = Some(room_id);
+                        }
                         if response.clicked() {
                             pending_room_selection = Some(room_id);
                         }
@@ -270,6 +278,9 @@ impl IcaApp {
 
                 if let Some(room_id) = pending_room_selection {
                     self.select_active_room(room_id);
+                }
+                if let Some(room_id) = pending_chat_window {
+                    self.open_chat_window(ui.ctx(), active_bridge_idx, room_id);
                 }
                 if let Some((room_id, pin)) = pending_pin_change {
                     self.set_room_pinned(active_bridge_idx, room_id, pin);

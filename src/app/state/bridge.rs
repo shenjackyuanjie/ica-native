@@ -51,6 +51,8 @@ pub struct BridgeState {
     pub directory: RoomDirectory,
     pub conversations: HashMap<RoomId, ConversationState>,
     pub selected_room_id: Option<RoomId>,
+    /// 独立窗口中的会话也需要保留活跃会话的历史缓存。
+    pub detached_room_ids: std::collections::HashSet<RoomId>,
     pub forward_room_id: Option<RoomId>,
     pub forward_selected_message_ids: Vec<String>,
     pub forward_target_picker_open: bool,
@@ -94,6 +96,7 @@ impl BridgeState {
             directory: RoomDirectory::new(bridge_key, chat_groups),
             conversations: HashMap::new(),
             selected_room_id: None,
+            detached_room_ids: Default::default(),
             forward_room_id: None,
             forward_selected_message_ids: Vec::new(),
             forward_target_picker_open: false,
@@ -199,11 +202,12 @@ impl BridgeState {
     pub fn trim_message_caches(&mut self, active_room_id: Option<RoomId>) {
         let room_ids = self.conversations.keys().copied().collect::<Vec<_>>();
         for room_id in room_ids {
-            let limit = if Some(room_id) == active_room_id {
-                Self::ACTIVE_ROOM_MESSAGE_LIMIT
-            } else {
-                Self::BACKGROUND_ROOM_MESSAGE_LIMIT
-            };
+            let limit =
+                if Some(room_id) == active_room_id || self.detached_room_ids.contains(&room_id) {
+                    Self::ACTIVE_ROOM_MESSAGE_LIMIT
+                } else {
+                    Self::BACKGROUND_ROOM_MESSAGE_LIMIT
+                };
             self.trim_room_messages_to_limit(room_id, limit);
         }
         self.trim_layout_caches_to_active_room(active_room_id);
@@ -212,7 +216,7 @@ impl BridgeState {
 
     pub fn trim_layout_caches_to_active_room(&mut self, active_room_id: Option<RoomId>) {
         for (room_id, conversation) in &mut self.conversations {
-            if Some(*room_id) != active_room_id {
+            if Some(*room_id) != active_room_id && !self.detached_room_ids.contains(room_id) {
                 conversation.message_row_heights.clear();
                 conversation.message_row_layouts.clear();
                 conversation.message_layout_cache_key = None;
@@ -434,6 +438,42 @@ impl BridgeState {
 mod tests {
     use super::BridgeState;
     use crate::config::ChatGroups;
+
+    #[test]
+    fn detached_chat_keeps_history_until_its_window_closes() {
+        let mut state = BridgeState::new("test".into(), ChatGroups::default());
+        state.detached_room_ids.insert(-1);
+        for room_id in [-1, -2] {
+            let conversation = state.conversation_mut(room_id);
+            conversation.messages = (0..400)
+                .map(|index| {
+                    serde_json::from_value(serde_json::json!({"_id": index.to_string(), "username": "tester", "content": "test"})).unwrap()
+                })
+                .collect();
+            conversation.message_row_heights.insert("row".into(), 40.0);
+        }
+        state.trim_message_caches(Some(-3));
+        assert_eq!(state.conversation(-1).unwrap().messages.len(), 400);
+        assert_eq!(state.conversation(-1).unwrap().message_row_heights.len(), 1);
+        assert_eq!(state.conversation(-2).unwrap().messages.len(), 300);
+        assert!(
+            state
+                .conversation(-2)
+                .unwrap()
+                .message_row_heights
+                .is_empty()
+        );
+        state.detached_room_ids.remove(&-1);
+        state.trim_message_caches(Some(-3));
+        assert_eq!(state.conversation(-1).unwrap().messages.len(), 300);
+        assert!(
+            state
+                .conversation(-1)
+                .unwrap()
+                .message_row_heights
+                .is_empty()
+        );
+    }
 
     #[test]
     fn forward_targets_support_multiple_rooms_without_duplicates() {
