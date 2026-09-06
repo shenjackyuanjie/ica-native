@@ -10,6 +10,7 @@
 - Socket.IO 主连接新增兜底回调：收到未注册的事件时输出 `info` 日志（含事件名与 payload 摘要），避免 Bridge 新增事件后客户端静默无响应、排查时看不到任何线索。
 
 ### Changed
+- 刷新依赖锁定版本，包括 `toml` 1.1.5、`lru` 0.18.4 及 TLS、平台支持等传递依赖；`Cargo.toml` 的普通依赖声明统一使用主次版本形式，由 `Cargo.lock` 固定补丁版本。本次升级未要求应用调用代码的破坏性适配。
 - 字体加载改用 `egui-system-fonts`：按系统语言查找文字字体，并显式追加系统 emoji 字体候选；保留内置思源黑体作为主要中文字体，Unifont 放在回退链末尾补充罕见字符；替换新增的内置 Noto Emoji 方案，emoji 覆盖由 egui 内置字体和系统字体共同提供。
 - Socket.IO 未知事件兜底会忽略 Bridge 面向远端 Electron 客户端的 `notify` 以及旧/特定 adapter 登录通知；`notify` 是新消息的系统桌面通知请求，原生端尚未实现系统通知，但正常消息仍由 `addMessage`、`updateRoom` 等事件更新，因此不再将其误报为未知事件。
 - Bridge 发来的 `dbUpgradeProgress` 现会显示数据库升级横幅，包含进度条、已处理数、总数与百分比；无总数时显示不定进度状态，不再忽略这类高频事件。
