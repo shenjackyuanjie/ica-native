@@ -1,9 +1,5 @@
-use std::{
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
+use std::ops::{Deref, DerefMut};
 
-use crate::assets;
 use crate::config::ConfigStore;
 use eframe::CreationContext;
 use rand::RngExt;
@@ -99,50 +95,6 @@ impl IcaApp {
         }
     }
 
-    fn setup_fonts(ctx: &egui::Context) {
-        let mut fonts = egui::FontDefinitions::default();
-
-        let font_sy_data = egui::FontData::from_static(assets::fonts::FONT_思源黑体);
-        let font_unifont_data = egui::FontData::from_static(assets::fonts::FONT_UNIFONT);
-
-        let sy_font_name = "notosans".to_string();
-        let unifont_name = "unifont".to_string();
-
-        fonts
-            .font_data
-            .insert(sy_font_name.clone(), Arc::new(font_sy_data));
-
-        fonts
-            .font_data
-            .insert(unifont_name.clone(), Arc::new(font_unifont_data));
-
-        fonts
-            .families
-            .entry(egui::FontFamily::Proportional)
-            .or_default()
-            .insert(0, unifont_name.clone());
-
-        fonts
-            .families
-            .entry(egui::FontFamily::Proportional)
-            .or_default()
-            .insert(0, sy_font_name.clone());
-
-        fonts
-            .families
-            .entry(egui::FontFamily::Monospace)
-            .or_default()
-            .push(sy_font_name.clone());
-
-        fonts
-            .families
-            .entry(egui::FontFamily::Monospace)
-            .or_default()
-            .push(unifont_name.clone());
-
-        ctx.set_fonts(fonts);
-    }
-
     pub fn handle_chat_escape(&mut self, ctx: &egui::Context) {
         // ESC 优先关闭输入区弹层，再处理会话内的选择状态。
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
@@ -194,6 +146,55 @@ impl IcaApp {
         let system_paste_shortcut_pressed = Self::system_paste_shortcut_pressed();
         self.clipboard_paste_failed =
             clipboard_image_paste_requested(&raw_input, system_paste_shortcut_pressed);
+    }
+
+    fn setup_fonts(ctx: &egui::Context) {
+        use egui_system_fonts::{FontPreset, FontStyle};
+
+        // 保留内置中文字体作为主字体；系统字体负责补充覆盖。
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "notosans".into(),
+            std::sync::Arc::new(egui::FontData::from_static(
+                crate::assets::fonts::FONT_思源黑体,
+            )),
+        );
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Proportional)
+            .unwrap()
+            .insert(0, "notosans".into());
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Monospace)
+            .unwrap()
+            .push("notosans".into());
+        ctx.set_fonts(fonts);
+        egui_system_fonts::add_auto(ctx, FontStyle::Sans);
+        // 默认语言预设不包含 emoji，显式补充可用的系统 emoji 字体。
+        // 优先使用有轮廓的字体；彩色位图字体的实际显示取决于 egui 支持。
+        egui_system_fonts::add_with_presets(
+            ctx,
+            [FontPreset::Custom(vec![
+                "Noto Emoji".into(),
+                "Segoe UI Emoji".into(),
+                "Apple Color Emoji".into(),
+                "Noto Color Emoji".into(),
+            ])],
+            FontStyle::Sans,
+        );
+        // 必须最后注册，避免 Unifont 提前命中系统字体能更好显示的符号。
+        ctx.add_font(egui::epaint::text::FontInsert {
+            name: "unifont".into(),
+            data: egui::FontData::from_static(crate::assets::fonts::FONT_UNIFONT),
+            families: [egui::FontFamily::Proportional, egui::FontFamily::Monospace]
+                .into_iter()
+                .map(|family| egui::epaint::text::InsertFontFamily {
+                    family,
+                    priority: egui::epaint::text::FontPriority::Lowest,
+                })
+                .collect(),
+        });
     }
 
     fn setup_interaction_style(ctx: &egui::Context) {
@@ -572,5 +573,79 @@ impl eframe::App for IcaApp {
         self.render_group_ban_confirmation(ui.ctx());
         self.render_windows(ui);
         self.render_chat_windows(ui.ctx());
+    }
+}
+
+#[cfg(test)]
+mod system_font_tests {
+    use super::IcaApp;
+
+    #[test]
+    fn bundled_fonts_surround_system_fallbacks() {
+        let ctx = egui::Context::default();
+        IcaApp::setup_fonts(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.fonts(|fonts| {
+                let definitions = fonts.definitions();
+                let proportional = &definitions.families[&egui::FontFamily::Proportional];
+                assert_eq!(proportional.first().map(String::as_str), Some("notosans"));
+                for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                    assert_eq!(
+                        definitions.families[&family].last().map(String::as_str),
+                        Some("unifont")
+                    );
+                }
+            });
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    #[ignore = "需要系统安装中文字体和含思考表情轮廓的 emoji 字体；字体方案变更时在桌面环境显式运行"]
+    fn system_fonts_render_chinese_and_thinking_face() {
+        let ctx = egui::Context::default();
+        IcaApp::setup_fonts(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.fonts_mut(|fonts| {
+                for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                    let font_id = egui::FontId::new(18.0, family);
+                    // egui 0.36 的 has_glyph 按字体身份判断是否命中替代字形，
+                    // 会误判与替代字形同属一套字体的正常字符。直接比较实际网格 UV。
+                    let missing = fonts.layout_no_wrap(
+                        "\u{10ffff}".into(),
+                        font_id.clone(),
+                        egui::Color32::WHITE,
+                    );
+                    let missing_uv: Vec<_> = missing
+                        .rows
+                        .iter()
+                        .flat_map(|row| row.visuals.mesh.vertices.iter().map(|vertex| vertex.uv))
+                        .collect();
+                    for character in ['中', 'A', '1', '🤔'] {
+                        let galley = fonts.layout_no_wrap(
+                            character.to_string(),
+                            font_id.clone(),
+                            egui::Color32::WHITE,
+                        );
+                        let glyph_uv: Vec<_> = galley
+                            .rows
+                            .iter()
+                            .flat_map(|row| {
+                                row.visuals.mesh.vertices.iter().map(|vertex| vertex.uv)
+                            })
+                            .collect();
+                        assert_ne!(glyph_uv, missing_uv, "字符落到了缺字替代图形: {character}");
+                        assert!(
+                            galley
+                                .rows
+                                .iter()
+                                .any(|row| !row.visuals.mesh.vertices.is_empty()),
+                            "字形没有生成可绘制轮廓: {character}"
+                        );
+                    }
+                }
+            });
+        });
+        output.textures_delta.clear();
     }
 }

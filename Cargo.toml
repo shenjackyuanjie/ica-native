@@ -11,6 +11,7 @@ eframe = { version = "0.36.1", default-features = false, features = [
     "wgpu_no_default_features",
 ] }
 egui = "0.36.1"
+egui-system-fonts = "0.36"
 egui_extras = { version = "0.36.1", features = ["file", "http", "svg"] }
 
 anyhow = "1.0.104"
