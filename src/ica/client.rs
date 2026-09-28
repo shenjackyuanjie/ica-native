@@ -24,7 +24,7 @@ async fn sign_with_key(
     private_key_hex: String,
     allow_protocol_mismatch: bool,
     event_tx: Option<UnboundedSender<BridgeEvent>>,
-    connection_signal_tx: UnboundedSender<ConnectionSignal>,
+    _connection_signal_tx: UnboundedSender<ConnectionSignal>,
 ) {
     // 解析 payload，优先取 Text
     let require_data = match payload {
@@ -75,12 +75,10 @@ async fn sign_with_key(
             }),
         );
         if !allow_protocol_mismatch {
-            event!(Level::ERROR, bridge = %bridge_key, protocol_version, expected = ICA_PROTOCOL_VERSION, "拒绝认证协议版本不匹配的 Bridge");
-            let _ = connection_signal_tx.send(ConnectionSignal::Stop);
-            let _ = client.disconnect().await;
-            return;
+            event!(Level::WARN, bridge = %bridge_key, protocol_version, expected = ICA_PROTOCOL_VERSION, "Bridge 协议版本较旧或不匹配，尝试继续兼容连接");
+        } else {
+            event!(Level::WARN, bridge = %bridge_key, protocol_version, expected = ICA_PROTOCOL_VERSION, "配置允许连接协议版本不匹配的 Bridge");
         }
-        event!(Level::WARN, bridge = %bridge_key, protocol_version, expected = ICA_PROTOCOL_VERSION, "配置允许连接协议版本不匹配的 Bridge");
     }
 
     // 第一个元素应为 auth_key 字符串
@@ -157,13 +155,13 @@ pub fn sign_callback(
     private_key_hex: String,
     allow_protocol_mismatch: bool,
     event_tx: Option<UnboundedSender<BridgeEvent>>,
-    connection_signal_tx: UnboundedSender<ConnectionSignal>,
+    _connection_signal_tx: UnboundedSender<ConnectionSignal>,
 ) -> impl Fn(Payload, Client) -> BoxFuture<'static, ()> + Send + Sync + 'static {
     move |payload: Payload, client: Client| {
         let bridge_key = bridge_key.clone();
         let private_key_hex = private_key_hex.clone();
         let event_tx = event_tx.clone();
-        let connection_signal_tx = connection_signal_tx.clone();
+        let connection_signal_tx = _connection_signal_tx.clone();
         Box::pin(async move {
             sign_with_key(
                 payload,

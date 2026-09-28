@@ -342,15 +342,6 @@ pub async fn run_bridge(
                         ConnectionSignal::Disconnected => {
                             break true;
                         }
-                        ConnectionSignal::Stop => {
-                            emit_ui_event(
-                                &event_tx,
-                                &bridge_key,
-                                "socketDisconnected",
-                                json!({ "message": "协议版本不匹配，连接已停止" }),
-                            );
-                            return Ok(());
-                        }
                     }
                 }
                 Some(command) = command_rx.recv() => {

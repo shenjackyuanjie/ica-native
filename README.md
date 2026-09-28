@@ -30,7 +30,7 @@ name = "main"
 url = "ws://127.0.0.1:9999"
 private_key = "<bridge-private-key>"
 enable = true
-# 只建议在临时兼容旧 Bridge 时开启。
+# 可在服务端 Bridge 版本较旧时开启兼容连接；客户端会显示版本告警。
 allow_protocol_mismatch = false
 
 [noticer]
@@ -72,6 +72,8 @@ description = "警告提醒"
 - `POST /v1/send/direct`：使用独立 Token 按 `room_id` 发送。
 - `GET /status`：查看 Bridge、房间和队列状态。
 - `GET /config`：展示脱敏后的全部有效配置、支持的图片类型、接口列表，以及程序内仍存在的硬上限；不会返回 Token 原文。
+
+客户端的「选项 → Noticer 设置」提供同一份配置的可视化编辑；勾选或取消「启用 Noticer」会立即启停服务，修改监听地址、Token、限制和房间路由后点击保存会立即重建服务。
 
 监听非回环地址时必须配置 `auth_token`。HTTP 成功响应只表示消息已提交给 Bridge，
 不代表 QQ 服务端已经最终送达。

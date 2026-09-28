@@ -7,6 +7,8 @@ pub struct AppOpenPage {
     pub about: bool,
     /// 设置页面
     pub settings: bool,
+    /// Noticer 配置页面
+    pub noticer_settings: bool,
     /// 通知等级说明页面
     pub notify_level: bool,
     /// 定制聊天界面 (ica)

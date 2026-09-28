@@ -16,7 +16,7 @@ use base64::Engine;
 use serde_json::{Map, Value as JsonValue, json};
 use sha2::{Digest, Sha256};
 use tokio::runtime::Runtime;
-use tokio::sync::{Notify, mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::config::{NoticerConfig, NoticerRoom};
 use crate::ica::{BridgeEvent, BridgeHandle, IcaCommand, NoticerImage, NoticerSendPayload};
@@ -354,16 +354,92 @@ impl ApiError {
     }
 }
 
-/// 启动队列 worker 和 HTTP listener。绑定失败只影响 Noticer，不会中止主客户端。
+#[derive(Clone)]
+pub struct NoticerController {
+    command_tx: mpsc::UnboundedSender<NoticerControlMessage>,
+}
+
+enum NoticerControlMessage {
+    Apply {
+        config: NoticerConfig,
+        handles: HashMap<String, BridgeHandle>,
+        registry: Arc<BridgeRegistry>,
+    },
+}
+
+struct RunningNoticer {
+    stop_tx: watch::Sender<bool>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl NoticerController {
+    pub fn apply(
+        &self,
+        config: NoticerConfig,
+        handles: HashMap<String, BridgeHandle>,
+        registry: Arc<BridgeRegistry>,
+    ) {
+        let _ = self.command_tx.send(NoticerControlMessage::Apply {
+            config,
+            handles,
+            registry,
+        });
+    }
+}
+
+/// 启动 Noticer 控制器。控制器允许在客户端运行期间启停 HTTP 服务。
 pub fn spawn(
     runtime: &Runtime,
     config: NoticerConfig,
     handles: HashMap<String, BridgeHandle>,
     registry: Arc<BridgeRegistry>,
+) -> NoticerController {
+    let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+    let controller = NoticerController { command_tx };
+    runtime.spawn(async move {
+        let mut running: Option<RunningNoticer> = None;
+        while let Some(message) = command_rx.recv().await {
+            match message {
+                NoticerControlMessage::Apply {
+                    config,
+                    handles,
+                    registry,
+                } => {
+                    if let Some(current) = running.take() {
+                        let _ = current.stop_tx.send(true);
+                        let _ = current.task.await;
+                    }
+                    if config.enabled {
+                        running = Some(start_service(config, handles, registry));
+                    }
+                }
+            }
+        }
+        if let Some(current) = running {
+            let _ = current.stop_tx.send(true);
+            let _ = current.task.await;
+        }
+    });
+    controller.apply(config, handles, registry);
+    controller
+}
+
+fn start_service(
+    config: NoticerConfig,
+    handles: HashMap<String, BridgeHandle>,
+    registry: Arc<BridgeRegistry>,
+) -> RunningNoticer {
+    let (stop_tx, stop_rx) = watch::channel(false);
+    let task = tokio::spawn(run_service(config, handles, registry, stop_rx));
+    RunningNoticer { stop_tx, task }
+}
+
+async fn run_service(
+    config: NoticerConfig,
+    handles: HashMap<String, BridgeHandle>,
+    registry: Arc<BridgeRegistry>,
+    stop_rx: watch::Receiver<bool>,
 ) {
-    if !config.enabled {
-        return;
-    }
     let (tx, rx) = mpsc::channel(config.queue_capacity);
     let dispatcher = Arc::new(Dispatcher {
         tx,
@@ -380,15 +456,17 @@ pub fn spawn(
         dispatcher: dispatcher.clone(),
         idempotency: Arc::new(Mutex::new(HashMap::new())),
     };
-    runtime.spawn(run_worker(rx, state.clone()));
-    runtime.spawn(async move {
-        if let Err(error) = run_server(state).await {
+    let worker_stop = stop_rx.clone();
+    let worker = run_worker(rx, state.clone(), worker_stop);
+    let server = run_server(state, stop_rx);
+    tokio::join!(worker, async {
+        if let Err(error) = server.await {
             tracing::error!(error = %error, "内建 Noticer HTTP 服务停止");
         }
     });
 }
 
-async fn run_server(state: NoticerState) -> Result<(), String> {
+async fn run_server(state: NoticerState, mut stop_rx: watch::Receiver<bool>) -> Result<(), String> {
     let router = Router::new()
         .route("/", get(root))
         .route("/health", get(health))
@@ -411,12 +489,26 @@ async fn run_server(state: NoticerState) -> Result<(), String> {
         })?;
     tracing::info!(host = %state.config.host, port = state.config.port, "内建 Noticer HTTP 服务已启动");
     axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            let _ = stop_rx.wait_for(|stopped| *stopped).await;
+        })
         .await
         .map_err(|error| error.to_string())
 }
 
-async fn run_worker(mut rx: mpsc::Receiver<Arc<SendJob>>, state: NoticerState) {
-    while let Some(job) = rx.recv().await {
+async fn run_worker(
+    mut rx: mpsc::Receiver<Arc<SendJob>>,
+    state: NoticerState,
+    mut stop_rx: watch::Receiver<bool>,
+) {
+    loop {
+        let next_job = tokio::select! {
+            _ = stop_rx.wait_for(|stopped| *stopped) => None,
+            job = rx.recv() => job,
+        };
+        let Some(job) = next_job else {
+            break;
+        };
         let should_run = {
             let mut phase = job.phase.lock().expect("Noticer 任务状态锁被污染");
             match &*phase {
@@ -1904,6 +1996,32 @@ mod tests {
             _ => panic!("收到的不是 Noticer 发送命令"),
         }
         assert_eq!(dispatch.await.unwrap().status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn noticer_controller_accepts_runtime_enable_and_disable_updates() {
+        let registry = Arc::new(BridgeRegistry::default());
+        std::thread::spawn(move || {
+            let runtime = Runtime::new().unwrap();
+            let controller = spawn(
+                &runtime,
+                NoticerConfig::default(),
+                HashMap::new(),
+                registry.clone(),
+            );
+
+            let enabled = NoticerConfig {
+                enabled: true,
+                port: 0,
+                ..NoticerConfig::default()
+            };
+            controller.apply(enabled, HashMap::new(), registry.clone());
+            std::thread::sleep(Duration::from_millis(80));
+            controller.apply(NoticerConfig::default(), HashMap::new(), registry);
+            std::thread::sleep(Duration::from_millis(80));
+        })
+        .join()
+        .unwrap();
     }
 
     #[test]

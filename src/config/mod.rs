@@ -104,7 +104,7 @@ fn ica_bridge_enable_default() -> bool {
 }
 
 impl IcaCfg {
-    fn validate_private_keys(&self) -> anyhow::Result<()> {
+    pub fn validate_private_keys(&self) -> anyhow::Result<()> {
         for (idx, bridge) in self.bridges.iter().enumerate() {
             if !bridge.enable {
                 continue;
@@ -290,7 +290,7 @@ fn noticer_idempotency_entries_default() -> usize {
     2048
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct NoticerConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -448,7 +448,7 @@ impl NoticerConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct NoticerRoom {
     pub bridge: String,
     pub room_id: i64,

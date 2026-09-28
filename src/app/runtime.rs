@@ -6,7 +6,7 @@ use tokio::sync::oneshot;
 
 use crate::config::IcaCfg;
 use crate::ica::{self, BridgeEvent, BridgeHandle};
-use crate::noticer::{self, BridgeRegistry};
+use crate::noticer::{self, BridgeRegistry, NoticerController};
 
 use super::event::AppEvent;
 use super::state::{BridgeSession, BridgeState};
@@ -16,6 +16,9 @@ pub struct AppRuntime {
     sessions: Vec<BridgeSession>,
     pub event_rx: UnboundedReceiver<AppEvent>,
     pub event_tx: UnboundedSender<AppEvent>,
+    noticer_controller: NoticerController,
+    noticer_registry: Arc<BridgeRegistry>,
+    noticer_handles: HashMap<String, BridgeHandle>,
 }
 
 impl AppRuntime {
@@ -72,11 +75,11 @@ impl AppRuntime {
             });
         }
 
-        noticer::spawn(
+        let noticer_controller = noticer::spawn(
             &tokio,
             config.noticer.clone(),
-            noticer_handles,
-            noticer_registry,
+            noticer_handles.clone(),
+            noticer_registry.clone(),
         );
 
         Self {
@@ -84,6 +87,9 @@ impl AppRuntime {
             sessions,
             event_rx,
             event_tx,
+            noticer_controller,
+            noticer_registry,
+            noticer_handles,
         }
     }
 
@@ -93,6 +99,14 @@ impl AppRuntime {
 
     pub fn event_sender(&self) -> UnboundedSender<AppEvent> {
         self.event_tx.clone()
+    }
+
+    pub fn apply_noticer_config(&self, config: crate::config::NoticerConfig) {
+        self.noticer_controller.apply(
+            config,
+            self.noticer_handles.clone(),
+            self.noticer_registry.clone(),
+        );
     }
 }
 

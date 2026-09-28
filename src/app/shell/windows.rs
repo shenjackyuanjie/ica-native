@@ -508,6 +508,23 @@ impl IcaApp {
             });
         self.open_page.raw_config = raw_config_open;
 
+        // Noticer 配置：与原始 TOML 编辑器分开，方便查看和调整常用选项。
+        let config_store = self.config.clone();
+        let mut noticer_settings_open = self.open_page.noticer_settings;
+        let mut noticer_config_to_apply = None;
+        egui::Window::new("Noticer 设置")
+            .open(&mut noticer_settings_open)
+            .default_size(egui::vec2(620.0, 720.0))
+            .min_size(egui::vec2(460.0, 420.0))
+            .resizable(true)
+            .show(&ctx, |ui| {
+                noticer_config_to_apply = self.noticer_editor.ui_with_apply(ui, &config_store);
+            });
+        self.open_page.noticer_settings = noticer_settings_open;
+        if let Some(config) = noticer_config_to_apply {
+            self.runtime.apply_noticer_config(config);
+        }
+
         // 通知等级说明（以窗口方式展示图片）
         if self.open_page.notify_level {
             // 在新页面展示一张图

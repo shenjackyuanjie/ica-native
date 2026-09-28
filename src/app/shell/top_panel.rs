@@ -64,7 +64,22 @@ impl IcaApp {
 
         // 选项（把原先多个 checkbox 合并在同一菜单内）
         ui.menu_button("选项", |ui| {
-            ui.label("这里显示你打开了哪些选项页面");
+            let mut noticer_enabled = self.config.snapshot().noticer.enabled;
+            if ui.checkbox(&mut noticer_enabled, "启用 Noticer").changed() {
+                let config_store = self.config.clone();
+                let config = self
+                    .noticer_editor
+                    .set_enabled(noticer_enabled, &config_store);
+                if let Some(config) = config {
+                    self.runtime.apply_noticer_config(config);
+                }
+            }
+            if ui.button("Noticer 设置…").clicked() {
+                self.open_page.noticer_settings = true;
+                ui.close();
+            }
+            ui.separator();
+            ui.label("打开选项页面");
             let _ = ui.checkbox(&mut self.open_page.settings, "设置");
             let _ = ui.checkbox(&mut self.open_page.custom_chat_ica, "定制聊天界面(ica)");
             let _ = ui.checkbox(&mut self.open_page.custom_chat_extra, "定制聊天界面(extra)");
