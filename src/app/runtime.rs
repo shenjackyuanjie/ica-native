@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{collections::HashMap, ops::Deref, sync::Arc};
 
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -6,6 +6,7 @@ use tokio::sync::oneshot;
 
 use crate::config::IcaCfg;
 use crate::ica::{self, BridgeEvent, BridgeHandle};
+use crate::noticer::{self, BridgeRegistry};
 
 use super::event::AppEvent;
 use super::state::{BridgeSession, BridgeState};
@@ -25,12 +26,26 @@ impl AppRuntime {
             .build()
             .expect("创建 Tokio runtime 失败");
 
+        let enabled_bridges = config
+            .bridges
+            .iter()
+            .filter(|bridge| bridge.enable)
+            .cloned()
+            .collect::<Vec<_>>();
+        let noticer_registry = Arc::new(BridgeRegistry::new(
+            enabled_bridges
+                .iter()
+                .map(|bridge| bridge.key().to_string()),
+        ));
+
         let (bridge_tx, mut bridge_rx) = unbounded_channel::<BridgeEvent>();
         let (event_tx, event_rx) = unbounded_channel::<AppEvent>();
         let forward_tx = event_tx.clone();
         let repaint_ctx = ctx.clone();
+        let registry = noticer_registry.clone();
         tokio.spawn(async move {
             while let Some(event) = bridge_rx.recv().await {
+                registry.observe(&event);
                 if forward_tx.send(AppEvent::Bridge(event)).is_err() {
                     break;
                 }
@@ -39,20 +54,13 @@ impl AppRuntime {
         });
 
         let mut sessions = Vec::new();
-        for bridge in config
-            .bridges
-            .iter()
-            .filter(|bridge| bridge.enable)
-            .cloned()
-        {
+        let mut noticer_handles = HashMap::new();
+        for bridge in enabled_bridges {
             let (stop_tx, stop_rx) = oneshot::channel();
-            let bridge_key = if bridge.name.is_empty() {
-                bridge.url.clone()
-            } else {
-                bridge.name.clone()
-            };
+            let bridge_key = bridge.key().to_string();
             let (command_tx, command_rx) = unbounded_channel();
             let handle = BridgeHandle::new(bridge_key.clone(), command_tx);
+            noticer_handles.insert(bridge_key.clone(), handle.clone());
             let state = BridgeState::new(bridge_key.clone(), config.chat_groups.clone());
             sessions.push(BridgeSession::new(handle, state, stop_tx));
 
@@ -63,6 +71,13 @@ impl AppRuntime {
                 }
             });
         }
+
+        noticer::spawn(
+            &tokio,
+            config.noticer.clone(),
+            noticer_handles,
+            noticer_registry,
+        );
 
         Self {
             tokio,

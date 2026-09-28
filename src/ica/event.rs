@@ -91,6 +91,8 @@ bridge_event_kinds! {
     SocketRetryScheduled => "socketRetryScheduled",
     SocketReconnectExhausted => "socketReconnectExhausted",
     RequireAuth => "requireAuth",
+    BridgeVersionInfo => "bridgeVersionInfo",
+    BridgeProtocolMismatch => "bridgeProtocolMismatch",
     AuthSucceed => "authSucceed",
     AuthFailed => "authFailed",
     Message => "message",

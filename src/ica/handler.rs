@@ -65,6 +65,21 @@ fn normalize_ack_list(mut values: Vec<JsonValue>) -> JsonValue {
     JsonValue::Array(values)
 }
 
+async fn send_message_result(
+    message: SendMessage,
+    client: &Client,
+    api_base_url: &str,
+) -> Result<(), String> {
+    if message.has_base64_media() {
+        let token = request_send_token(client).await?;
+        http_send_message(api_base_url, &token, &message).await
+    } else if client::send_message(client, &message).await {
+        Ok(())
+    } else {
+        Err("sendMessage 失败".to_string())
+    }
+}
+
 async fn send_message(
     message: SendMessage,
     client: &Client,
@@ -73,36 +88,7 @@ async fn send_message(
     api_base_url: &str,
 ) {
     let room_id = message.room_id;
-    if message.has_base64_media() {
-        match request_send_token(client).await {
-            Ok(token) => {
-                if let Err(e) = http_send_message(api_base_url, &token, &message).await {
-                    emit_ui_event(
-                        event_tx,
-                        bridge_key,
-                        "commandFailed",
-                        json!({
-                            "kind": "sendMessage",
-                            "roomId": room_id,
-                            "message": e,
-                        }),
-                    );
-                }
-            }
-            Err(e) => {
-                emit_ui_event(
-                    event_tx,
-                    bridge_key,
-                    "commandFailed",
-                    json!({
-                        "kind": "sendMessage",
-                        "roomId": room_id,
-                        "message": e,
-                    }),
-                );
-            }
-        }
-    } else if !client::send_message(client, &message).await {
+    if let Err(error) = send_message_result(message, client, api_base_url).await {
         emit_ui_event(
             event_tx,
             bridge_key,
@@ -110,7 +96,7 @@ async fn send_message(
             json!({
                 "kind": "sendMessage",
                 "roomId": room_id,
-                "message": "sendMessage 失败",
+                "message": error,
             }),
         );
     }
@@ -218,6 +204,20 @@ pub async fn handle_command(
                 ctx, room_id, content, reply_to, mentions, images,
             )
             .await
+        }
+        IcaCommand::SendNoticerMessage { payload, result_tx } => {
+            let mut message = SendMessage::new(payload.content, payload.room_id, None);
+            if payload.as_sticker {
+                if let Some(image) = payload.images.first() {
+                    message.set_img(&image.data, &image.mime, true);
+                }
+            } else {
+                for image in payload.images {
+                    message.add_img(&image.data, &image.mime);
+                }
+            }
+            let result = send_message_result(message, client, api_base_url).await;
+            let _ = result_tx.send(result);
         }
         IcaCommand::SendRawMessage { room_id, content } => {
             message_commands::send_raw_message(ctx, room_id, content).await

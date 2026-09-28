@@ -42,6 +42,30 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
         "requireAuth" => {
             state.auth_state = AuthState::Pending;
         }
+        "bridgeVersionInfo" => {
+            state.bridge_version = payload
+                .get("version")
+                .and_then(JsonValue::as_str)
+                .map(str::to_string);
+            state.bridge_protocol_version = payload
+                .get("protocolVersion")
+                .and_then(JsonValue::as_str)
+                .map(str::to_string);
+        }
+        "bridgeProtocolMismatch" => {
+            let message = payload::payload_message(payload)
+                .unwrap_or_else(|| "Bridge 协议版本不匹配".to_string());
+            if payload
+                .get("allowed")
+                .and_then(JsonValue::as_bool)
+                .unwrap_or(false)
+            {
+                state.last_notice = Some(message);
+            } else {
+                state.last_error = Some(message);
+                state.auth_state = AuthState::Failed;
+            }
+        }
         "authSucceed" => {
             state.auth_state = AuthState::Succeeded;
             state.last_error = None;

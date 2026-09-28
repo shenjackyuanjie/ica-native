@@ -356,6 +356,16 @@ impl IcaApp {
                             ui.label(format!("认证: {}", state.auth_state));
                         });
                         ui.label(format!("房间数: {}", state.rooms.len()));
+                        if let Some(version) = &state.bridge_version {
+                            ui.label(format!(
+                                "Bridge: {} / 协议 {}",
+                                version,
+                                state
+                                    .bridge_protocol_version
+                                    .as_deref()
+                                    .unwrap_or("unknown")
+                            ));
+                        }
                         ui.label(format!("已缓存会话: {}", state.conversations.len()));
                         ui.label(format!("验证消息: {}", state.join_requests.len()));
                         ui.label(format!("QQ: {}", state.online_data.qqid));

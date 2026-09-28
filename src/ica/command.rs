@@ -3,6 +3,7 @@ use serde_json::Value as JsonValue;
 use serde_json::json;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::oneshot;
 
 use super::event::BridgeEvent;
 
@@ -14,7 +15,7 @@ use crate::ica::types::{
 };
 
 /// icalingua 客户端的兼容版本号
-pub const ICA_PROTOCOL_VERSION: &str = "2.26.5";
+pub const ICA_PROTOCOL_VERSION: &str = "2.26.7";
 pub const GROUP_BAN_MAX_DURATION: u64 = 30 * 24 * 60 * 60;
 /// 自动重连最多尝试 5 次。
 pub const MAX_RECONNECT_ATTEMPTS: usize = 5;
@@ -24,9 +25,10 @@ const MAX_RECONNECT_BACKOFF_SECS: u64 = 30;
 #[derive(Debug, Clone, Copy)]
 pub enum ConnectionSignal {
     Disconnected,
+    Stop,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum IcaCommand {
     FetchMessages(RoomId),
     /// 从 QQ/协议端拉取指定会话的最新漫游历史，而不只是读取 bridge 本地数据库。
@@ -140,6 +142,11 @@ pub enum IcaCommand {
         mentions: Vec<Mention>,
         images: Vec<(String, std::sync::Arc<[u8]>)>,
     },
+    /// 由内建 Noticer 发起并等待本地 Bridge 提交结果的发送请求。
+    SendNoticerMessage {
+        payload: NoticerSendPayload,
+        result_tx: oneshot::Sender<Result<(), String>>,
+    },
     SendRawMessage {
         room_id: RoomId,
         content: JsonValue,
@@ -212,6 +219,20 @@ pub enum IcaCommand {
         rooms: Vec<RoomId>,
         include_all_personal: bool,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct NoticerSendPayload {
+    pub room_id: RoomId,
+    pub content: String,
+    pub images: Vec<NoticerImage>,
+    pub as_sticker: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct NoticerImage {
+    pub mime: String,
+    pub data: std::sync::Arc<[u8]>,
 }
 
 #[derive(Debug, Clone)]

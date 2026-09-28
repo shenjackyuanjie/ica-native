@@ -10,6 +10,7 @@ pub mod face_data;
 pub mod ica;
 pub mod image_loader;
 pub mod memory_probe;
+pub mod noticer;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GITHUB_LINK: &str = "https://github.com/shenjackyuanjie/ica-native";

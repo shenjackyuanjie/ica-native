@@ -16,7 +16,10 @@ mod command;
 pub mod event;
 mod file_manager;
 mod handler;
-pub use command::{BridgeHandle, GROUP_BAN_MAX_DURATION, ICA_PROTOCOL_VERSION, IcaCommand};
+pub use command::{
+    BridgeHandle, GROUP_BAN_MAX_DURATION, ICA_PROTOCOL_VERSION, IcaCommand, NoticerImage,
+    NoticerSendPayload,
+};
 use command::{
     ConnectionSignal, MAX_RECONNECT_ATTEMPTS, emit_ui_event, json_preview, payload_to_json,
     reconnect_delay,
@@ -141,7 +144,13 @@ pub async fn run_bridge(
 
         {
             // 鉴权回调在注册时就和当前 bridge 的私钥绑死，避免串 key。
-            let sign_callback = client::sign_callback(bridge_key.clone(), private_key.clone());
+            let sign_callback = client::sign_callback(
+                bridge_key.clone(),
+                private_key.clone(),
+                bridge_cfg.allow_protocol_mismatch,
+                event_tx.clone(),
+                connection_signal_tx.clone(),
+            );
             let bridge_id = bridge_key.clone();
             let tx = event_tx.clone();
             builder = builder.on(
@@ -332,6 +341,15 @@ pub async fn run_bridge(
                     match signal {
                         ConnectionSignal::Disconnected => {
                             break true;
+                        }
+                        ConnectionSignal::Stop => {
+                            emit_ui_event(
+                                &event_tx,
+                                &bridge_key,
+                                "socketDisconnected",
+                                json!({ "message": "协议版本不匹配，连接已停止" }),
+                            );
+                            return Ok(());
                         }
                     }
                 }

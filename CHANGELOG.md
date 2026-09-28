@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Added
+- 内建兼容 noticer 0.4.2 的 HTTP webhook，支持 Bearer Token、文本/单图/多图/贴纸、幂等键、有界发送队列、超时与重试，并可按 `bridge + room_id` 将命名房间稳定路由到多个 Bridge。
+- 新增 `/health`、`/ready`、`/status` 与 `/config` 接口；`/config` 会脱敏展示有效配置、可配置限制、支持的图片类型及公开硬上限，便于调用方发现服务能力而无需依赖源码常量。
+
+### Changed
+- Bridge 兼容协议版本更新至 2.26.7；认证时校验 Bridge 返回的服务版本和协议版本，默认拒绝不匹配连接，也可按单个 Bridge 显式允许兼容，并在 Socket.IO 状态窗口展示诊断信息。
+- Noticer 的请求体、单图、多图、队列图片内存和幂等缓存限制改为配置项；不可突破的安全上限集中为公开常量，并通过 `/config` 暴露。
+
 ## [0.1.19] - 2026-09-06
 
 ### Added

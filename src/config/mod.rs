@@ -1,7 +1,14 @@
-use std::{fmt::Display, path::PathBuf};
+use std::{collections::BTreeMap, fmt::Display, net::IpAddr, path::PathBuf};
 
 use hex;
 use serde::{Deserialize, Serialize};
+
+use crate::noticer::{
+    HARD_MAX_BODY_SIZE, HARD_MAX_IDEMPOTENCY_ENTRIES, HARD_MAX_IDEMPOTENCY_TTL_SECONDS,
+    HARD_MAX_IMAGE_COUNT, HARD_MAX_IMAGE_SIZE, HARD_MAX_QUEUE_CAPACITY,
+    HARD_MAX_QUEUED_IMAGE_BYTES, HARD_MAX_RETRY_ATTEMPTS, HARD_MAX_RETRY_DELAY_SECONDS,
+    HARD_MAX_SEND_TIMEOUT_SECONDS, HARD_MAX_TOTAL_IMAGE_SIZE,
+};
 
 pub mod appearance;
 pub mod chat_groups;
@@ -61,6 +68,9 @@ pub struct IcaCfg {
     /// tokio 运行线程数
     #[serde(default = "tokio_rt_work_thread_default")]
     pub tokio_rt_work_thread: u32,
+    /// 内建 Noticer HTTP webhook 服务。
+    #[serde(default)]
+    pub noticer: NoticerConfig,
 }
 
 impl Display for IcaCfg {
@@ -83,6 +93,7 @@ impl Default for IcaCfg {
             image_cache_max_bytes: image_cache_max_bytes_default(),
             disk_image_cache_max_bytes: disk_image_cache_max_bytes_default(),
             tokio_rt_work_thread: tokio_rt_work_thread_default(),
+            noticer: NoticerConfig::default(),
         }
     }
 }
@@ -128,6 +139,7 @@ impl IcaCfg {
                 );
             }
         }
+        self.noticer.validate(&self.bridges)?;
         Ok(())
     }
 
@@ -211,6 +223,237 @@ pub struct IcaBridge {
     /// 是否启用该 bridge
     #[serde(default = "ica_bridge_enable_default")]
     pub enable: bool,
+    /// 允许连接协议版本与客户端预期不一致的 Bridge。
+    #[serde(default)]
+    pub allow_protocol_mismatch: bool,
+}
+
+impl IcaBridge {
+    pub fn key(&self) -> &str {
+        if self.name.is_empty() {
+            &self.url
+        } else {
+            &self.name
+        }
+    }
+}
+
+fn noticer_host_default() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn noticer_port_default() -> u16 {
+    10020
+}
+
+fn noticer_queue_capacity_default() -> usize {
+    256
+}
+
+fn noticer_send_timeout_default() -> f64 {
+    60.0
+}
+
+fn noticer_retry_attempts_default() -> usize {
+    3
+}
+
+fn noticer_retry_delay_default() -> f64 {
+    1.0
+}
+
+fn noticer_max_body_size_default() -> usize {
+    72 * 1024 * 1024
+}
+
+fn noticer_max_image_size_default() -> usize {
+    8 * 1024 * 1024
+}
+
+fn noticer_max_image_count_default() -> usize {
+    9
+}
+
+fn noticer_max_total_image_size_default() -> usize {
+    48 * 1024 * 1024
+}
+
+fn noticer_max_queued_image_bytes_default() -> usize {
+    128 * 1024 * 1024
+}
+
+fn noticer_idempotency_ttl_default() -> u64 {
+    10 * 60
+}
+
+fn noticer_idempotency_entries_default() -> usize {
+    2048
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NoticerConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "noticer_host_default")]
+    pub host: String,
+    #[serde(default = "noticer_port_default")]
+    pub port: u16,
+    #[serde(default)]
+    pub auth_token: String,
+    #[serde(default)]
+    pub direct_token: String,
+    #[serde(default)]
+    pub default_bridge: String,
+    #[serde(default = "noticer_queue_capacity_default")]
+    pub queue_capacity: usize,
+    #[serde(default = "noticer_send_timeout_default")]
+    pub send_timeout_seconds: f64,
+    #[serde(default = "noticer_retry_attempts_default")]
+    pub retry_attempts: usize,
+    #[serde(default = "noticer_retry_delay_default")]
+    pub retry_delay_seconds: f64,
+    #[serde(default = "noticer_max_body_size_default")]
+    pub max_body_size_bytes: usize,
+    #[serde(default = "noticer_max_image_size_default")]
+    pub max_image_size_bytes: usize,
+    #[serde(default = "noticer_max_image_count_default")]
+    pub max_image_count: usize,
+    #[serde(default = "noticer_max_total_image_size_default")]
+    pub max_total_image_size_bytes: usize,
+    #[serde(default = "noticer_max_queued_image_bytes_default")]
+    pub max_queued_image_bytes: usize,
+    #[serde(default = "noticer_idempotency_ttl_default")]
+    pub idempotency_ttl_seconds: u64,
+    #[serde(default = "noticer_idempotency_entries_default")]
+    pub idempotency_max_entries: usize,
+    #[serde(default)]
+    pub rooms: BTreeMap<String, NoticerRoom>,
+}
+
+impl Default for NoticerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: noticer_host_default(),
+            port: noticer_port_default(),
+            auth_token: String::new(),
+            direct_token: String::new(),
+            default_bridge: String::new(),
+            queue_capacity: noticer_queue_capacity_default(),
+            send_timeout_seconds: noticer_send_timeout_default(),
+            retry_attempts: noticer_retry_attempts_default(),
+            retry_delay_seconds: noticer_retry_delay_default(),
+            max_body_size_bytes: noticer_max_body_size_default(),
+            max_image_size_bytes: noticer_max_image_size_default(),
+            max_image_count: noticer_max_image_count_default(),
+            max_total_image_size_bytes: noticer_max_total_image_size_default(),
+            max_queued_image_bytes: noticer_max_queued_image_bytes_default(),
+            idempotency_ttl_seconds: noticer_idempotency_ttl_default(),
+            idempotency_max_entries: noticer_idempotency_entries_default(),
+            rooms: BTreeMap::new(),
+        }
+    }
+}
+
+impl NoticerConfig {
+    fn validate(&self, bridges: &[IcaBridge]) -> anyhow::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        anyhow::ensure!(!self.host.trim().is_empty(), "noticer host 不能为空");
+        anyhow::ensure!(
+            self.queue_capacity > 0 && self.queue_capacity <= HARD_MAX_QUEUE_CAPACITY,
+            "noticer queue_capacity 必须在 1..={HARD_MAX_QUEUE_CAPACITY}"
+        );
+        anyhow::ensure!(
+            self.send_timeout_seconds.is_finite()
+                && (1.0..=HARD_MAX_SEND_TIMEOUT_SECONDS).contains(&self.send_timeout_seconds),
+            "noticer send_timeout_seconds 必须在 1..={HARD_MAX_SEND_TIMEOUT_SECONDS}"
+        );
+        anyhow::ensure!(
+            self.retry_attempts > 0 && self.retry_attempts <= HARD_MAX_RETRY_ATTEMPTS,
+            "noticer retry_attempts 必须在 1..={HARD_MAX_RETRY_ATTEMPTS}"
+        );
+        anyhow::ensure!(
+            self.retry_delay_seconds.is_finite()
+                && (0.0..=HARD_MAX_RETRY_DELAY_SECONDS).contains(&self.retry_delay_seconds),
+            "noticer retry_delay_seconds 必须在 0..={HARD_MAX_RETRY_DELAY_SECONDS}"
+        );
+        anyhow::ensure!(
+            (1..=HARD_MAX_BODY_SIZE).contains(&self.max_body_size_bytes),
+            "noticer max_body_size_bytes 必须在 1..={HARD_MAX_BODY_SIZE}"
+        );
+        anyhow::ensure!(
+            (1..=HARD_MAX_IMAGE_SIZE).contains(&self.max_image_size_bytes),
+            "noticer max_image_size_bytes 必须在 1..={HARD_MAX_IMAGE_SIZE}"
+        );
+        anyhow::ensure!(
+            (1..=HARD_MAX_IMAGE_COUNT).contains(&self.max_image_count),
+            "noticer max_image_count 必须在 1..={HARD_MAX_IMAGE_COUNT}"
+        );
+        anyhow::ensure!(
+            self.max_total_image_size_bytes >= self.max_image_size_bytes
+                && self.max_total_image_size_bytes <= HARD_MAX_TOTAL_IMAGE_SIZE,
+            "noticer max_total_image_size_bytes 必须不小于单图上限且不超过 {HARD_MAX_TOTAL_IMAGE_SIZE}"
+        );
+        anyhow::ensure!(
+            self.max_queued_image_bytes >= self.max_total_image_size_bytes
+                && self.max_queued_image_bytes <= HARD_MAX_QUEUED_IMAGE_BYTES,
+            "noticer max_queued_image_bytes 必须不小于多图总上限且不超过 {HARD_MAX_QUEUED_IMAGE_BYTES}"
+        );
+        anyhow::ensure!(
+            (1..=HARD_MAX_IDEMPOTENCY_TTL_SECONDS).contains(&self.idempotency_ttl_seconds),
+            "noticer idempotency_ttl_seconds 必须在 1..={HARD_MAX_IDEMPOTENCY_TTL_SECONDS}"
+        );
+        anyhow::ensure!(
+            (1..=HARD_MAX_IDEMPOTENCY_ENTRIES).contains(&self.idempotency_max_entries),
+            "noticer idempotency_max_entries 必须在 1..={HARD_MAX_IDEMPOTENCY_ENTRIES}"
+        );
+
+        let host = self.host.trim();
+        let loopback = host.eq_ignore_ascii_case("localhost")
+            || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback());
+        anyhow::ensure!(
+            loopback || !self.auth_token.trim().is_empty(),
+            "noticer 监听非回环地址时必须配置 auth_token"
+        );
+
+        let mut bridge_keys = std::collections::HashSet::new();
+        for bridge in bridges.iter().filter(|bridge| bridge.enable) {
+            anyhow::ensure!(
+                bridge_keys.insert(bridge.key().to_string()),
+                "启用的 bridge 标识重复: {}",
+                bridge.key()
+            );
+        }
+        for (name, room) in &self.rooms {
+            anyhow::ensure!(!name.trim().is_empty(), "noticer 房间名不能为空");
+            anyhow::ensure!(
+                bridge_keys.contains(room.bridge.trim()),
+                "noticer 房间 {name} 引用了未启用的 bridge: {}",
+                room.bridge
+            );
+            anyhow::ensure!(room.room_id != 0, "noticer 房间 {name} 的 room_id 不能为 0");
+        }
+        anyhow::ensure!(
+            !self.default_bridge.trim().is_empty(),
+            "启用 noticer 时必须配置 default_bridge"
+        );
+        anyhow::ensure!(
+            bridge_keys.contains(self.default_bridge.trim()),
+            "noticer default_bridge 未启用: {}",
+            self.default_bridge
+        );
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NoticerRoom {
+    pub bridge: String,
+    pub room_id: i64,
+    #[serde(default)]
+    pub description: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -465,6 +708,60 @@ pub const DEFAULT_CFG_PATH: &str = "ica_native.toml";
 
 /// 环境变量名称
 pub const CFG_ENV_VAR: &str = "ICA_NATIVE_CONFIG";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bridge(name: &str) -> IcaBridge {
+        IcaBridge {
+            name: name.to_string(),
+            url: "ws://127.0.0.1:9999".to_string(),
+            private_key: String::new(),
+            enable: true,
+            allow_protocol_mismatch: false,
+        }
+    }
+
+    #[test]
+    fn noticer_non_loopback_listener_requires_authentication() {
+        let mut noticer = NoticerConfig {
+            enabled: true,
+            host: "0.0.0.0".to_string(),
+            default_bridge: "main".to_string(),
+            ..NoticerConfig::default()
+        };
+        let bridges = [bridge("main")];
+        let error = noticer.validate(&bridges).unwrap_err();
+        assert!(error.to_string().contains("必须配置 auth_token"));
+
+        noticer.auth_token = "configured".to_string();
+        noticer.validate(&bridges).unwrap();
+    }
+
+    #[test]
+    fn noticer_routes_must_reference_an_enabled_bridge() {
+        let mut noticer = NoticerConfig {
+            enabled: true,
+            default_bridge: "main".to_string(),
+            ..NoticerConfig::default()
+        };
+        noticer.rooms.insert(
+            "warning".to_string(),
+            NoticerRoom {
+                bridge: "secondary".to_string(),
+                room_id: -456,
+                description: String::new(),
+            },
+        );
+        let error = noticer.validate(&[bridge("main")]).unwrap_err();
+        assert!(error.to_string().contains("未启用的 bridge"));
+
+        noticer
+            .validate(&[bridge("main"), bridge("secondary")])
+            .unwrap();
+    }
+}
 
 // 旧版的 CLI、环境变量和默认路径解析曾放在这里，现在统一由 ConfigStore 管理。
 /* The former global configuration API intentionally remains unavailable.

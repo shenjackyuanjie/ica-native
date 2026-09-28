@@ -40,6 +40,7 @@ rust_socketio = { git = "https://github.com/shenjackyuanjie/rust-socketio.git", 
     "rustls-tls-native-roots",
 ] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+axum = "0.8"
 
 tokio = { version = "1.53", features = ["full"] }
 futures-util = "0.3"

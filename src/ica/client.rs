@@ -3,6 +3,7 @@ use futures_util::future::BoxFuture;
 use hex;
 use serde_json::Value as JsonValue;
 use serde_json::json;
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::{Level, event};
 
 use rust_socketio::Payload;
@@ -11,6 +12,9 @@ use rust_socketio::asynchronous::Client;
 /// 一些类型别名从 types 模块引入
 use crate::ica::types::message::{DeleteMessage, SendMessage};
 use crate::ica::types::{RoomId, UserId};
+use crate::ica::{BridgeEvent, ICA_PROTOCOL_VERSION};
+
+use super::command::{ConnectionSignal, emit_ui_event};
 
 /// 使用指定私钥对服务端的 requireAuth payload 进行签名并发送 auth 事件
 async fn sign_with_key(
@@ -18,6 +22,9 @@ async fn sign_with_key(
     client: Client,
     bridge_key: String,
     private_key_hex: String,
+    allow_protocol_mismatch: bool,
+    event_tx: Option<UnboundedSender<BridgeEvent>>,
+    connection_signal_tx: UnboundedSender<ConnectionSignal>,
 ) {
     // 解析 payload，优先取 Text
     let require_data = match payload {
@@ -31,6 +38,49 @@ async fn sign_with_key(
     if require_data.is_empty() {
         event!(Level::WARN, bridge = %bridge_key, socket = "main", "sign_with_key: empty payload");
         return;
+    }
+
+    let version_info = require_data.get(1).and_then(JsonValue::as_object);
+    let bridge_version = version_info
+        .and_then(|value| value.get("version"))
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unknown");
+    let protocol_version = version_info
+        .and_then(|value| value.get("protocolVersion"))
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unknown");
+    emit_ui_event(
+        &event_tx,
+        &bridge_key,
+        "bridgeVersionInfo",
+        json!({
+            "version": bridge_version,
+            "protocolVersion": protocol_version,
+            "expectedProtocolVersion": ICA_PROTOCOL_VERSION,
+        }),
+    );
+    if protocol_version != ICA_PROTOCOL_VERSION {
+        let message = format!(
+            "Bridge 协议版本不匹配：客户端要求 {ICA_PROTOCOL_VERSION}，服务器为 {protocol_version}"
+        );
+        emit_ui_event(
+            &event_tx,
+            &bridge_key,
+            "bridgeProtocolMismatch",
+            json!({
+                "message": message,
+                "allowed": allow_protocol_mismatch,
+                "protocolVersion": protocol_version,
+                "expectedProtocolVersion": ICA_PROTOCOL_VERSION,
+            }),
+        );
+        if !allow_protocol_mismatch {
+            event!(Level::ERROR, bridge = %bridge_key, protocol_version, expected = ICA_PROTOCOL_VERSION, "拒绝认证协议版本不匹配的 Bridge");
+            let _ = connection_signal_tx.send(ConnectionSignal::Stop);
+            let _ = client.disconnect().await;
+            return;
+        }
+        event!(Level::WARN, bridge = %bridge_key, protocol_version, expected = ICA_PROTOCOL_VERSION, "配置允许连接协议版本不匹配的 Bridge");
     }
 
     // 第一个元素应为 auth_key 字符串
@@ -105,12 +155,26 @@ async fn sign_with_key(
 pub fn sign_callback(
     bridge_key: String,
     private_key_hex: String,
+    allow_protocol_mismatch: bool,
+    event_tx: Option<UnboundedSender<BridgeEvent>>,
+    connection_signal_tx: UnboundedSender<ConnectionSignal>,
 ) -> impl Fn(Payload, Client) -> BoxFuture<'static, ()> + Send + Sync + 'static {
     move |payload: Payload, client: Client| {
         let bridge_key = bridge_key.clone();
         let private_key_hex = private_key_hex.clone();
+        let event_tx = event_tx.clone();
+        let connection_signal_tx = connection_signal_tx.clone();
         Box::pin(async move {
-            sign_with_key(payload, client, bridge_key, private_key_hex).await;
+            sign_with_key(
+                payload,
+                client,
+                bridge_key,
+                private_key_hex,
+                allow_protocol_mismatch,
+                event_tx,
+                connection_signal_tx,
+            )
+            .await;
         })
     }
 }
