@@ -12,6 +12,7 @@
 mod decode;
 mod disk;
 mod gif;
+pub mod nt_image;
 mod raw;
 mod state;
 mod texture;

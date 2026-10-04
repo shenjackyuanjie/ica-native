@@ -43,18 +43,6 @@ impl AppRuntime {
 
         let (bridge_tx, mut bridge_rx) = unbounded_channel::<BridgeEvent>();
         let (event_tx, event_rx) = unbounded_channel::<AppEvent>();
-        let forward_tx = event_tx.clone();
-        let repaint_ctx = ctx.clone();
-        let registry = noticer_registry.clone();
-        tokio.spawn(async move {
-            while let Some(event) = bridge_rx.recv().await {
-                registry.observe(&event);
-                if forward_tx.send(AppEvent::Bridge(event)).is_err() {
-                    break;
-                }
-                repaint_ctx.request_repaint();
-            }
-        });
 
         let mut sessions = Vec::new();
         let mut noticer_handles = HashMap::new();
@@ -74,6 +62,26 @@ impl AppRuntime {
                 }
             });
         }
+
+        let image_loader = crate::image_loader::nt_image::NtImageLoader::install(
+            ctx,
+            tokio.handle().clone(),
+            config.image_cache_max_bytes,
+        );
+        let image_handles = noticer_handles.clone();
+        let forward_tx = event_tx.clone();
+        let repaint_ctx = ctx.clone();
+        let registry = noticer_registry.clone();
+        tokio.spawn(async move {
+            while let Some(event) = bridge_rx.recv().await {
+                registry.observe(&event);
+                image_loader.observe(&event, &image_handles);
+                if forward_tx.send(AppEvent::Bridge(event)).is_err() {
+                    break;
+                }
+                repaint_ctx.request_repaint();
+            }
+        });
 
         let noticer_controller = noticer::spawn(
             &tokio,

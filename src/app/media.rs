@@ -70,7 +70,10 @@ impl IcaApp {
     ) {
         match action {
             ImageAction::CopyUrl(source) => {
-                ctx.copy_text(source.url);
+                ctx.copy_text(crate::image_loader::nt_image::resolved_url(
+                    ctx,
+                    &source.url,
+                ));
                 self.media_error = None;
                 self.media_notice = Some("图片 URL 已复制".to_string());
             }

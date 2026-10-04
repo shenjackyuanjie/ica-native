@@ -19,6 +19,10 @@ icalingua but native
   - Claude Fable 5 (只用了一次)
   - Kimi K2 thinking
 
+## 图片加载
+
+QQ NT 图片加载失败时会向来源 Bridge 请求新链接并重试一次，包括回复、合并转发和图片预览。失败后冷却 60 秒；链接来源有歧义时不猜测账号，也不保证已经无法从 QQ 获取的图片能够恢复。
+
 ## 内建 Noticer
 
 `ica-native` 可以直接提供兼容 noticer `0.4.2` 的 HTTP webhook，并按配置的

@@ -29,6 +29,12 @@ pub enum ConnectionSignal {
 
 #[derive(Debug)]
 pub enum IcaCommand {
+    /// 通过当前消息所属 Bridge 刷新 QQ NT 图片地址。
+    RefreshImageUrl {
+        file_id: String,
+        app_id: String,
+        result_tx: oneshot::Sender<Result<String, String>>,
+    },
     FetchMessages(RoomId),
     /// 从 QQ/协议端拉取指定会话的最新漫游历史，而不只是读取 bridge 本地数据库。
     FetchLatestHistory {

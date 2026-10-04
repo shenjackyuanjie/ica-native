@@ -28,6 +28,7 @@ mod context;
 mod forward_commands;
 mod group_commands;
 mod history_commands;
+mod image_commands;
 mod message_commands;
 mod room_commands;
 
@@ -122,6 +123,11 @@ pub async fn handle_command(
         api_base_url,
     };
     match command {
+        IcaCommand::RefreshImageUrl {
+            file_id,
+            app_id,
+            result_tx,
+        } => image_commands::refresh_image_url(ctx, file_id, app_id, result_tx).await,
         IcaCommand::FetchMessages(room_id) => history_commands::fetch_messages(ctx, room_id).await,
         IcaCommand::FetchLatestHistory {
             room_id,
