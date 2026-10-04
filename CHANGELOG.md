@@ -2,7 +2,7 @@
 
 本文件记录 ica-native 的变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格。
 
-## [Unreleased]
+## [0.1.20] - 2026-10-04
 
 ### Added
 - 对齐本体 Socket.IO + oicq Bridge 的头像交互：群消息头像与私聊顶栏头像支持双击戳一戳；头像右键可提及成员、发起私聊、查看/保存头像、复制头像链接、查看成员发言记录及打开群成员管理。
