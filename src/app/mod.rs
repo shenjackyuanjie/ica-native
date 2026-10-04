@@ -533,6 +533,9 @@ impl IcaApp {
                 self.apply_voice_send_result(bridge_key, payload);
                 continue;
             }
+            if matches!(event_kind, BridgeEventKind::SocketReconnectExhausted(_)) {
+                self.audio.fail_pending_send_for_bridge(bridge_key);
+            }
 
             if let BridgeEventKind::SetAllChatGroups(payload) = event_kind {
                 if let Some(value) = payload.as_array().and_then(|values| values.first()) {

@@ -32,8 +32,14 @@ impl IcaApp {
             return;
         };
 
+        let bridge_ready = state.socket_state == crate::app::SocketState::Connected
+            && state.auth_state == crate::app::AuthState::Succeeded;
         let conversation = state.conversation_mut(room_id);
         if conversation.editing_send_pending || !conversation.has_composer_content() {
+            return;
+        }
+        if conversation.editing_message_id.is_some() && !bridge_ready {
+            state.last_error = Some("Bridge 未连接或认证未完成，编辑草稿已保留".into());
             return;
         }
         // 编辑重发不能拆成“先发文件再发正文”：失败时无法安全决定是否撤回旧消息。
@@ -464,6 +470,8 @@ mod tests {
     }
 
     fn prepare_edit(app: &mut IcaApp) {
+        app.bridge_states[0].socket_state = crate::app::SocketState::Connected;
+        app.bridge_states[0].auth_state = crate::app::AuthState::Succeeded;
         let conversation = app.bridge_states[0].conversation_mut(-1);
         conversation.draft = "  编辑后的正文  ".into();
         conversation.editing_message_id = Some("原消息".into());
@@ -525,6 +533,72 @@ mod tests {
             app.bridge_states[0].conversation(-2).unwrap().draft,
             "另一会话草稿"
         );
+    }
+
+    #[test]
+    fn offline_or_unauthenticated_edit_does_not_enter_submission_queue() {
+        for authenticated in [false, true] {
+            let (mut app, mut rx) = test_app();
+            prepare_edit(&mut app);
+            if authenticated {
+                app.bridge_states[0].socket_state = crate::app::SocketState::Disconnected;
+            } else {
+                app.bridge_states[0].auth_state = crate::app::AuthState::Pending;
+            }
+            app.send_current_message();
+            assert!(rx.try_recv().is_err());
+            let conversation = app.bridge_states[0].conversation(-1).unwrap();
+            assert!(!conversation.editing_send_pending);
+            assert_eq!(conversation.draft, "  编辑后的正文  ");
+            assert_eq!(conversation.pending_remote_images.len(), 2);
+            assert_eq!(conversation.pending_images[0].data.as_ref(), &[1, 2]);
+        }
+    }
+
+    #[test]
+    fn exhausted_reconnect_releases_pending_edit_without_losing_draft() {
+        let (mut app, mut rx) = test_app();
+        prepare_edit(&mut app);
+        app.send_current_message();
+        rx.try_recv().unwrap();
+        IcaApp::apply_bridge_event(
+            &mut app.bridge_states[0],
+            &crate::ica::BridgeEventKind::SocketDisconnected(serde_json::Value::Null),
+        );
+        assert!(
+            app.bridge_states[0]
+                .conversation(-1)
+                .unwrap()
+                .editing_send_pending,
+            "重连尚在继续时不能允许重复提交已经排队的消息"
+        );
+        IcaApp::apply_bridge_event(
+            &mut app.bridge_states[0],
+            &crate::ica::BridgeEventKind::SocketReconnectExhausted(serde_json::Value::Null),
+        );
+        let conversation = app.bridge_states[0].conversation(-1).unwrap();
+        assert!(!conversation.editing_send_pending);
+        assert_eq!(conversation.draft, "  编辑后的正文  ");
+        assert_eq!(conversation.pending_remote_images.len(), 2);
+        assert_eq!(conversation.pending_images[0].data.as_ref(), &[1, 2]);
+        assert!(!conversation.pending_send_scroll_to_bottom);
+        assert!(
+            app.bridge_states[0]
+                .last_notice
+                .as_deref()
+                .unwrap()
+                .contains("检查聊天记录")
+        );
+        IcaApp::apply_bridge_event(
+            &mut app.bridge_states[0],
+            &crate::ica::BridgeEventKind::EditSendResult(serde_json::json!({
+                "roomId": -1, "messageId": "原消息", "accepted": true,
+            })),
+        );
+        let conversation = app.bridge_states[0].conversation(-1).unwrap();
+        assert_eq!(conversation.draft, "  编辑后的正文  ");
+        assert_eq!(conversation.pending_remote_images.len(), 2);
+        assert_eq!(conversation.pending_images[0].data.as_ref(), &[1, 2]);
     }
 
     #[test]

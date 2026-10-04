@@ -38,6 +38,19 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
         "socketReconnectExhausted" => {
             state.socket_state = SocketState::Failed;
             state.last_error = payload::payload_message(payload);
+            let mut pending_edit = false;
+            for conversation in state.conversations.values_mut() {
+                if std::mem::take(&mut conversation.editing_send_pending) {
+                    pending_edit = true;
+                    conversation.pending_send_scroll_to_bottom = false;
+                }
+            }
+            if pending_edit {
+                state.last_notice = Some(
+                    "Bridge 已停止重连，编辑草稿已保留；请先检查聊天记录，确认发送状态后再手动处理"
+                        .into(),
+                );
+            }
         }
         "requireAuth" => {
             state.auth_state = AuthState::Pending;

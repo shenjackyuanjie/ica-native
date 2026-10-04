@@ -333,6 +333,24 @@ impl AudioController {
         state.notice = Some((owner, message));
     }
 
+    /// Bridge 停止重连后，队列可能再也不会返回发送回执；保留 WAV，禁止旧回执清理草稿。
+    pub fn fail_pending_send_for_bridge(&self, bridge_key: &str) {
+        let mut state = lock(&self.state);
+        let Some(draft) = state.draft.as_mut() else {
+            return;
+        };
+        if draft.owner.bridge_key != bridge_key || draft.stage != DraftStage::Sending {
+            return;
+        }
+        draft.stage = DraftStage::Ready;
+        draft.request_id = None;
+        let owner = draft.owner.clone();
+        state.notice = Some((
+            owner,
+            "Bridge 已停止重连，录音已保留；请先检查聊天记录，确认发送状态后再手动处理".into(),
+        ));
+    }
+
     /// 返回 false 表示不是音频。支持 &self 消息卡片，无需改宿主的借用结构。
     #[allow(clippy::too_many_arguments)]
     pub fn render_voice_message(
@@ -714,6 +732,33 @@ mod tests {
         assert!(lock(&controller.state).draft.is_some());
         controller.finish_send("bridge-a", -7, retry, Ok(()));
         assert!(lock(&controller.state).draft.is_none());
+    }
+
+    #[test]
+    fn terminal_bridge_failure_preserves_recording_and_rejects_late_ack() {
+        let (controller, owner) = controller_with_preview();
+        controller.queue_send(&owner);
+        let Some(AudioAction::SendVoice {
+            request_id,
+            audio_data,
+            ..
+        }) = controller.poll_action()
+        else {
+            panic!();
+        };
+        controller.fail_pending_send_for_bridge("bridge-b");
+        assert_eq!(
+            lock(&controller.state).draft.as_ref().unwrap().stage,
+            DraftStage::Sending
+        );
+        controller.fail_pending_send_for_bridge(&owner.bridge_key);
+        controller.finish_send(&owner.bridge_key, owner.room_id, request_id, Ok(()));
+        let state = lock(&controller.state);
+        let draft = state.draft.as_ref().unwrap();
+        assert_eq!(draft.stage, DraftStage::Ready);
+        assert!(draft.request_id.is_none());
+        assert_eq!(draft.wav.as_ref().unwrap().as_ref(), audio_data.as_ref());
+        assert!(state.notice.as_ref().unwrap().1.contains("检查聊天记录"));
     }
 
     #[test]
