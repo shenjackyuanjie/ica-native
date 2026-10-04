@@ -4,7 +4,10 @@ use crate::app::{IcaApp, PendingImage};
 use egui::{Button, Image, Label, RichText};
 
 use super::{
-    composer_helpers::{consume_composer_send_key, reply_preview_text},
+    composer_helpers::{
+        ReplyDirection, composer_keyboard_active, consume_composer_send_key,
+        consume_composer_shortcut, edit_last_own_message, move_reply_selection, reply_preview_text,
+    },
     format_pending_size, insert_mention_at_saved_cursor, insert_text_at_saved_cursor,
     saved_cursor_preceded_by,
 };
@@ -43,6 +46,16 @@ impl IcaApp {
             composer_rows,
             mut request_composer_focus,
         } = params;
+        if self.bridge_states[active_bridge_idx]
+            .conversation(room_id)
+            .is_some_and(|conversation| conversation.editing_send_pending)
+        {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("正在提交编辑消息，草稿已保留…");
+            });
+            return;
+        }
         let mut clear_reply = false;
         let mut clear_image = false;
         let mut clear_file = false;
@@ -66,6 +79,62 @@ impl IcaApp {
         let mut move_sticker = None::<(StickerEntry, String)>;
         let mut create_sticker_category = None::<String>;
         let mut open_pending_image = None::<(String, Vec<(String, std::sync::Arc<[u8]>)>)>;
+        let shortcut_active = composer_keyboard_active(
+            ui.ctx(),
+            composer_id,
+            self.ime_composing,
+            self.ime_event_this_frame,
+        ) && !self.show_mention_picker;
+        let mut restored_edit = false;
+        if shortcut_active {
+            if consume_composer_shortcut(ui, egui::Key::E, true) {
+                self.close_mention_picker();
+                self.show_face_picker = true;
+            }
+            if room_id < 0
+                && (consume_composer_shortcut(ui, egui::Key::N, true)
+                    | consume_composer_shortcut(ui, egui::Key::M, true))
+            {
+                self.close_mention_picker();
+                self.show_mention_picker = true;
+                self.mention_search_focus_requested = true;
+                self.show_face_picker = false;
+                mention_opened_this_frame = true;
+                request_group_members = true;
+            }
+            let direction = if consume_composer_shortcut(ui, egui::Key::ArrowUp, true) {
+                Some(ReplyDirection::Previous)
+            } else if consume_composer_shortcut(ui, egui::Key::ArrowDown, true) {
+                Some(ReplyDirection::Next)
+            } else {
+                None
+            };
+            if let Some(direction) = direction {
+                move_reply_selection(
+                    self.bridge_states[active_bridge_idx].conversation_mut(room_id),
+                    direction,
+                );
+            } else if self.bridge_states[active_bridge_idx]
+                .conversation(room_id)
+                .is_some_and(|conversation| conversation.can_edit_last_message())
+                && consume_composer_shortcut(ui, egui::Key::ArrowUp, false)
+            {
+                let self_id = self.bridge_states[active_bridge_idx].online_data.qqid;
+                restored_edit = edit_last_own_message(
+                    self.bridge_states[active_bridge_idx].conversation_mut(room_id),
+                    self_id,
+                );
+            }
+        }
+        let pending_remote_images = self.bridge_states[active_bridge_idx]
+            .conversation(room_id)
+            .map(|conversation| conversation.pending_remote_images.clone())
+            .unwrap_or_default();
+        let editing_message = self.bridge_states[active_bridge_idx]
+            .conversation(room_id)
+            .is_some_and(|conversation| conversation.editing_message_id.is_some());
+        let mut clear_edit = false;
+        let mut remove_remote_image_idx = None;
         let mut composer_draft = self.state.bridge_states[active_bridge_idx]
             .state()
             .conversation(room_id)
@@ -75,6 +144,33 @@ impl IcaApp {
             egui::vec2(ui.available_width(), composer_reserved_height),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
+                if editing_message {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.weak("编辑重发：Bridge 接收新消息后请求撤回旧消息（接收不等于 QQ 送达）");
+                        if ui.small_button("取消编辑").clicked() { clear_edit = true; }
+                    });
+                }
+                if !pending_remote_images.is_empty() {
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.weak(format!("已恢复 {} 张原消息图片", pending_remote_images.len()));
+                        egui::ScrollArea::horizontal()
+                            .id_salt(("restored_images", active_bridge_idx, room_id))
+                            .max_height(104.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    for (index, file) in pending_remote_images.iter().enumerate() {
+                                        ui.vertical(|ui| {
+                                            ui.add(Image::new(file.url.clone())
+                                                .fit_to_exact_size(egui::vec2(64.0, 64.0)));
+                                            if ui.small_button("移除").clicked() {
+                                                remove_remote_image_idx = Some(index);
+                                            }
+                                        });
+                                    }
+                                });
+                            });
+                    });
+                }
                 if forward_mode_active {
                     egui::Frame::group(ui.style()).show(ui, |ui| {
                         ui.horizontal_wrapped(|ui| {
@@ -454,32 +550,33 @@ impl IcaApp {
                             - button_width * btn_count
                             - item_spacing * btn_count)
                             .max(0.0);
-                        let mention_shortcut = room_id < 0
-                            && ui.memory(|memory| memory.has_focus(composer_id))
-                            && ui.input_mut(|input| {
-                                input.consume_key(egui::Modifiers::CTRL, egui::Key::M)
-                            });
-                        // Consume the plain Enter event before `TextEdit` sees it. Otherwise the
-                        // multiline editor inserts a newline at the cursor first, which can be in
-                        // the middle of the draft, and then the same key press sends the message.
                         let enter_pressed = consume_composer_send_key(
                             ui,
                             composer_id,
-                            self.ime_composing,
+                            self.ime_composing || self.show_mention_picker,
                             self.ime_event_this_frame,
+                            self.custom_chat.key_to_send_message,
                         );
+                        if restored_edit
+                            && let Some(mut edit_state) = egui::TextEdit::load_state(ui.ctx(), composer_id)
+                        {
+                            edit_state.cursor.set_char_range(Some(egui::text::CCursorRange::one(
+                                egui::text::CCursor::new(composer_draft.chars().count()),
+                            )));
+                            edit_state.store(ui.ctx(), composer_id);
+                        }
                         let response = ui.add_sized(
                             [input_width, control_height],
                             egui::TextEdit::multiline(&mut composer_draft)
                                 .id(composer_id)
                                 .desired_rows(composer_rows)
-                                .hint_text("Enter 发送, Shift+Enter 换行"),
+                                .hint_text(self.custom_chat.key_to_send_message.hint()),
                         );
                         mention_anchor_rect = Some(response.rect);
                         if request_composer_focus {
                             response.request_focus();
                         }
-                        if response.changed() && room_id < 0 && !self.ime_composing {
+                        if response.changed() && room_id < 0 && !self.ime_composing && !self.ime_event_this_frame {
                             if saved_cursor_preceded_by(
                                 ui.ctx(),
                                 composer_id,
@@ -503,23 +600,13 @@ impl IcaApp {
                                 self.mention_selected_index = 0;
                             }
                         }
-                        if mention_shortcut {
-                            self.show_mention_picker = true;
-                            self.mention_replace_trigger = false;
-                            self.mention_search_query.clear();
-                            self.mention_search_focus_requested = true;
-                            self.mention_selected_index = 0;
-                            self.show_face_picker = false;
-                            mention_opened_this_frame = true;
-                            request_group_members = true;
-                        }
                         if room_id < 0
                             && ui
                                 .add_sized(
                                     [button_width, control_height],
                                     Button::new(RichText::new("@").size(16.0)),
                                 )
-                                .on_hover_text("@ 群成员")
+                                .on_hover_text("@ 群成员 (Ctrl+N / Ctrl+M)")
                                 .clicked()
                         {
                             self.show_mention_picker = !self.show_mention_picker;
@@ -569,7 +656,8 @@ impl IcaApp {
                         }
                         let can_send = !composer_draft.trim().is_empty()
                             || has_pending_image
-                            || has_pending_file;
+                            || has_pending_file
+                            || !pending_remote_images.is_empty();
                         should_send = enter_pressed
                             || ui
                                 .add_enabled_ui(can_send, |ui| {
@@ -701,10 +789,24 @@ impl IcaApp {
             ui.memory_mut(|memory| memory.request_focus(composer_id));
         }
 
-        if clear_reply {
-            self.bridge_states[active_bridge_idx]
+        if clear_edit {
+            let conversation = self.bridge_states[active_bridge_idx].conversation_mut(room_id);
+            conversation.cancel_composer_layer();
+            // 点击取消编辑与 Esc 一样保留附件，下一次 Esc 才移除附件。
+            ui.memory_mut(|memory| memory.request_focus(composer_id));
+        }
+        if let Some(index) = remove_remote_image_idx {
+            let images = &mut self.bridge_states[active_bridge_idx]
                 .conversation_mut(room_id)
-                .reply_to = None;
+                .pending_remote_images;
+            if index < images.len() {
+                images.remove(index);
+            }
+        }
+        if clear_reply {
+            let conversation = self.bridge_states[active_bridge_idx].conversation_mut(room_id);
+            conversation.reply_to = None;
+            conversation.highlight_message_id = None;
         }
 
         if clear_image {

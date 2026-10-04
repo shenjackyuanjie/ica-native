@@ -130,6 +130,12 @@ pub enum IcaCommand {
         message_id: String,
     },
     SendMessage(SendMessage),
+    /// 新消息经 HTTP 202 接收后才请求撤回旧消息；禁止自动重试。
+    EditAndResendMessage {
+        message: SendMessage,
+        images: Vec<(String, std::sync::Arc<[u8]>)>,
+        message_id: String,
+    },
     /// 在后台编码单张图片后发送，避免在 GUI 线程生成大型 Base64 字符串。
     SendImageMessage {
         room_id: RoomId,

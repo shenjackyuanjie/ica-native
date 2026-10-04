@@ -249,17 +249,54 @@ pub async fn send_room_sign_in(client: &Client, room_id: RoomId) -> bool {
     }
 }
 
-/// 发送戳一戳给某人（群聊或私聊皆可，视服务端实现）
+/// oicq 的 sendGroupPoke 使用正群号；私聊用对方的正 ID 同时作为两个参数。
+/// 不允许把私聊房间中的发送者（例如自己）误当成私聊目标。
+pub fn poke_target(room_id: RoomId, target: UserId) -> Option<(i64, UserId)> {
+    let conversation_id = room_id.checked_abs().filter(|id| *id > 0)?;
+    if target <= 0 {
+        return None;
+    }
+    Some((conversation_id, if room_id > 0 { room_id } else { target }))
+}
+
+/// 发送 oicq 群聊或私聊戳一戳。
 pub async fn send_poke(client: &Client, room_id: RoomId, target: UserId) -> bool {
-    let data = vec![json!(room_id), json!(target)];
+    let Some((conversation_id, target)) = poke_target(room_id, target) else {
+        event!(Level::WARN, "戳一戳目标无效，未发送请求");
+        return false;
+    };
+    let data = vec![json!(conversation_id), json!(target)];
     match client.emit("sendGroupPoke", data).await {
         Ok(_) => {
-            event!(Level::INFO, "sent poke to {} in {}", target, room_id);
+            event!(Level::INFO, "戳一戳请求已发送");
             true
         }
         Err(e) => {
             event!(Level::ERROR, "send_poke 失败: {:?}", e);
             false
+        }
+    }
+}
+
+#[cfg(test)]
+mod poke_tests {
+    use super::poke_target;
+
+    #[test]
+    fn group_poke_uses_positive_group_id_without_changing_the_member() {
+        assert_eq!(poke_target(-123, 456), Some((123, 456)));
+    }
+
+    #[test]
+    fn private_poke_uses_the_peer_for_both_oicq_arguments() {
+        assert_eq!(poke_target(123, 123), Some((123, 123)));
+        assert_eq!(poke_target(123, 456), Some((123, 123)));
+    }
+
+    #[test]
+    fn invalid_poke_targets_are_rejected_without_overflow() {
+        for (room_id, target_id) in [(0, 123), (i64::MIN, 123), (-123, 0), (-123, -1)] {
+            assert_eq!(poke_target(room_id, target_id), None);
         }
     }
 }

@@ -115,9 +115,9 @@ impl ContactDirectory {
 }
 
 #[derive(Debug, Clone)]
-struct ContactTarget {
-    room_id: RoomId,
-    room_name: String,
+pub struct ContactTarget {
+    pub room_id: RoomId,
+    pub room_name: String,
 }
 
 fn create_contact_room(room_id: RoomId, room_name: String, timestamp: i64) -> Room {
@@ -181,7 +181,7 @@ impl IcaApp {
         }
     }
 
-    fn start_contact_chat(&mut self, bridge_idx: usize, target: ContactTarget) {
+    pub fn start_contact_chat(&mut self, bridge_idx: usize, target: ContactTarget) {
         if target.room_id == 0 {
             return;
         }

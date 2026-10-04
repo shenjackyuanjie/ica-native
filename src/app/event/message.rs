@@ -11,6 +11,40 @@ use super::payload;
 /// 处理本模块负责的事件；返回 false 表示事件不属于这里，交给下一个模块。
 pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> bool {
     match event_name {
+        "editSendResult" => {
+            let (Some(room_id), Some(message_id)) = (
+                payload.get("roomId").and_then(JsonValue::as_i64),
+                payload.get("messageId").and_then(JsonValue::as_str),
+            ) else {
+                return true;
+            };
+            let conversation = state.conversation_mut(room_id);
+            if !conversation.editing_send_pending
+                || conversation.editing_message_id.as_deref() != Some(message_id)
+            {
+                return true;
+            }
+            conversation.editing_send_pending = false;
+            if payload.get("accepted").and_then(JsonValue::as_bool) == Some(true) {
+                conversation.draft.clear();
+                conversation.reply_to = None;
+                conversation.mentions.clear();
+                conversation.editing_message_id = None;
+                conversation.pending_images.clear();
+                conversation.pending_remote_images.clear();
+                conversation.highlight_message_id = None;
+            } else {
+                conversation.pending_send_scroll_to_bottom = false;
+            }
+            state.last_error = payload
+                .get("error")
+                .and_then(JsonValue::as_str)
+                .map(str::to_string);
+            state.last_notice = payload
+                .get("message")
+                .and_then(JsonValue::as_str)
+                .map(str::to_string);
+        }
         "setMessages" => {
             if let Some(value) = payload::first_payload_value(payload) {
                 let room_id = value["roomId"].as_i64().unwrap_or_default();

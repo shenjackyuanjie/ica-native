@@ -186,6 +186,11 @@ pub async fn handle_command(
         }
         IcaCommand::AddRoom(room) => room_commands::add_room(ctx, room).await,
         IcaCommand::SendMessage(message) => message_commands::send_chat_message(ctx, message).await,
+        IcaCommand::EditAndResendMessage {
+            message,
+            images,
+            message_id,
+        } => message_commands::edit_and_resend_message(ctx, message, images, message_id).await,
         IcaCommand::SendImageMessage {
             room_id,
             content,

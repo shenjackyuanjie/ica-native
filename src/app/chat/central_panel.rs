@@ -4,7 +4,7 @@ use crate::app::{
     CompactChatPanel, IcaApp, MessageAction, MessageLayoutCacheKey, MessageRowLayout,
 };
 
-use super::message_card::MessageRenderOptions;
+use super::message_card::{MessageRenderOptions, avatar::render_private_header_avatar};
 use super::{
     MessageRowEstimateOptions, estimate_composer_rows, estimate_message_row_height,
     message_visible_range,
@@ -131,6 +131,7 @@ impl IcaApp {
                 ui.add_space(4.0);
             }
 
+            let mut header_avatar_action = None;
             if let Some(room_id) = selected_room_id {
                 let room_name = self.bridge_states[active_bridge_idx]
                     .rooms
@@ -149,6 +150,7 @@ impl IcaApp {
                     {
                         self.compact_chat_panel = CompactChatPanel::Conversations;
                     }
+                    header_avatar_action = render_private_header_avatar(ui, room_id, &room_name);
                     ui.heading(room_name);
                     if is_shut_up {
                         ui.colored_label(egui::Color32::YELLOW, "禁言中");
@@ -368,6 +370,20 @@ impl IcaApp {
                 + if has_reply_banner { 54.0 } else { 0.0 }
                 + if has_pending_image { 144.0 } else { 0.0 }
                 + if has_pending_file { 54.0 } else { 0.0 }
+                + if conversation
+                    .is_some_and(|conversation| conversation.editing_message_id.is_some())
+                {
+                    42.0
+                } else {
+                    0.0
+                }
+                + if conversation
+                    .is_some_and(|conversation| !conversation.pending_remote_images.is_empty())
+                {
+                    144.0
+                } else {
+                    0.0
+                }
                 + if self.show_face_picker { 220.0 } else { 0.0 };
             let (message_list_height, composer_reserved_height) = fit_chat_body_heights(
                 ui.available_height(),
@@ -375,7 +391,7 @@ impl IcaApp {
                 ui.spacing().item_spacing.y,
             );
             let composer_is_constrained = composer_reserved_height < desired_composer_height;
-            let mut pending_action = None;
+            let mut pending_action = header_avatar_action;
             let pure_text_mode = self.custom_chat.hide_group_member_avatar;
             let show_message_avatar =
                 !pure_text_mode && self.custom_chat.show_message_avatar && room_id < 0;
@@ -404,6 +420,9 @@ impl IcaApp {
             let scroll_to_target = self.bridge_states[active_bridge_idx]
                 .conversation(room_id)
                 .and_then(|conversation| conversation.scroll_to_message_id.clone());
+            let highlighted_message = self.bridge_states[active_bridge_idx]
+                .conversation(room_id)
+                .and_then(|conversation| conversation.highlight_message_id.clone());
             let mut scroll_target_found = scroll_to_target.is_none();
             let mut scroll_target_rendered = scroll_to_target.is_none();
             let saved_scroll_offset = self.bridge_states[active_bridge_idx]
@@ -592,6 +611,18 @@ impl IcaApp {
                                     }
                                 });
                                 let measured_height = (ui.cursor().min.y - before_y).max(24.0);
+                                if highlighted_message.as_deref() == Some(message.msg_id.as_str()) {
+                                    let rect = egui::Rect::from_min_size(
+                                        egui::pos2(ui.min_rect().left(), before_y),
+                                        egui::vec2(row_width, measured_height),
+                                    );
+                                    ui.painter().rect_stroke(
+                                        rect.shrink(1.0),
+                                        4.0,
+                                        egui::Stroke::new(1.5, ui.visuals().selection.bg_fill),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                }
                                 if (measured_height - row.height).abs() > 1.0 {
                                     measured_message_heights
                                         .push((message.msg_id.clone(), measured_height));
@@ -878,6 +909,41 @@ impl IcaApp {
                     }
                     MessageAction::Poke { room_id, target_id } => {
                         self.send_group_poke(room_id, target_id);
+                    }
+                    MessageAction::MentionSender {
+                        room_id,
+                        target_id,
+                        name,
+                    } => {
+                        self.mention_avatar_sender(
+                            ui.ctx(),
+                            active_bridge_idx,
+                            room_id,
+                            target_id,
+                            name,
+                        );
+                        request_composer_focus = true;
+                    }
+                    MessageAction::StartPrivateChat { target_id, name } => {
+                        self.start_contact_chat(
+                            active_bridge_idx,
+                            crate::app::contacts::ContactTarget {
+                                room_id: target_id,
+                                room_name: name,
+                            },
+                        );
+                        // 房间切换后下一帧重建输入区，不能继续绘制旧会话的 composer。
+                        return;
+                    }
+                    MessageAction::MemberHistory {
+                        room_id,
+                        target_id,
+                        name,
+                    } => {
+                        self.open_member_history(active_bridge_idx, room_id, target_id, name);
+                    }
+                    MessageAction::ManageMember { room_id, target_id } => {
+                        self.open_avatar_member_management(active_bridge_idx, room_id, target_id);
                     }
                 }
             }

@@ -11,7 +11,7 @@ use crate::ica::types::{
 use crate::config::ChatGroups;
 
 use crate::app::online_mode::OnlineMode;
-use crate::app::{IcaApp, SelectedChatGroup};
+use crate::app::{GroupMemberFilter, IcaApp, SelectedChatGroup};
 
 impl IcaApp {
     fn extract_raw_chain(message: &Message) -> Option<JsonValue> {
@@ -142,6 +142,9 @@ impl IcaApp {
 
         if let Some(state) = self.active_bridge_state_mut() {
             let conversation = state.conversation_mut(room_id);
+            if conversation.editing_send_pending {
+                return;
+            }
             conversation.draft = message.content.clone();
             if let Some(reply) = message.reply.clone() {
                 conversation.reply_to = Some(reply);
@@ -470,6 +473,10 @@ impl IcaApp {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
         };
+        if crate::ica::client::poke_target(room_id, target_id).is_none() {
+            self.bridge_states[bridge_idx].last_error = Some("戳一戳目标无效".to_string());
+            return;
+        }
         if let Err(e) =
             self.bridge_states[bridge_idx].send(IcaCommand::SendGroupPoke { room_id, target_id })
         {
@@ -480,6 +487,89 @@ impl IcaApp {
         }
     }
 
+    /// 在当前会话的保存光标处插入真实提及，保留草稿、附件与回复。
+    pub fn mention_avatar_sender(
+        &mut self,
+        ctx: &egui::Context,
+        bridge_idx: usize,
+        room_id: RoomId,
+        target_id: i64,
+        name: String,
+    ) {
+        if bridge_idx >= self.bridge_states.len() || room_id >= 0 || target_id <= 0 {
+            return;
+        }
+        if self.active_bridge_idx != Some(bridge_idx) {
+            self.switch_active_bridge(bridge_idx);
+        }
+        self.select_active_room(room_id);
+        let name: String = name
+            .chars()
+            .filter(|ch| !matches!(ch, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'))
+            .map(|ch| if ch.is_control() { ' ' } else { ch })
+            .take(48)
+            .collect();
+        let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+        let name = if name.is_empty() {
+            target_id.to_string()
+        } else {
+            name
+        };
+        let visible_text = format!("@{name}");
+        let composer_id = egui::Id::new(("message_composer", bridge_idx, room_id));
+        let conversation = self.bridge_states[bridge_idx].conversation_mut(room_id);
+        if conversation.editing_send_pending {
+            return;
+        }
+        super::insert_mention_at_saved_cursor(
+            ctx,
+            composer_id,
+            &mut conversation.draft,
+            &format!("{visible_text} "),
+            false,
+        );
+        if !conversation
+            .mentions
+            .iter()
+            .any(|mention| mention.user_id == target_id && mention.text == visible_text)
+        {
+            conversation
+                .mentions
+                .push(crate::ica::types::message::Mention {
+                    user_id: target_id,
+                    text: visible_text,
+                });
+        }
+        self.show_mention_picker = false;
+        self.mention_search_query.clear();
+        self.mention_search_focus_requested = false;
+        self.mention_replace_trigger = false;
+        self.mention_selected_index = 0;
+        ctx.memory_mut(|memory| memory.request_focus(composer_id));
+    }
+
+    /// 复用有权限检查和二次确认的成员面板，不直接绕过检查发送管理命令。
+    pub fn open_avatar_member_management(
+        &mut self,
+        bridge_idx: usize,
+        room_id: RoomId,
+        target_id: i64,
+    ) {
+        if bridge_idx >= self.bridge_states.len() || room_id >= 0 || target_id <= 0 {
+            return;
+        }
+        if self.active_bridge_idx != Some(bridge_idx) {
+            self.switch_active_bridge(bridge_idx);
+        }
+        self.select_active_room(room_id);
+        self.group_member_panel.open = true;
+        self.group_member_panel.search_query = target_id.to_string();
+        self.group_member_panel.filter = GroupMemberFilter::All;
+        self.group_member_panel.confirmation = None;
+        self.group_member_panel.error = None;
+        self.request_group_members(bridge_idx, room_id, true);
+    }
+
     pub fn ensure_selected_chat_group_valid(&mut self) {
         if let Some(state) = self.active_bridge_state_mut()
             && let SelectedChatGroup::Custom(idx) = &state.selected_chat_group
@@ -487,5 +577,126 @@ impl IcaApp {
         {
             state.selected_chat_group = SelectedChatGroup::All;
         }
+    }
+}
+
+#[cfg(test)]
+pub mod avatar_action_tests {
+    use super::*;
+    use crate::app::{
+        AppState, BridgeSession, BridgeState, runtime::AppRuntime, stickers::StickerStore,
+    };
+    use crate::config::{ConfigStore, IcaCfg};
+    use crate::ica::BridgeHandle;
+    use tokio::sync::{mpsc, oneshot};
+
+    pub fn test_app() -> (IcaApp, mpsc::UnboundedReceiver<IcaCommand>) {
+        let mut config: IcaCfg = toml::from_str("bridges = []").unwrap();
+        config.tokio_rt_work_thread = 1;
+        let store = ConfigStore::from_config(
+            config.clone(),
+            std::env::temp_dir().join("ica-avatar-interaction-test.toml"),
+        );
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (stop, _) = oneshot::channel();
+        let mut bridge = BridgeState::new("avatar-test".into(), ChatGroups::default());
+        bridge.selected_room_id = Some(-123);
+        bridge.conversation_mut(-123).requested_snapshot = true;
+        let state = AppState::new(
+            &config,
+            &store,
+            vec![BridgeSession::new(
+                BridgeHandle::new("avatar-test".into(), tx),
+                bridge,
+                stop,
+            )],
+            StickerStore::unavailable(
+                std::env::temp_dir().join("ica-avatar-test-stickers"),
+                "测试",
+            ),
+        );
+        (
+            IcaApp {
+                runtime: AppRuntime::new(&egui::Context::default(), &config),
+                config: store,
+                state,
+                chat_windows: Vec::new(),
+            },
+            rx,
+        )
+    }
+
+    #[test]
+    fn avatar_mention_replaces_unicode_selection_and_keeps_one_protocol_mention() {
+        let (mut app, _rx) = test_app();
+        let ctx = egui::Context::default();
+        let id = egui::Id::new(("message_composer", 0_usize, -123_i64));
+        app.bridge_states[0].conversation_mut(-123).draft = "甲待替换乙".into();
+        let mut edit = egui::widgets::text_edit::TextEditState::default();
+        edit.cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(1),
+                egui::text::CCursor::new(4),
+            )));
+        edit.store(&ctx, id);
+        app.mention_avatar_sender(&ctx, 0, -123, 456, "测试成员".into());
+        assert_eq!(
+            app.bridge_states[0].conversation(-123).unwrap().draft,
+            "甲@测试成员 乙"
+        );
+        app.mention_avatar_sender(&ctx, 0, -123, 456, "测试成员".into());
+        let conversation = app.bridge_states[0].conversation(-123).unwrap();
+        assert_eq!(conversation.draft, "甲@测试成员 @测试成员 乙");
+        assert_eq!(
+            conversation.mentions,
+            vec![crate::ica::types::message::Mention {
+                user_id: 456,
+                text: "@测试成员".into(),
+            }]
+        );
+        assert_eq!(ctx.memory(|memory| memory.focused()), Some(id));
+    }
+
+    #[test]
+    fn avatar_mention_sanitizes_controls_and_rejects_private_or_virtual_targets() {
+        let (mut app, _rx) = test_app();
+        let ctx = egui::Context::default();
+        app.mention_avatar_sender(&ctx, 0, -123, 456, "\n\u{202E}".into());
+        app.mention_avatar_sender(&ctx, 0, 123, 456, "不可提及".into());
+        app.mention_avatar_sender(&ctx, 0, -123, -1, "虚拟用户".into());
+        let conversation = app.bridge_states[0].conversation(-123).unwrap();
+        assert_eq!(conversation.draft, "@456 ");
+        assert_eq!(conversation.mentions.len(), 1);
+        assert_eq!(app.bridge_states[0].selected_room_id, Some(-123));
+        assert!(app.bridge_states[0].conversation(123).is_none());
+    }
+
+    #[test]
+    fn avatar_management_loads_the_target_group_without_sending_a_ban() {
+        let (mut app, mut rx) = test_app();
+        app.group_member_panel.filter = GroupMemberFilter::Muted;
+        app.group_member_panel.error = Some("旧错误".into());
+        app.open_avatar_member_management(0, -123, 456);
+        assert!(app.group_member_panel.open);
+        assert_eq!(app.group_member_panel.search_query, "456");
+        assert_eq!(app.group_member_panel.filter, GroupMemberFilter::All);
+        assert!(app.group_member_panel.error.is_none());
+        let mut requested_members = false;
+        while let Ok(command) = rx.try_recv() {
+            assert!(!matches!(command, IcaCommand::SetGroupBan { .. }));
+            if let IcaCommand::FetchGroupMembers { room_id } = command {
+                assert_eq!(room_id, -123);
+                requested_members = true;
+            }
+        }
+        assert!(requested_members);
+    }
+
+    #[test]
+    fn invalid_avatar_poke_is_not_queued() {
+        let (mut app, mut rx) = test_app();
+        app.send_group_poke(i64::MIN, 456);
+        assert!(rx.try_recv().is_err());
+        assert!(app.bridge_states[0].last_error.is_some());
     }
 }

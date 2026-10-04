@@ -2,7 +2,8 @@ use crate::config::ReEditDraftConflictMode;
 use crate::ica::IcaCommand;
 use crate::ica::types::{RoomId, message::At, room::Room};
 
-use crate::app::{CompactChatPanel, IcaApp, SelectedChatGroup, VisibleRoomIndicesCache};
+use crate::app::chat_shortcuts::filtered_sorted_room_indices;
+use crate::app::{CompactChatPanel, IcaApp, VisibleRoomIndicesCache};
 
 /// 判断切换会话时是否需要请求一份完整的消息快照。
 ///
@@ -165,19 +166,6 @@ impl IcaApp {
             return Vec::new();
         };
         let selected_chat_group = current_state.selected_chat_group.clone();
-        let selected_group = if !disable_chat_group {
-            match &selected_chat_group {
-                SelectedChatGroup::Custom(idx) => current_state
-                    .chat_groups
-                    .groups
-                    .get(*idx)
-                    .map(|group| (group.rooms.clone(), group.include_all_personal)),
-                _ => None,
-            }
-        } else {
-            None
-        };
-
         let Some(state) = self.bridge_states.get_mut(bridge_idx) else {
             return Vec::new();
         };
@@ -191,44 +179,13 @@ impl IcaApp {
             return cache.indices.clone();
         }
 
-        let query = state.room_search_query.trim().to_uppercase();
-        let mut room_indices: Vec<_> = state
-            .rooms
-            .iter()
-            .enumerate()
-            .filter(|(_, room)| {
-                if disable_chat_group {
-                    return true;
-                }
-                match &selected_chat_group {
-                    SelectedChatGroup::All => true,
-                    SelectedChatGroup::Group => room.room_id < 0,
-                    SelectedChatGroup::Private => room.room_id > 0,
-                    SelectedChatGroup::Custom(_) => {
-                        selected_group
-                            .as_ref()
-                            .is_some_and(|(rooms, include_all_personal)| {
-                                rooms.contains(&room.room_id)
-                                    || (*include_all_personal && room.room_id > 0)
-                            })
-                    }
-                }
-            })
-            .filter(|(_, room)| {
-                query.is_empty()
-                    || room.room_name.to_uppercase().contains(&query)
-                    || room.room_id.to_string().contains(query.as_str())
-            })
-            .map(|(idx, _)| idx)
-            .collect();
-
-        room_indices.sort_by(|&a_idx, &b_idx| {
-            let a = &state.rooms[a_idx];
-            let b = &state.rooms[b_idx];
-            let pinned_a = a.index > 0;
-            let pinned_b = b.index > 0;
-            pinned_b.cmp(&pinned_a).then(b.utime.cmp(&a.utime))
-        });
+        let room_indices = filtered_sorted_room_indices(
+            &state.rooms,
+            &state.chat_groups,
+            &selected_chat_group,
+            disable_chat_group,
+            &state.room_search_query,
+        );
         state.visible_room_indices_cache = Some(VisibleRoomIndicesCache {
             revision: state.rooms_revision,
             query: state.room_search_query.clone(),
@@ -275,6 +232,19 @@ impl IcaApp {
     }
 
     pub fn select_active_room(&mut self, room_id: RoomId) {
+        self.select_active_room_with_search_policy(room_id, self.clear_search_on_room_select);
+    }
+
+    /// 快捷键沿当前筛选结果导航，不应用鼠标选房时的“清空搜索”选项。
+    pub fn select_active_room_preserving_filter(&mut self, room_id: RoomId) {
+        self.select_active_room_with_search_policy(room_id, false);
+    }
+
+    fn select_active_room_with_search_policy(
+        &mut self,
+        room_id: RoomId,
+        clear_search_on_room_select: bool,
+    ) {
         self.compact_chat_panel = CompactChatPanel::Chat;
         self.show_face_picker = false;
         let selected_room_changed = self
@@ -294,7 +264,6 @@ impl IcaApp {
         }
         let mut should_request = false;
         let mut should_clear_remote_unread = false;
-        let clear_search_on_room_select = self.clear_search_on_room_select;
         let auto_fetch_history_on_select = self.auto_fetch_history_on_room_select;
         let auto_read = self.custom_chat.auto_read_on_select;
         let mut last_msg_id: Option<String> = None;

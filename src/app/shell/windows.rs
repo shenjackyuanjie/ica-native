@@ -575,6 +575,22 @@ impl IcaApp {
                     self.bridge_states[active_bridge_idx].forward_target_picker_open;
                 let mut target_room_ids = None;
 
+                let picker_id = egui::Id::new(("forward_target_window", active_bridge_idx));
+                if !self.ime_composing
+                    && !self.ime_event_this_frame
+                    && ctx.input(|input| input.focused && input.viewport().focused.unwrap_or(true))
+                    && !Self::chat_escape_blocked_by_window(
+                        ctx,
+                        Some(egui::LayerId::new(egui::Order::Middle, picker_id)),
+                    )
+                    && ctx.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                    })
+                {
+                    self.bridge_states[active_bridge_idx].forward_target_picker_open = false;
+                    return;
+                }
+
                 egui::Window::new("选择转发目标")
                     .id(egui::Id::new(("forward_target_window", active_bridge_idx)))
                     .open(&mut picker_open)

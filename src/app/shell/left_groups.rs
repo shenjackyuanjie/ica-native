@@ -1,7 +1,28 @@
-use crate::app::{IcaApp, SelectedChatGroup};
+use crate::app::{ChatListScrollTarget, CompactChatPanel, IcaApp, SelectedChatGroup};
 use egui::{Button, Image, Label, RichText};
 
 impl IcaApp {
+    /// 分类按钮与键盘共用入口；不改变当前房间，也不持久化临时筛选。
+    pub fn select_active_chat_group(&mut self, group: SelectedChatGroup) -> bool {
+        if self.custom_chat.disable_chat_group || self.custom_chat.hide_chat_group_sidebar {
+            return false;
+        }
+        let Some(state) = self.active_bridge_state_mut() else {
+            return false;
+        };
+        if matches!(&group, SelectedChatGroup::Custom(index) if *index >= state.chat_groups.groups.len())
+        {
+            return false;
+        }
+        if state.selected_chat_group != group {
+            state.selected_chat_group = group;
+            state.invalidate_visible_room_indices();
+        }
+        self.chat_list_scroll_target = ChatListScrollTarget::Top;
+        self.compact_chat_panel = CompactChatPanel::Conversations;
+        true
+    }
+
     pub fn render_left_groups_panel(&mut self, ui: &mut egui::Ui) {
         let disable_groups = self.custom_chat.disable_chat_group;
         let disable_dot = self.custom_chat.disable_chat_group_dot;
@@ -37,6 +58,7 @@ impl IcaApp {
             .map(|idx| chat_groups.has_unread_in_group(idx, &rooms))
             .collect::<Vec<_>>();
         let mut updated_group = None;
+        let mut group_selection_requested = false;
 
         egui::Panel::left("群聊组")
             .resizable(false)
@@ -71,6 +93,7 @@ impl IcaApp {
                         let resp = ui.add(btn);
                         if resp.clicked() {
                             selected_chat_group = SelectedChatGroup::All;
+                            group_selection_requested = true;
                         }
                         let mut text = RichText::new("所有聊天");
                         if selected_chat_group == SelectedChatGroup::All {
@@ -85,6 +108,7 @@ impl IcaApp {
                         let resp = ui.add(btn);
                         if resp.clicked() {
                             selected_chat_group = SelectedChatGroup::Group;
+                            group_selection_requested = true;
                         }
                         let mut text = RichText::new("群聊");
                         if selected_chat_group == SelectedChatGroup::Group {
@@ -109,6 +133,7 @@ impl IcaApp {
                         let resp = ui.add(btn);
                         if resp.clicked() {
                             selected_chat_group = SelectedChatGroup::Private;
+                            group_selection_requested = true;
                         }
                         let mut text = RichText::new("私聊");
                         if selected_chat_group == SelectedChatGroup::Private {
@@ -139,6 +164,7 @@ impl IcaApp {
                         );
                         if resp.clicked() {
                             selected_chat_group = SelectedChatGroup::Custom(idx);
+                            group_selection_requested = true;
                         }
 
                         // 未读红点
@@ -203,8 +229,10 @@ impl IcaApp {
             && let Some(state) = self.bridge_states.get_mut(bridge_idx)
         {
             state.chat_groups = chat_groups;
-            state.selected_chat_group = selected_chat_group;
             state.invalidate_visible_room_indices();
+        }
+        if group_selection_requested {
+            self.select_active_chat_group(selected_chat_group);
         }
         if let Some(group_idx) = updated_group
             && let Some(bridge_idx) = active_bridge_idx

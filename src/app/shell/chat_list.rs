@@ -181,8 +181,8 @@ impl IcaApp {
                             egui::vec2(full_row_width, content_height),
                         );
 
-                        let id =
-                            ui.make_persistent_id(("chat_list_row", active_bridge_idx, room_id));
+                        // 与导航快捷键共用稳定 ID，允许列表条目焦点下使用组合键。
+                        let id = egui::Id::new(("chat_list_row", active_bridge_idx, room_id));
                         let response = ui.interact(row_rect, id, egui::Sense::click());
 
                         let dark_mode = ui.visuals().dark_mode;

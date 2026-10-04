@@ -237,3 +237,25 @@ impl Default for GroupFilePanelState {
         }
     }
 }
+
+impl ChatWindowUiState {
+    pub fn close_mention_picker(&mut self) {
+        self.show_mention_picker = false;
+        self.mention_search_query.clear();
+        self.mention_search_focus_requested = false;
+        self.mention_replace_trigger = false;
+        self.mention_selected_index = 0;
+    }
+
+    pub fn cancel_composer_popup(&mut self) -> bool {
+        if self.show_mention_picker {
+            self.close_mention_picker();
+            true
+        } else if self.show_face_picker {
+            self.show_face_picker = false;
+            true
+        } else {
+            false
+        }
+    }
+}

@@ -1,8 +1,29 @@
 use serde::{Deserialize, Serialize};
 
+/// 与本体一致的发送快捷键；未配置时保留 Enter 发送。
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MessageSendKey {
+    #[default]
+    Enter,
+    CtrlEnter,
+    ShiftEnter,
+}
+
+impl MessageSendKey {
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::Enter => "Enter 发送，Shift/Ctrl+Enter 换行",
+            Self::CtrlEnter => "Ctrl+Enter 发送，Enter 换行",
+            Self::ShiftEnter => "Shift+Enter 发送，Enter 换行",
+        }
+    }
+}
+
 /// 聊天界面的持久化外观选项。此类型只保存数据，egui 渲染位于 `app::settings`。
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ChatAppearanceSettings {
+    #[serde(default)]
+    pub key_to_send_message: MessageSendKey,
     #[serde(default)]
     pub hide_chat_img: bool,
     #[serde(default)]
@@ -56,6 +77,7 @@ const fn default_true() -> bool {
 impl Default for ChatAppearanceSettings {
     fn default() -> Self {
         Self {
+            key_to_send_message: MessageSendKey::default(),
             hide_chat_img: false,
             hide_chat_video: false,
             disable_super_face: false,

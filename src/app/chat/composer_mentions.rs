@@ -1,3 +1,4 @@
+use super::composer_helpers::{composer_keyboard_active, consume_composer_shortcut};
 use crate::app::IcaApp;
 
 const MENTION_RESULTS_MAX_HEIGHT: f32 = 260.0;
@@ -66,23 +67,28 @@ impl IcaApp {
                     });
                 });
 
-                let close_with_keyboard = ui
-                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-                let move_down = ui.input_mut(|input| {
-                    input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
-                });
-                let move_up = ui.input_mut(|input| {
-                    input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
-                });
-                let confirm_with_keyboard = ui
-                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+                let mention_search_id =
+                    egui::Id::new(("mention_search", active_bridge_idx, room_id));
+                let keyboard_active = composer_keyboard_active(
+                    ctx,
+                    mention_search_id,
+                    self.ime_composing,
+                    self.ime_event_this_frame,
+                );
+                let close_with_keyboard =
+                    keyboard_active && consume_composer_shortcut(ui, egui::Key::Escape, false);
+                let move_down =
+                    keyboard_active && consume_composer_shortcut(ui, egui::Key::ArrowDown, false);
+                let move_up =
+                    keyboard_active && consume_composer_shortcut(ui, egui::Key::ArrowUp, false);
+                let confirm_with_keyboard = keyboard_active
+                    && !close_with_keyboard
+                    && consume_composer_shortcut(ui, egui::Key::Enter, false);
                 if close_with_keyboard {
                     action.close = true;
                     action.focus_composer = true;
                 }
 
-                let mention_search_id =
-                    egui::Id::new(("mention_search", active_bridge_idx, room_id));
                 let search_response = ui.add_sized(
                     [ui.available_width(), 30.0],
                     egui::TextEdit::singleline(&mut self.mention_search_query)

@@ -72,6 +72,24 @@ pub enum MessageAction {
         room_id: RoomId,
         target_id: i64,
     },
+    MentionSender {
+        room_id: RoomId,
+        target_id: i64,
+        name: String,
+    },
+    StartPrivateChat {
+        target_id: i64,
+        name: String,
+    },
+    MemberHistory {
+        room_id: RoomId,
+        target_id: i64,
+        name: String,
+    },
+    ManageMember {
+        room_id: RoomId,
+        target_id: i64,
+    },
     Image(ImageAction),
 }
 

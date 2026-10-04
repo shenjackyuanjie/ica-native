@@ -83,6 +83,7 @@ macro_rules! bridge_event_kinds {
 }
 
 bridge_event_kinds! {
+    EditSendResult => "editSendResult",
     SocketConnecting => "socketConnecting",
     SocketReconnecting => "socketReconnecting",
     SocketConnected => "socketConnected",

@@ -224,7 +224,7 @@ impl IcaApp {
             } => {
                 self.open_forward_reference(res_id, file_name, fallback_res_id, inline_messages);
             }
-            MessageAction::Image(ImageAction::Open(source)) => {
+            MessageAction::Image(ImageAction::Open(source)) if source.room_id.is_some() => {
                 let sources = image_sources_for_messages(search_room_id, search_messages);
                 self.open_image_viewer_with_sources(source, sources);
             }
@@ -246,6 +246,32 @@ impl IcaApp {
             }
             MessageAction::Poke { room_id, target_id } => {
                 self.send_group_poke(room_id, target_id);
+            }
+            MessageAction::MentionSender {
+                room_id,
+                target_id,
+                name,
+            } => {
+                self.mention_avatar_sender(ctx, active_bridge_idx, room_id, target_id, name);
+            }
+            MessageAction::StartPrivateChat { target_id, name } => {
+                self.start_contact_chat(
+                    active_bridge_idx,
+                    crate::app::contacts::ContactTarget {
+                        room_id: target_id,
+                        room_name: name,
+                    },
+                );
+            }
+            MessageAction::MemberHistory {
+                room_id,
+                target_id,
+                name,
+            } => {
+                self.open_member_history(active_bridge_idx, room_id, target_id, name);
+            }
+            MessageAction::ManageMember { room_id, target_id } => {
+                self.open_avatar_member_management(active_bridge_idx, room_id, target_id);
             }
         }
     }

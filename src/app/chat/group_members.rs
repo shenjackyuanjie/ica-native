@@ -293,7 +293,7 @@ impl IcaApp {
         }
     }
 
-    fn open_member_history(
+    pub fn open_member_history(
         &mut self,
         bridge_idx: usize,
         room_id: i64,

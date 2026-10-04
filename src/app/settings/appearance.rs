@@ -1,4 +1,4 @@
-use crate::config::ChatAppearanceSettings;
+use crate::config::{ChatAppearanceSettings, appearance::MessageSendKey};
 use egui::{Grid, Ui};
 
 impl ChatAppearanceSettings {
@@ -8,6 +8,18 @@ impl ChatAppearanceSettings {
             .num_columns(2)
             .striped(true)
             .show(ui, |ui| {
+                ui.label("发送消息快捷键");
+                ui.horizontal_wrapped(|ui| {
+                    for (key, label) in [
+                        (MessageSendKey::Enter, "Enter"),
+                        (MessageSendKey::CtrlEnter, "Ctrl+Enter"),
+                        (MessageSendKey::ShiftEnter, "Shift+Enter"),
+                    ] {
+                        ui.selectable_value(&mut self.key_to_send_message, key, label);
+                    }
+                });
+                ui.end_row();
+
                 ui.label("隐藏聊天图片");
                 let _ = ui.checkbox(&mut self.hide_chat_img, "");
                 ui.end_row();

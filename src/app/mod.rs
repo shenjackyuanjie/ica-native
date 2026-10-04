@@ -7,6 +7,7 @@ use rand::RngExt;
 pub mod auto_sign;
 mod chat;
 pub mod chat_groups;
+mod chat_shortcuts;
 mod chat_windows;
 mod contacts;
 mod event;
@@ -95,39 +96,109 @@ impl IcaApp {
         }
     }
 
+    /// Esc 不能穿透本视口里的其他浮动窗口、上下文菜单或模态框。
+    pub fn chat_escape_blocked_by_window(
+        ctx: &egui::Context,
+        allowed_layer: Option<egui::LayerId>,
+    ) -> bool {
+        egui::Popup::is_any_open(ctx)
+            || ctx.memory(|memory| {
+                memory.top_modal_layer().is_some()
+                    || memory.areas().visible_layer_ids().iter().any(|layer| {
+                        matches!(layer.order, egui::Order::Middle | egui::Order::Foreground)
+                            && Some(*layer) != allowed_layer
+                    })
+            })
+    }
+
     pub fn handle_chat_escape(&mut self, ctx: &egui::Context) {
-        // ESC 优先关闭输入区弹层，再处理会话内的选择状态。
-        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-            if self.show_mention_picker {
-                self.show_mention_picker = false;
-                self.mention_search_query.clear();
-                self.mention_search_focus_requested = false;
-                self.mention_replace_trigger = false;
-                self.mention_selected_index = 0;
-                if let Some(bridge_idx) = self.active_bridge_idx
-                    && let Some(room_id) = self.bridge_states[bridge_idx].selected_room_id
-                {
-                    let composer_id = egui::Id::new(("message_composer", bridge_idx, room_id));
-                    ctx.memory_mut(|memory| memory.request_focus(composer_id));
-                }
-            } else if let Some(state) = self.active_bridge_state_mut() {
-                if state.forward_target_picker_open {
-                    state.forward_target_picker_open = false;
-                } else if let Some(room_id) = state.selected_room_id {
-                    if state.is_forward_selection_active(room_id) {
-                        state.clear_forward_selection();
-                    } else if ctx.viewport_id() == egui::ViewportId::ROOT {
-                        state.selected_room_id = None;
-                    }
-                }
-            }
+        if self.ime_composing
+            || self.ime_event_this_frame
+            || !ctx.input(|input| {
+                input.focused
+                    && input.viewport().focused.unwrap_or(true)
+                    && input.key_pressed(egui::Key::Escape)
+            })
+            || self.group_member_panel.confirmation.is_some()
+        {
+            return;
+        }
+        let Some(bridge_idx) = self.active_bridge_idx else {
+            return;
+        };
+        let Some(room_id) = self
+            .bridge_states
+            .get(bridge_idx)
+            .and_then(|state| state.selected_room_id)
+        else {
+            return;
+        };
+        // 主窗口占位页不得操作另一个独立聊天窗口的草稿或选择。
+        if self.bridge_states[bridge_idx]
+            .conversation(room_id)
+            .is_some_and(|conversation| conversation.editing_send_pending)
+        {
+            return;
+        }
+        if ctx.viewport_id() == egui::ViewportId::ROOT && self.active_chat_is_detached() {
+            return;
+        }
+        if ctx.viewport_id() == egui::ViewportId::ROOT
+            && self
+                .bridge_states
+                .iter()
+                .any(|state| state.forward_target_picker_open)
+        {
+            // 目标选择窗自行处理 Esc，不允许它穿透到草稿或转发选区。
+            return;
+        }
+        let composer_id = egui::Id::new(("message_composer", bridge_idx, room_id));
+        let mention_id = egui::Id::new(("mention_search", bridge_idx, room_id));
+        let allowed_layer = self.show_mention_picker.then(|| {
+            egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new(("mention_picker_overlay", bridge_idx, room_id)),
+            )
+        });
+        if Self::chat_escape_blocked_by_window(ctx, allowed_layer)
+            || ctx.memory(|memory| {
+                memory.focused().is_some_and(|id| {
+                    id != composer_id && !(self.show_mention_picker && id == mention_id)
+                })
+            })
+        {
+            return;
+        }
+        if !ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            return;
+        }
+        if self.cancel_composer_popup() {
+            ctx.memory_mut(|memory| memory.request_focus(composer_id));
+            return;
+        }
+        let state = &mut self.bridge_states[bridge_idx];
+        if state.conversation_mut(room_id).cancel_composer_layer() {
+            ctx.memory_mut(|memory| memory.request_focus(composer_id));
+        } else if state.is_forward_selection_active(room_id) {
+            state.clear_forward_selection();
+        } else if ctx.viewport_id() == egui::ViewportId::ROOT {
+            state.selected_room_id = None;
+            ctx.memory_mut(|memory| memory.surrender_focus(composer_id));
+        } else {
+            // 独立聊天窗口只关闭自己的视口，主窗口选中会话由窗口适配层恢复。
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
     pub fn update_chat_input(&mut self, ctx: &egui::Context) {
         let raw_input = ctx.input(|input| input.raw.clone());
         self.ime_event_this_frame = false;
-        for event in &raw_input.events {
+        let viewport_focused = raw_input.focused && raw_input.viewport().focused.unwrap_or(true);
+        if !viewport_focused {
+            self.ime_composing = false;
+            self.clipboard_paste_failed = false;
+        }
+        for event in raw_input.events.iter().filter(|_| viewport_focused) {
             match event {
                 egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => {
                     self.ime_event_this_frame = true;
@@ -535,6 +606,7 @@ impl eframe::App for IcaApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.update_chat_input(ui.ctx());
+        self.handle_chat_navigation_shortcuts(ui.ctx());
         self.poll_socketio_events(ui.ctx());
         self.tick_auto_sign(ui.ctx());
 
