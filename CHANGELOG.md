@@ -2,6 +2,11 @@
 
 本文件记录 ica-native 的变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格。
 
+## [Unreleased]
+
+### Changed
+- 将录音入口并入输入框右侧工具栏，录制、预览和发送状态改为上方紧凑浮层，不再单独占用输入框下方一行；收起浮层保留录音和预览，录制时入口显示红色状态。
+
 ## [0.1.20] - 2026-10-04
 
 ### Added

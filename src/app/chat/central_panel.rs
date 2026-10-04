@@ -346,9 +346,9 @@ impl IcaApp {
                 ui.spacing().item_spacing.x
             };
             let mut composer_button_count = if composer_available_width >= 180.0 {
-                3.0
+                4.0
             } else {
-                2.0
+                3.0
             };
             if room_id < 0 {
                 composer_button_count += 1.0;
@@ -365,7 +365,6 @@ impl IcaApp {
             let line_height = ui.text_style_height(&egui::TextStyle::Body);
             let control_height = (line_height * composer_rows as f32 + 12.0).clamp(30.0, 132.0);
             let desired_composer_height = control_height
-                + self.audio.controls_height(&bridge_key, room_id)
                 + 6.0
                 + if forward_mode_active { 54.0 } else { 0.0 }
                 + if has_reply_banner { 54.0 } else { 0.0 }

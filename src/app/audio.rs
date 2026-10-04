@@ -146,13 +146,14 @@ impl AudioController {
         }
     }
 
-    /// 在输入区插入。不同 Bridge / 房间只会看到自己的预览、错误和发送结果。
-    pub fn render_audio_controls(
+    /// 录音入口与输入框工具栏共用一行，状态与预览浮层不挤占聊天区。
+    pub fn render_audio_toolbar(
         &self,
         ui: &mut egui::Ui,
         bridge_key: &str,
         room_id: i64,
         can_send: bool,
+        button_size: egui::Vec2,
     ) {
         let owner = RoomKey {
             bridge_key: bridge_key.to_string(),
@@ -163,95 +164,141 @@ impl AudioController {
             (state.draft.clone(), state.notice.clone())
         };
         ui.push_id(("voice_composer", bridge_key, room_id), |ui| {
-            match draft {
-                None => {
-                    if ui
-                        .add_enabled(can_send, egui::Button::new("录音"))
-                        .on_hover_text("点击后才访问麦克风；最长 60 秒，停止后预览并确认发送")
-                        .clicked()
-                    {
-                        let id = self.next_id();
-                        let mut state = lock(&self.state);
-                        state.notice = None;
-                        state.draft = Some(VoiceDraft {
-                            id,
-                            owner: owner.clone(),
-                            stage: DraftStage::Starting,
-                            duration: Duration::ZERO,
-                            wav: None,
-                            request_id: None,
-                        });
-                        drop(state);
-                        self.dispatch(ui.ctx(), device::WorkerCommand::StartRecording(id));
-                    }
-                }
-                Some(draft) if draft.owner != owner => {
-                    ui.add_enabled(false, egui::Button::new("录音"))
-                        .on_hover_text("另一个会话有录音或待发送预览，请先回到该会话处理");
-                }
-                Some(draft) => {
-                    ui.horizontal_wrapped(|ui| {
-                        match draft.stage {
-                            DraftStage::Starting => {
-                                ui.spinner();
-                                ui.label("正在打开麦克风…");
-                            }
-                            DraftStage::Recording => {
-                                ui.label(format!("录音 {} / 01:00", time_text(draft.duration)));
-                                if ui.button("停止").clicked() {
-                                    if let Some(current) = lock(&self.state).draft.as_mut() {
-                                        current.stage = DraftStage::Stopping;
-                                    }
-                                    self.dispatch(
-                                        ui.ctx(),
-                                        device::WorkerCommand::StopRecording(draft.id),
-                                    );
-                                }
-                            }
-                            DraftStage::Stopping => {
-                                ui.spinner();
-                                ui.label("正在生成预览…");
-                            }
-                            DraftStage::Ready => {
-                                ui.label(format!("语音 {}", time_text(draft.duration)));
-                                if let Some(bytes) = draft.wav.as_ref() {
-                                    self.render_player(
-                                        ui,
-                                        PlaybackKey {
-                                            owner: owner.clone(),
-                                            item: PlaybackItem::Preview(draft.id),
-                                        },
-                                        device::AudioSource::Memory(bytes.clone()),
-                                    );
-                                    if ui
-                                        .add_enabled(can_send, egui::Button::new("发送语音"))
-                                        .clicked()
-                                    {
-                                        self.queue_send(&owner);
-                                    }
-                                }
-                            }
-                            DraftStage::Sending => {
-                                ui.spinner();
-                                ui.label("正在提交 Bridge…");
-                            }
-                        }
-                        if draft.stage != DraftStage::Sending && ui.button("取消").clicked() {
-                            self.cancel_draft(ui.ctx(), &owner);
-                        }
-                    });
-                    if matches!(
-                        draft.stage,
-                        DraftStage::Starting | DraftStage::Recording | DraftStage::Stopping
-                    ) {
-                        ui.ctx().request_repaint_after(Duration::from_millis(100));
-                    }
-                }
+            let other_room = draft.as_ref().is_some_and(|draft| draft.owner != owner);
+            let owned_draft = draft.filter(|draft| draft.owner == owner);
+            let owned_notice = notice.filter(|(notice_owner, _)| *notice_owner == owner);
+            let recording = owned_draft.as_ref().is_some_and(|draft| {
+                matches!(
+                    draft.stage,
+                    DraftStage::Starting | DraftStage::Recording | DraftStage::Stopping
+                )
+            });
+            let tooltip = if other_room {
+                "另一个会话有录音或待发送预览，请先回到该会话处理"
+            } else if owned_draft.is_some() {
+                "打开录音面板；关闭面板不会取消录音或清除预览"
+            } else {
+                "录音：点击后才访问麦克风，最长 60 秒，停止后预览并确认发送"
+            };
+            let response = ui
+                .add_enabled_ui(!other_room && (can_send || owned_draft.is_some()), |ui| {
+                    ui.add_sized(
+                        button_size,
+                        egui::Button::new(
+                            egui::RichText::new(if recording { "●" } else { "🎙" })
+                                .size(15.0)
+                                .color(if recording {
+                                    egui::Color32::LIGHT_RED
+                                } else {
+                                    ui.visuals().text_color()
+                                }),
+                        )
+                        .selected(owned_draft.is_some()),
+                    )
+                })
+                .inner
+                .on_hover_text(tooltip);
+            if response.clicked() && owned_draft.is_none() {
+                let id = self.next_id();
+                let mut state = lock(&self.state);
+                state.notice = None;
+                state.draft = Some(VoiceDraft {
+                    id,
+                    owner: owner.clone(),
+                    stage: DraftStage::Starting,
+                    duration: Duration::ZERO,
+                    wav: None,
+                    request_id: None,
+                });
+                drop(state);
+                self.dispatch(ui.ctx(), device::WorkerCommand::StartRecording(id));
             }
-            if let Some((notice_owner, message)) = notice
-                && notice_owner == owner
-            {
-                ui.label(egui::RichText::new(message).small());
+            egui::Popup::from_toggle_button_response(&response)
+                .align(egui::RectAlign::TOP_END)
+                .width(360.0)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.strong("语音");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("收起").clicked() {
+                                ui.close();
+                            }
+                        });
+                    });
+                    ui.separator();
+                    if let Some(draft) = owned_draft {
+                        ui.horizontal_wrapped(|ui| {
+                            match draft.stage {
+                                DraftStage::Starting => {
+                                    ui.spinner();
+                                    ui.label("正在打开麦克风…");
+                                }
+                                DraftStage::Recording => {
+                                    ui.label(format!("录音 {} / 01:00", time_text(draft.duration)));
+                                    if ui.button("停止").clicked() {
+                                        if let Some(current) = lock(&self.state).draft.as_mut() {
+                                            current.stage = DraftStage::Stopping;
+                                        }
+                                        self.dispatch(
+                                            ui.ctx(),
+                                            device::WorkerCommand::StopRecording(draft.id),
+                                        );
+                                    }
+                                }
+                                DraftStage::Stopping => {
+                                    ui.spinner();
+                                    ui.label("正在生成预览…");
+                                }
+                                DraftStage::Ready => {
+                                    ui.label(format!("语音 {}", time_text(draft.duration)));
+                                    if let Some(bytes) = draft.wav.as_ref() {
+                                        self.render_player(
+                                            ui,
+                                            PlaybackKey {
+                                                owner: owner.clone(),
+                                                item: PlaybackItem::Preview(draft.id),
+                                            },
+                                            device::AudioSource::Memory(bytes.clone()),
+                                        );
+                                        if ui
+                                            .add_enabled(can_send, egui::Button::new("发送语音"))
+                                            .clicked()
+                                        {
+                                            self.queue_send(&owner);
+                                        }
+                                    }
+                                }
+                                DraftStage::Sending => {
+                                    ui.spinner();
+                                    ui.label("正在提交 Bridge…");
+                                }
+                            }
+                            if draft.stage != DraftStage::Sending && ui.button("取消").clicked() {
+                                self.cancel_draft(ui.ctx(), &owner);
+                                ui.close();
+                            }
+                        });
+                    } else if response.clicked() && owned_notice.is_none() {
+                        ui.label("正在打开麦克风…");
+                    }
+                    if let Some((_, message)) = owned_notice {
+                        ui.label(egui::RichText::new(message).small());
+                        if ui.small_button("知道了").clicked() {
+                            let mut state = lock(&self.state);
+                            if state
+                                .notice
+                                .as_ref()
+                                .is_some_and(|(notice_owner, _)| *notice_owner == owner)
+                            {
+                                state.notice = None;
+                            }
+                            ui.close();
+                        }
+                    }
+                });
+            if recording {
+                ui.ctx().request_repaint_after(Duration::from_millis(100));
             }
         });
     }
@@ -627,31 +674,7 @@ impl crate::app::IcaApp {
     }
 }
 
-impl AudioController {
-    pub fn controls_height(&self, bridge_key: &str, room_id: i64) -> f32 {
-        let state = lock(&self.state);
-        let matches_owner =
-            |owner: &RoomKey| owner.bridge_key == bridge_key && owner.room_id == room_id;
-        let body = if state
-            .draft
-            .as_ref()
-            .is_some_and(|draft| matches_owner(&draft.owner))
-        {
-            70.0
-        } else {
-            30.0
-        };
-        body + if state
-            .notice
-            .as_ref()
-            .is_some_and(|(owner, _)| matches_owner(owner))
-        {
-            36.0
-        } else {
-            0.0
-        }
-    }
-}
+impl AudioController {}
 
 #[cfg(test)]
 mod tests {
@@ -672,6 +695,130 @@ mod tests {
             request_id: None,
         });
         (controller, owner)
+    }
+
+    fn toolbar_frame(
+        controller: &AudioController,
+        ctx: &egui::Context,
+        width: f32,
+        events: Vec<egui::Event>,
+    ) -> (egui::FullOutput, egui::Rect, egui::Pos2) {
+        let mut row = egui::Rect::NOTHING;
+        let mut microphone = egui::Pos2::ZERO;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 240.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                row = ui
+                    .horizontal(|ui| {
+                        ui.add_sized([width - 90.0, 30.0], egui::Button::new("输入"));
+                        microphone = ui.next_widget_position() + egui::vec2(15.0, 15.0);
+                        controller.render_audio_toolbar(
+                            ui,
+                            "bridge-a",
+                            -7,
+                            false,
+                            egui::vec2(30.0, 30.0),
+                        );
+                        ui.add_sized([30.0, 30.0], egui::Button::new("发送"));
+                    })
+                    .response
+                    .rect;
+            },
+        );
+        output.textures_delta.clear();
+        (output, row, microphone)
+    }
+
+    #[test]
+    fn voice_toolbar_keeps_input_and_send_on_one_row_in_all_draft_stages() {
+        for width in [180.0, 640.0] {
+            for stage in [
+                None,
+                Some(DraftStage::Starting),
+                Some(DraftStage::Recording),
+                Some(DraftStage::Stopping),
+                Some(DraftStage::Ready),
+                Some(DraftStage::Sending),
+            ] {
+                let (controller, _) = controller_with_preview();
+                if let Some(stage) = stage {
+                    lock(&controller.state).draft.as_mut().unwrap().stage = stage;
+                } else {
+                    lock(&controller.state).draft = None;
+                }
+                let (_, row, _) =
+                    toolbar_frame(&controller, &egui::Context::default(), width, vec![]);
+                assert!(
+                    row.height() <= 32.0,
+                    "录音状态不应增加工具栏高度：{stage:?}"
+                );
+                assert!(row.right() <= width, "录音入口不能挤出发送按钮");
+                assert!(
+                    lock(&controller.worker).is_none(),
+                    "绘制录音入口不得打开设备"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn escape_closes_voice_popup_without_discarding_offline_preview() {
+        let (controller, _) = controller_with_preview();
+        let ctx = egui::Context::default();
+        let (_, _, pos) = toolbar_frame(&controller, &ctx, 640.0, vec![]);
+        toolbar_frame(
+            &controller,
+            &ctx,
+            640.0,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert!(
+            egui::Popup::is_any_open(&ctx),
+            "离线时仍应能打开保留的语音预览"
+        );
+        toolbar_frame(
+            &controller,
+            &ctx,
+            640.0,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(!egui::Popup::is_any_open(&ctx));
+        let state = lock(&controller.state);
+        let draft = state.draft.as_ref().expect("收起浮层不能丢弃录音");
+        assert_eq!(draft.stage, DraftStage::Ready);
+        assert!(draft.wav.is_some());
+        assert!(controller.poll_action().is_none(), "Esc 不应发送录音");
+        assert!(
+            lock(&controller.worker).is_none(),
+            "打开与收起预览不能自行访问设备"
+        );
     }
 
     #[test]

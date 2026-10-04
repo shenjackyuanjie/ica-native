@@ -542,7 +542,7 @@ impl IcaApp {
                         ui.spacing_mut().item_spacing.x = item_spacing;
                         // 窄宽度不显示表情按钮
                         let show_face_btn = available_width >= 180.0;
-                        let mut btn_count = if show_face_btn { 3.0 } else { 2.0 };
+                        let mut btn_count = if show_face_btn { 4.0 } else { 3.0 };
                         if room_id < 0 {
                             btn_count += 1.0;
                         }
@@ -654,6 +654,11 @@ impl IcaApp {
                         if plus_btn.clicked() {
                             choose_image = true;
                         }
+                        let session = &self.bridge_states[active_bridge_idx];
+                        self.audio.render_audio_toolbar(ui, &session.bridge_key, room_id,
+                            session.socket_state == crate::app::SocketState::Connected
+                                && session.auth_state == crate::app::AuthState::Succeeded,
+                            egui::vec2(button_width, control_height));
                         let can_send = !composer_draft.trim().is_empty()
                             || has_pending_image
                             || has_pending_file
@@ -670,10 +675,7 @@ impl IcaApp {
                                 .clicked();
                     },
                 );
-                let session = &self.bridge_states[active_bridge_idx];
-                self.audio.render_audio_controls(ui, &session.bridge_key, room_id,
-                    session.socket_state == crate::app::SocketState::Connected
-                        && session.auth_state == crate::app::AuthState::Succeeded);
+
             },
         );
 
