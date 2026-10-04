@@ -29,6 +29,11 @@ pub enum ConnectionSignal {
 
 #[derive(Debug)]
 pub enum IcaCommand {
+    SendVoiceMessage {
+        request_id: u64,
+        room_id: RoomId,
+        audio_data: std::sync::Arc<[u8]>,
+    },
     /// 通过当前消息所属 Bridge 刷新 QQ NT 图片地址。
     RefreshImageUrl {
         file_id: String,

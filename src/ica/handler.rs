@@ -23,6 +23,7 @@ mod message_payload;
 
 // 命令分发的具体实现按领域拆分，本文件只保留「命令 -> 处理函数」的映射。
 mod account_commands;
+mod audio_commands;
 mod bridge_api_commands;
 mod context;
 mod forward_commands;
@@ -123,6 +124,11 @@ pub async fn handle_command(
         api_base_url,
     };
     match command {
+        IcaCommand::SendVoiceMessage {
+            request_id,
+            room_id,
+            audio_data,
+        } => audio_commands::send_voice_message(ctx, request_id, room_id, audio_data).await,
         IcaCommand::RefreshImageUrl {
             file_id,
             app_id,

@@ -365,6 +365,7 @@ impl IcaApp {
             let line_height = ui.text_style_height(&egui::TextStyle::Body);
             let control_height = (line_height * composer_rows as f32 + 12.0).clamp(30.0, 132.0);
             let desired_composer_height = control_height
+                + self.audio.controls_height(&bridge_key, room_id)
                 + 6.0
                 + if forward_mode_active { 54.0 } else { 0.0 }
                 + if has_reply_banner { 54.0 } else { 0.0 }

@@ -4,6 +4,7 @@ use crate::config::ConfigStore;
 use eframe::CreationContext;
 use rand::RngExt;
 
+pub mod audio;
 pub mod auto_sign;
 mod chat;
 pub mod chat_groups;
@@ -528,6 +529,11 @@ impl IcaApp {
                 continue;
             };
 
+            if let BridgeEventKind::VoiceSendResult(payload) = event_kind {
+                self.apply_voice_send_result(bridge_key, payload);
+                continue;
+            }
+
             if let BridgeEventKind::SetAllChatGroups(payload) = event_kind {
                 if let Some(value) = payload.as_array().and_then(|values| values.first()) {
                     match <Vec<chat_groups::ChatGroup> as serde::Deserialize>::deserialize(value) {
@@ -608,6 +614,7 @@ impl eframe::App for IcaApp {
         self.update_chat_input(ui.ctx());
         self.handle_chat_navigation_shortcuts(ui.ctx());
         self.poll_socketio_events(ui.ctx());
+        self.process_audio_actions();
         self.tick_auto_sign(ui.ctx());
 
         self.handle_chat_escape(ui.ctx());

@@ -95,6 +95,7 @@ impl ChatAppearanceViewportState {
 }
 
 pub struct AppState {
+    pub audio: crate::app::audio::AudioController,
     pub custom_chat: ChatAppearanceSettings,
     pub online_mode: OnlineMode,
     pub open_page: AppOpenPage,
@@ -148,6 +149,7 @@ impl AppState {
         sticker_store: StickerStore,
     ) -> Self {
         Self {
+            audio: crate::app::audio::AudioController::default(),
             custom_chat: config.custom_chat.clone(),
             online_mode: OnlineMode::default(),
             open_page: AppOpenPage::default(),

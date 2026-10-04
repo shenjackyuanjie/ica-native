@@ -52,6 +52,8 @@ rand = "0.10"
 lru = "0.18"
 rfd = "0.17"
 arboard = "3.6"
+cpal = "0.16"
+rodio = { version = "0.21", default-features = false, features = ["playback", "wav", "vorbis", "mp3", "flac"] }
 linkify = "0.11"
 urlencoding = "2.1"
 

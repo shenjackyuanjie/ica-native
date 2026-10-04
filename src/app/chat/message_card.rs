@@ -878,10 +878,13 @@ impl IcaApp {
                                                 ui.with_layout(
                                             egui::Layout::top_down(content_align),
                                             |ui| {
-                                                for file in &message.files {
+                                                for (attachment_index, file) in message.files.iter().enumerate() {
                                                     let is_image =
                                                         is_image_file_type(&file.file_type);
 
+                                                    if self.render_chat_voice(ui, room_id, &message.msg_id, attachment_index, file) {
+                                                        continue;
+                                                    }
                                                     if is_image && self.custom_chat.hide_chat_img {
                                                         ui.weak("[图片已隐藏]");
                                                     } else if is_video_file_type(&file.file_type)

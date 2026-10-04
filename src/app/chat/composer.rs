@@ -670,6 +670,10 @@ impl IcaApp {
                                 .clicked();
                     },
                 );
+                let session = &self.bridge_states[active_bridge_idx];
+                self.audio.render_audio_controls(ui, &session.bridge_key, room_id,
+                    session.socket_state == crate::app::SocketState::Connected
+                        && session.auth_state == crate::app::AuthState::Succeeded);
             },
         );
 
