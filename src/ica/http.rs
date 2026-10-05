@@ -14,7 +14,11 @@ impl BridgeHttpClients {
             .timeout(Duration::from_secs(45))
             .redirect(reqwest::redirect::Policy::none())
             // 一次性 token 在路径中，任何隐式重试都可能造成重复提交。
-            .retry(reqwest::retry::never())
+            .retry(reqwest::retry::never());
+        // 单元测试只连接随机本地端口，不能受宿主 HTTP_PROXY 干扰。
+        #[cfg(test)]
+        let send = send.no_proxy();
+        let send = send
             .build()
             .map_err(|error| format!("无法创建消息发送客户端: {}", error.without_url()))?;
         let announcement = reqwest::Client::builder()
