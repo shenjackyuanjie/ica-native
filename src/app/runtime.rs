@@ -17,6 +17,7 @@ pub struct AppRuntime {
     pub event_rx: UnboundedReceiver<AppEvent>,
     pub event_tx: UnboundedSender<AppEvent>,
     noticer_controller: NoticerController,
+    pub agent_context_controller: crate::agent_context::server::Controller,
     noticer_registry: Arc<BridgeRegistry>,
     noticer_handles: HashMap<String, BridgeHandle>,
 }
@@ -90,7 +91,15 @@ impl AppRuntime {
             noticer_registry.clone(),
         );
 
+        let agent_context_controller = crate::agent_context::server::spawn(
+            &tokio,
+            config.agent_context.clone(),
+            event_tx.clone(),
+            ctx.clone(),
+        );
+
         Self {
+            agent_context_controller,
             tokio,
             sessions,
             event_rx,

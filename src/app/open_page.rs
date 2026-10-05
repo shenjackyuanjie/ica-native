@@ -9,6 +9,8 @@ pub struct AppOpenPage {
     pub settings: bool,
     /// Noticer 配置页面
     pub noticer_settings: bool,
+    /// Agent 聊天上下文设置
+    pub agent_context_settings: bool,
     /// 通知等级说明页面
     pub notify_level: bool,
     /// 定制聊天界面 (ica)

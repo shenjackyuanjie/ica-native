@@ -3,6 +3,7 @@ use egui::IconData;
 
 use crate::config::{RendererBackend, WgpuBackend};
 
+pub mod agent_context;
 pub mod app;
 pub mod assets;
 pub mod config;

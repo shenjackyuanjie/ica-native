@@ -17,6 +17,7 @@ mod search;
 
 #[derive(Debug)]
 pub enum AppEvent {
+    AgentContext(crate::agent_context::server::GuiRequest),
     Bridge(BridgeEvent),
     Media(MediaEvent),
 }

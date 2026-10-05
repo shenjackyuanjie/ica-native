@@ -74,6 +74,10 @@ impl IcaApp {
                     self.runtime.apply_noticer_config(config);
                 }
             }
+            if ui.button("Agent 上下文设置…").clicked() {
+                self.open_page.agent_context_settings = true;
+                ui.close();
+            }
             if ui.button("Noticer 设置…").clicked() {
                 self.open_page.noticer_settings = true;
                 ui.close();

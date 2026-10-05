@@ -71,6 +71,9 @@ pub struct IcaCfg {
     /// 内建 Noticer HTTP webhook 服务。
     #[serde(default)]
     pub noticer: NoticerConfig,
+    /// 本机 Agent 聊天上下文读取服务，与 Noticer 的发送权限隔离。
+    #[serde(default)]
+    pub agent_context: crate::agent_context::AgentContextConfig,
 }
 
 impl Display for IcaCfg {
@@ -94,6 +97,7 @@ impl Default for IcaCfg {
             disk_image_cache_max_bytes: disk_image_cache_max_bytes_default(),
             tokio_rt_work_thread: tokio_rt_work_thread_default(),
             noticer: NoticerConfig::default(),
+            agent_context: crate::agent_context::AgentContextConfig::default(),
         }
     }
 }
@@ -140,6 +144,14 @@ impl IcaCfg {
             }
         }
         self.noticer.validate(&self.bridges)?;
+        self.agent_context.validate()?;
+        if self.agent_context.enabled {
+            anyhow::ensure!(
+                self.agent_context.auth_token != self.noticer.auth_token
+                    && self.agent_context.auth_token != self.noticer.direct_token,
+                "Agent 读取 Token 不能与 Noticer 发送 Token 复用"
+            );
+        }
         Ok(())
     }
 

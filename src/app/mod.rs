@@ -4,6 +4,7 @@ use crate::config::ConfigStore;
 use eframe::CreationContext;
 use rand::RngExt;
 
+mod agent_context;
 pub mod audio;
 pub mod auto_sign;
 mod chat;
@@ -11,7 +12,7 @@ pub mod chat_groups;
 mod chat_shortcuts;
 mod chat_windows;
 mod contacts;
-mod event;
+pub mod event;
 mod media;
 pub mod online_mode;
 pub mod open_page;
@@ -511,14 +512,18 @@ impl IcaApp {
             let Ok(event) = self.runtime.event_rx.try_recv() else {
                 break;
             };
+            processed += 1;
             let event = match event {
+                event::AppEvent::AgentContext(request) => {
+                    self.handle_agent_context_request(request);
+                    continue;
+                }
                 event::AppEvent::Bridge(event) => event,
                 event::AppEvent::Media(event) => {
                     self.apply_media_event(event);
                     continue;
                 }
             };
-            processed += 1;
             let bridge_key = event.bridge_key.as_str();
             let event_kind = &event.kind;
             let Some(bridge_idx) = self
@@ -614,6 +619,7 @@ impl eframe::App for IcaApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.sync_agent_context_config();
         self.update_chat_input(ui.ctx());
         self.handle_chat_navigation_shortcuts(ui.ctx());
         self.poll_socketio_events(ui.ctx());
@@ -655,6 +661,7 @@ impl eframe::App for IcaApp {
         self.render_group_ban_confirmation(ui.ctx());
         self.render_windows(ui);
         self.render_chat_windows(ui.ctx());
+        self.render_agent_context(ui.ctx());
     }
 }
 
