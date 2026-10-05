@@ -42,7 +42,7 @@ pub async fn edit_and_resend_message(
         .map_err(|_| "编辑消息编码失败".to_string())?;
         // 纯文本也走 HTTP，以获得明确的 Bridge 接收确认。
         let token = super::request_send_token(ctx.client).await?;
-        super::http_send_message(ctx.api_base_url, &token, &encoded).await
+        super::http_send_message(&ctx.http.send, ctx.api_base_url, &token, &encoded).await
     };
     let result = submit_edit_then_recall(submit, || async {
         client::delete_message(ctx.client, &DeleteMessage::new(room_id, message_id.clone())).await
@@ -78,9 +78,10 @@ pub async fn send_chat_message(ctx: CommandContext<'_>, message: SendMessage) {
         event_tx,
         bridge_key,
         api_base_url,
+        http,
         ..
     } = ctx;
-    send_message(message, client, event_tx, bridge_key, api_base_url).await;
+    send_message(message, client, event_tx, bridge_key, api_base_url, http).await;
 }
 
 pub async fn send_image_message(
@@ -97,6 +98,7 @@ pub async fn send_image_message(
         event_tx,
         bridge_key,
         api_base_url,
+        http,
         ..
     } = ctx;
     let encoded_message = tokio::task::spawn_blocking(move || {
@@ -108,7 +110,7 @@ pub async fn send_image_message(
     .await;
     match encoded_message {
         Ok(message) => {
-            send_message(message, client, event_tx, bridge_key, api_base_url).await;
+            send_message(message, client, event_tx, bridge_key, api_base_url, http).await;
         }
         Err(e) => emit_ui_event(
             event_tx,
@@ -136,6 +138,7 @@ pub async fn send_multi_image_message(
         event_tx,
         bridge_key,
         api_base_url,
+        http,
         ..
     } = ctx;
     let encoded_message = tokio::task::spawn_blocking(move || {
@@ -144,7 +147,7 @@ pub async fn send_multi_image_message(
     .await;
     match encoded_message {
         Ok(message) => {
-            send_message(message, client, event_tx, bridge_key, api_base_url).await;
+            send_message(message, client, event_tx, bridge_key, api_base_url, http).await;
         }
         Err(e) => emit_ui_event(
             event_tx,

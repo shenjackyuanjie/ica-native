@@ -1,7 +1,6 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
-use futures_util::future::BoxFuture;
-use rust_socketio::{Payload, asynchronous::Client};
+use rust_socketio::asynchronous::Client;
 use serde_json::{Value as JsonValue, json};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -14,50 +13,26 @@ use crate::ica::types::announcement::{
     announcement_publish_form, announcement_publish_url, parse_announcement_action, resolve_bkn,
 };
 
-use super::ack_payload_first;
+use super::context::CommandContext;
 
 const COOKIE_TIMEOUT: Duration = Duration::from_secs(15);
-const COOKIE_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const COOKIE_POLL_ATTEMPTS: usize = 150;
-const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// 向 Bridge 索取指定域名的 Cookie。
 ///
-/// Bridge 的 `getCookies` 只在 ACK 里回传结果，这里沿用发送 token 时的轮询等待方式。
+/// Bridge 的 `getCookies` 只在 ACK 里回传结果，立即消费回执，不轮询共享状态。
 async fn request_cookies(client: &Client, domain: &str) -> Result<String, String> {
-    let cookie = Arc::new(tokio::sync::Mutex::new(None::<String>));
-    let cookie_cb = cookie.clone();
-    client
-        .emit_with_ack(
-            "getCookies",
-            vec![json!(domain)],
-            COOKIE_TIMEOUT,
-            move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
-                let cookie = cookie_cb.clone();
-                Box::pin(async move {
-                    let value = ack_payload_first(&payload)
-                        .and_then(|value| value.as_str().map(str::to_string))
-                        .unwrap_or_default();
-                    *cookie.lock().await = Some(value);
-                })
-            },
-        )
-        .await
-        .map_err(|error| format!("getCookies 发送失败: {error}"))?;
-
-    for _ in 0..COOKIE_POLL_ATTEMPTS {
-        if let Some(cookie) = cookie.lock().await.take() {
-            return if cookie.trim().is_empty() {
-                Err(format!(
-                    "Bridge 返回了空的 {domain} Cookie，请确认账号已登录且协议端支持取 Cookie"
-                ))
-            } else {
-                Ok(cookie)
-            };
-        }
-        tokio::time::sleep(COOKIE_POLL_INTERVAL).await;
+    let payload =
+        crate::ica::ack::request(client, "getCookies", vec![json!(domain)], COOKIE_TIMEOUT)
+            .await
+            .map_err(|error| error.to_string())?;
+    let empty_cookie =
+        || format!("Bridge 返回了空的 {domain} Cookie，请确认账号已登录且协议端支持取 Cookie");
+    let cookie =
+        crate::ica::ack::nonempty_string(&payload, "getCookies").map_err(|_| empty_cookie())?;
+    if cookie.trim().is_empty() {
+        return Err(empty_cookie());
     }
-    Err("getCookies 超时".to_string())
+    Ok(cookie)
 }
 
 /// 用 Cookie 与 bkn 请求公告列表，返回 CGI 原始响应体。
@@ -70,6 +45,7 @@ async fn request_cookies(client: &Client, domain: &str) -> Result<String, String
 /// 与其抽象成参数表，不如把拼装留在协议层。
 async fn post_announcement_cgi<F>(
     client: &Client,
+    http: &reqwest::Client,
     room_id: RoomId,
     online_bkn: i64,
     url: &str,
@@ -87,10 +63,6 @@ where
         return Err("无法确定 bkn：onlineData 未下发，且 Cookie 里没有 skey".to_string());
     };
 
-    let http = reqwest::Client::builder()
-        .timeout(HTTP_TIMEOUT)
-        .build()
-        .map_err(|error| format!("创建 HTTP 客户端失败: {error}"))?;
     // 公告 CGI 一律是 POST 表单，且必须带 Cookie 才认登录态。
     let response = http
         .post(url)
@@ -125,17 +97,23 @@ where
 
 /// 发布或编辑一条公告；草稿带 fid 即为编辑。
 pub async fn publish_group_announcement(
-    client: &Client,
-    event_tx: &Option<UnboundedSender<BridgeEvent>>,
-    bridge_key: &str,
+    ctx: CommandContext<'_>,
     request_id: u64,
     room_id: RoomId,
     online_bkn: i64,
     draft: GroupAnnouncementDraft,
 ) {
+    let CommandContext {
+        client,
+        event_tx,
+        bridge_key,
+        http,
+        ..
+    } = ctx;
     let action = if draft.is_edit() { "编辑" } else { "发布" };
     let result = post_announcement_cgi(
         client,
+        &http.announcement,
         room_id,
         online_bkn,
         announcement_publish_url(draft.to_new),
@@ -148,16 +126,22 @@ pub async fn publish_group_announcement(
 
 /// 删除一条公告。
 pub async fn delete_group_announcement(
-    client: &Client,
-    event_tx: &Option<UnboundedSender<BridgeEvent>>,
-    bridge_key: &str,
+    ctx: CommandContext<'_>,
     request_id: u64,
     room_id: RoomId,
     online_bkn: i64,
     fid: String,
 ) {
+    let CommandContext {
+        client,
+        event_tx,
+        bridge_key,
+        http,
+        ..
+    } = ctx;
     let result = post_announcement_cgi(
         client,
+        &http.announcement,
         room_id,
         online_bkn,
         announcement_delete_url(),
@@ -214,15 +198,21 @@ fn emit_action_result(
 }
 
 pub async fn fetch_group_announcements(
-    client: &Client,
-    event_tx: &Option<UnboundedSender<BridgeEvent>>,
-    bridge_key: &str,
+    ctx: CommandContext<'_>,
     request_id: u64,
     room_id: RoomId,
     online_bkn: i64,
 ) {
+    let CommandContext {
+        client,
+        event_tx,
+        bridge_key,
+        http,
+        ..
+    } = ctx;
     match post_announcement_cgi(
         client,
+        &http.announcement,
         room_id,
         online_bkn,
         announcement_list_url(),

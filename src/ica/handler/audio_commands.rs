@@ -23,7 +23,9 @@ pub async fn send_voice_message(
         tokio::task::spawn_blocking(move || build_voice_message(room_id, &audio_data)).await;
     let result = match encoded {
         Ok(Ok(message)) => match request_send_token(ctx.client).await {
-            Ok(token) => http_send_message(ctx.api_base_url, &token, &message).await,
+            Ok(token) => {
+                http_send_message(&ctx.http.send, ctx.api_base_url, &token, &message).await
+            }
             Err(error) => Err(error),
         },
         Ok(Err(error)) => Err(error),

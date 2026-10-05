@@ -1,56 +1,30 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
-use futures_util::future::BoxFuture;
-use rust_socketio::{Payload, asynchronous::Client};
+use rust_socketio::asynchronous::Client;
 use serde_json::Value as JsonValue;
 
 use crate::ica::types::message::SendMessage;
 
-use super::ack_payload_first;
-
 pub async fn request_send_token(client: &Client) -> Result<String, String> {
-    let token = Arc::new(tokio::sync::Mutex::new(None::<String>));
-    let token_cb = token.clone();
-    client
-        .emit_with_ack(
-            "requestToken",
-            Vec::<JsonValue>::new(),
-            Duration::from_secs(30),
-            move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
-                let token = token_cb.clone();
-                Box::pin(async move {
-                    let value = ack_payload_first(&payload)
-                        .and_then(|value| value.as_str().map(str::to_string))
-                        .unwrap_or_default();
-                    *token.lock().await = Some(value);
-                })
-            },
-        )
-        .await
-        .map_err(|error| format!("requestToken 发送失败: {error}"))?;
-
-    for _ in 0..100 {
-        if let Some(token) = token.lock().await.take() {
-            return if token.is_empty() {
-                Err("requestToken 返回空 token".to_string())
-            } else {
-                Ok(token)
-            };
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    Err("requestToken 超时".to_string())
+    let payload =
+        crate::ica::ack::request(client, "requestToken", Vec::new(), Duration::from_secs(10))
+            .await
+            .map_err(|error| error.to_string())?;
+    crate::ica::ack::nonempty_string(&payload, "requestToken")
+        .map_err(|_| "requestToken 返回空 token".to_string())
 }
 
 pub async fn http_send_message(
+    http: &reqwest::Client,
     api_base_url: &str,
     token: &str,
     message: &SendMessage,
 ) -> Result<(), String> {
-    http_send_value(api_base_url, token, &message.as_value()).await
+    http_send_value(http, api_base_url, token, &message.as_value()).await
 }
 
 pub async fn http_send_value(
+    http: &reqwest::Client,
     api_base_url: &str,
     token: &str,
     value: &JsonValue,
@@ -60,13 +34,7 @@ pub async fn http_send_value(
         api_base_url.trim_end_matches('/'),
         token
     );
-    let response = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(45))
-        // token 在路径里且只能消费一次，不允许重定向或自动重试 POST。
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|error| format!("无法创建发送客户端: {}", error.without_url()))?
+    let response = http
         .post(url)
         .json(value)
         .send()
@@ -130,7 +98,9 @@ mod tests {
                     "不能重复发送或跟随携带一次性 token 的 POST 重定向"
                 );
             });
+            let http = crate::ica::http::BridgeHttpClients::new().unwrap();
             let result = http_send_value(
+                &http.send,
                 &format!("http://{address}/prefix/"),
                 "test-token",
                 &serde_json::json!({"content": "测试"}),
@@ -142,5 +112,70 @@ mod tests {
             }
             server.await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn shared_client_reuses_keep_alive_connection_between_submissions() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            for request_index in 0..2 {
+                let mut request = Vec::new();
+                loop {
+                    let mut buffer = [0; 2048];
+                    let count = socket.read(&mut buffer).await.unwrap();
+                    assert!(count > 0);
+                    request.extend_from_slice(&buffer[..count]);
+                    if let Some(end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&request[..end]);
+                        let length = headers
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().unwrap())
+                            })
+                            .unwrap_or(0);
+                        if request.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                }
+                assert!(request.starts_with(b"POST /api/shared-token/sendMessage "));
+                let connection = if request_index == 0 {
+                    "keep-alive"
+                } else {
+                    "close"
+                };
+                socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: {connection}\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                    .await
+                    .is_err(),
+                "同一个 Bridge 的连续发送应复用连接池"
+            );
+        });
+        let http = crate::ica::http::BridgeHttpClients::new().unwrap();
+        for value in [1, 2] {
+            http_send_value(
+                &http.send,
+                &format!("http://{address}"),
+                "shared-token",
+                &serde_json::json!({"content": value}),
+            )
+            .await
+            .unwrap();
+        }
+        server.await.unwrap();
     }
 }

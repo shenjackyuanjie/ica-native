@@ -1,4 +1,3 @@
-use rust_socketio::Payload;
 use rust_socketio::asynchronous::Client;
 
 use serde_json::Value as JsonValue;
@@ -38,24 +37,7 @@ use file_upload::upload_and_send_file;
 use http_send::{http_send_message, request_send_token};
 use message_payload::build_multi_image_message;
 
-fn ack_payload_values(payload: &Payload) -> Vec<JsonValue> {
-    match payload {
-        Payload::Text(values) => {
-            if let Some(JsonValue::Array(args)) = values.first()
-                && values.len() == 1
-            {
-                return args.clone();
-            }
-            values.clone()
-        }
-        Payload::Binary(bytes) => vec![json!(bytes.to_vec())],
-        _ => Vec::new(),
-    }
-}
-
-fn ack_payload_first(payload: &Payload) -> Option<JsonValue> {
-    ack_payload_values(payload).into_iter().next()
-}
+use super::ack::{payload_first as ack_payload_first, payload_values as ack_payload_values};
 
 fn normalize_ack_list(mut values: Vec<JsonValue>) -> JsonValue {
     if values.len() == 1 {
@@ -71,10 +53,11 @@ async fn send_message_result(
     message: SendMessage,
     client: &Client,
     api_base_url: &str,
+    http: &crate::ica::http::BridgeHttpClients,
 ) -> Result<(), String> {
     if message.has_base64_media() {
         let token = request_send_token(client).await?;
-        http_send_message(api_base_url, &token, &message).await
+        http_send_message(&http.send, api_base_url, &token, &message).await
     } else if client::send_message(client, &message).await {
         Ok(())
     } else {
@@ -88,9 +71,10 @@ async fn send_message(
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
     bridge_key: &str,
     api_base_url: &str,
+    http: &crate::ica::http::BridgeHttpClients,
 ) {
     let room_id = message.room_id;
-    if let Err(error) = send_message_result(message, client, api_base_url).await {
+    if let Err(error) = send_message_result(message, client, api_base_url, http).await {
         emit_ui_event(
             event_tx,
             bridge_key,
@@ -115,6 +99,7 @@ pub async fn handle_command(
     bridge_key: &str,
     socket_url: &str,
     api_base_url: &str,
+    http: &crate::ica::http::BridgeHttpClients,
 ) {
     let ctx = CommandContext {
         client,
@@ -122,6 +107,7 @@ pub async fn handle_command(
         bridge_key,
         socket_url,
         api_base_url,
+        http,
     };
     match command {
         IcaCommand::SendVoiceMessage {
@@ -233,7 +219,7 @@ pub async fn handle_command(
                     message.add_img(&image.data, &image.mime);
                 }
             }
-            let result = send_message_result(message, client, api_base_url).await;
+            let result = send_message_result(message, client, api_base_url, http).await;
             let _ = result_tx.send(result);
         }
         IcaCommand::SendRawMessage { room_id, content } => {

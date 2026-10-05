@@ -18,14 +18,7 @@ pub async fn fetch_group_announcements(
     room_id: RoomId,
     bkn: i64,
 ) {
-    let CommandContext {
-        client,
-        event_tx,
-        bridge_key,
-        ..
-    } = ctx;
-    announcement::fetch_group_announcements(client, event_tx, bridge_key, request_id, room_id, bkn)
-        .await
+    announcement::fetch_group_announcements(ctx, request_id, room_id, bkn).await
 }
 
 pub async fn set_group_ban(
@@ -175,16 +168,7 @@ pub async fn publish_group_announcement(
     bkn: i64,
     draft: GroupAnnouncementDraft,
 ) {
-    let CommandContext {
-        client,
-        event_tx,
-        bridge_key,
-        ..
-    } = ctx;
-    announcement::publish_group_announcement(
-        client, event_tx, bridge_key, request_id, room_id, bkn, draft,
-    )
-    .await
+    announcement::publish_group_announcement(ctx, request_id, room_id, bkn, draft).await
 }
 
 pub async fn delete_group_announcement(
@@ -194,14 +178,5 @@ pub async fn delete_group_announcement(
     bkn: i64,
     fid: String,
 ) {
-    let CommandContext {
-        client,
-        event_tx,
-        bridge_key,
-        ..
-    } = ctx;
-    announcement::delete_group_announcement(
-        client, event_tx, bridge_key, request_id, room_id, bkn, fid,
-    )
-    .await
+    announcement::delete_group_announcement(ctx, request_id, room_id, bkn, fid).await
 }

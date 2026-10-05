@@ -11,11 +11,13 @@ use serde_json::json;
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
+pub mod ack;
 pub mod client;
 mod command;
 pub mod event;
 mod file_manager;
 mod handler;
+pub mod http;
 pub use command::{
     BridgeHandle, GROUP_BAN_MAX_DURATION, ICA_PROTOCOL_VERSION, IcaCommand, NoticerImage,
     NoticerSendPayload,
@@ -114,6 +116,7 @@ pub async fn run_bridge(
         }
     };
     let private_key = bridge_cfg.private_key.clone();
+    let http_clients = http::BridgeHttpClients::new().map_err(anyhow::Error::msg)?;
     let mut stop_alrm = stop_alrm;
     let mut reconnect_attempt = 0_usize;
 
@@ -352,6 +355,7 @@ pub async fn run_bridge(
                         &bridge_key,
                         &bridge_cfg.url,
                         &http_api_url,
+                        &http_clients,
                     )
                     .await;
                 }

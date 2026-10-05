@@ -3,7 +3,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use futures_util::future::BoxFuture;
@@ -230,88 +230,49 @@ pub async fn fetch_group_members(
     bridge_key: &str,
     room_id: i64,
 ) {
-    let timeout = Duration::from_secs(15);
-    let completed = Arc::new(AtomicBool::new(false));
-    let completed_callback = completed.clone();
+    let Some(group_id) = room_id.checked_abs() else {
+        emit_ui_event(
+            event_tx,
+            bridge_key,
+            "commandFailed",
+            json!({"kind":"fetchGroupMembers", "roomId":room_id, "message":"群号超出支持范围"}),
+        );
+        return;
+    };
+    let pending = crate::ica::ack::start(
+        client,
+        "getGroupMembers",
+        vec![json!(group_id)],
+        Duration::from_secs(15),
+    )
+    .await;
     let tx = event_tx.clone();
     let bridge_id = bridge_key.to_string();
-    let timeout_tx = event_tx.clone();
-    let timeout_bridge_id = bridge_key.to_string();
-    let started_at = Instant::now();
-    tracing::debug!(
-        bridge = bridge_key,
-        room_id,
-        "已发送 fetchGroupMembers 请求"
-    );
-    match client
-        .emit_with_ack(
-            "getGroupMembers",
-            vec![json!(room_id.abs())],
-            timeout,
-            move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
-                let tx = tx.clone();
-                let bridge_id = bridge_id.clone();
-                let completed = completed_callback.clone();
-                Box::pin(async move {
-                    if completed.swap(true, Ordering::AcqRel) {
-                        return;
-                    }
-                    let members = normalize_ack_list(ack_payload_values(&payload));
-                    let member_count = members.as_array().map_or(0, Vec::len);
-                    tracing::debug!(
-                        bridge = bridge_id,
-                        room_id,
-                        member_count,
-                        elapsed_ms = started_at.elapsed().as_millis(),
-                        "fetchGroupMembers acknowledged"
-                    );
-
-                    emit_ui_event(
-                        &tx,
-                        &bridge_id,
-                        "groupMembersResponse",
-                        json!({
-                            "roomId": room_id,
-                            "members": members,
-                        }),
-                    );
-                })
-            },
-        )
-        .await
-    {
-        Ok(()) => {
-            tokio::spawn(async move {
-                tokio::time::sleep(timeout).await;
-                if !completed.swap(true, Ordering::AcqRel) {
-                    emit_ui_event(
-                        &timeout_tx,
-                        &timeout_bridge_id,
-                        "commandFailed",
-                        json!({
-                            "kind": "fetchGroupMembers",
-                            "roomId": room_id,
-                            "message": "群成员列表 ACK 等待超时",
-                        }),
-                    );
-                }
-            });
-        }
-        Err(e) => {
-            completed.store(true, Ordering::Release);
-            tracing::warn!(bridge = bridge_key, room_id, error = %e, "发送 fetchGroupMembers 请求失败");
-            emit_ui_event(
-                event_tx,
-                bridge_key,
+    // 只等待注册，不把 15 秒 ACK 等待放进串行聊天命令分派。
+    tokio::spawn(async move {
+        let result = match pending {
+            Ok(pending) => pending.receive().await,
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(payload) => emit_ui_event(
+                &tx,
+                &bridge_id,
+                "groupMembersResponse",
+                json!({
+                    "roomId":room_id, "members":normalize_ack_list(ack_payload_values(&payload)),
+                }),
+            ),
+            Err(error) => emit_ui_event(
+                &tx,
+                &bridge_id,
                 "commandFailed",
                 json!({
-                    "kind": "fetchGroupMembers",
-                    "roomId": room_id,
-                    "message": e.to_string(),
+                    "kind":"fetchGroupMembers", "roomId":room_id, "message":error.to_string(),
                 }),
-            );
+            ),
         }
-    }
+    });
 }
 
 pub async fn fetch_messages_by_sender(
