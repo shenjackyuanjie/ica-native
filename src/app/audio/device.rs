@@ -102,8 +102,8 @@ struct Capture {
 struct Player {
     key: PlaybackKey,
     // Sink 必须比 OutputStream 先释放。
-    sink: rodio::Sink,
-    _stream: rodio::OutputStream,
+    sink: rodio::Player,
+    _stream: rodio::MixerDeviceSink,
     duration: Duration,
 }
 
@@ -286,7 +286,7 @@ impl AudioWorker {
             let source = decode(bytes)?;
             let duration = source.total_duration().unwrap_or_default();
             let sender = self.tx.clone();
-            let mut stream = rodio::OutputStreamBuilder::from_default_device()
+            let mut stream = rodio::DeviceSinkBuilder::from_default_device()
                 .map_err(|_| "没有可用的音频输出设备".to_string())?
                 .with_error_callback(move |_error| {
                     let _ = sender.send(WorkerCommand::OutputFailed {
@@ -297,7 +297,7 @@ impl AudioWorker {
                 .open_stream()
                 .map_err(|_| "无法打开音频输出设备".to_string())?;
             stream.log_on_drop(false);
-            let sink = rodio::Sink::connect_new(stream.mixer());
+            let sink = rodio::Player::connect_new(stream.mixer());
             sink.append(source);
             Ok::<_, String>(Player {
                 key: key.clone(),
@@ -427,7 +427,7 @@ fn start_capture(id: u64) -> Result<Capture, String> {
     let config = device
         .default_input_config()
         .map_err(|_| "无法读取麦克风配置，请检查系统录音权限".to_string())?;
-    let sample_rate = config.sample_rate().0;
+    let sample_rate = config.sample_rate();
     if !(8_000..=192_000).contains(&sample_rate) || !(1..=32).contains(&config.channels()) {
         return Err("麦克风默认采样率或声道数不受支持".to_string());
     }
@@ -435,16 +435,16 @@ fn start_capture(id: u64) -> Result<Capture, String> {
     let config: cpal::StreamConfig = config.into();
     let data = Arc::new(Mutex::new(CaptureData::default()));
     let stream = match sample_format {
-        cpal::SampleFormat::F32 => input_stream::<f32>(&device, &config, data.clone()),
-        cpal::SampleFormat::F64 => input_stream::<f64>(&device, &config, data.clone()),
-        cpal::SampleFormat::I8 => input_stream::<i8>(&device, &config, data.clone()),
-        cpal::SampleFormat::I16 => input_stream::<i16>(&device, &config, data.clone()),
-        cpal::SampleFormat::I32 => input_stream::<i32>(&device, &config, data.clone()),
-        cpal::SampleFormat::I64 => input_stream::<i64>(&device, &config, data.clone()),
-        cpal::SampleFormat::U8 => input_stream::<u8>(&device, &config, data.clone()),
-        cpal::SampleFormat::U16 => input_stream::<u16>(&device, &config, data.clone()),
-        cpal::SampleFormat::U32 => input_stream::<u32>(&device, &config, data.clone()),
-        cpal::SampleFormat::U64 => input_stream::<u64>(&device, &config, data.clone()),
+        cpal::SampleFormat::F32 => input_stream::<f32>(&device, config, data.clone()),
+        cpal::SampleFormat::F64 => input_stream::<f64>(&device, config, data.clone()),
+        cpal::SampleFormat::I8 => input_stream::<i8>(&device, config, data.clone()),
+        cpal::SampleFormat::I16 => input_stream::<i16>(&device, config, data.clone()),
+        cpal::SampleFormat::I32 => input_stream::<i32>(&device, config, data.clone()),
+        cpal::SampleFormat::I64 => input_stream::<i64>(&device, config, data.clone()),
+        cpal::SampleFormat::U8 => input_stream::<u8>(&device, config, data.clone()),
+        cpal::SampleFormat::U16 => input_stream::<u16>(&device, config, data.clone()),
+        cpal::SampleFormat::U32 => input_stream::<u32>(&device, config, data.clone()),
+        cpal::SampleFormat::U64 => input_stream::<u64>(&device, config, data.clone()),
         _ => return Err("麦克风默认采样格式不受支持".to_string()),
     }
     .map_err(|_| "无法打开麦克风，请检查系统录音权限或设备占用".to_string())?;
@@ -462,7 +462,7 @@ fn start_capture(id: u64) -> Result<Capture, String> {
 
 fn input_stream<T>(
     device: &cpal::Device,
-    config: &cpal::StreamConfig,
+    config: cpal::StreamConfig,
     data: Arc<Mutex<CaptureData>>,
 ) -> Result<cpal::Stream, cpal::BuildStreamError>
 where
@@ -470,10 +470,10 @@ where
     f32: cpal::FromSample<T>,
 {
     let channels = usize::from(config.channels);
-    let max_samples = config.sample_rate.0 as usize * MAX_RECORD_SECONDS as usize;
+    let max_samples = config.sample_rate as usize * MAX_RECORD_SECONDS as usize;
     let on_error = data.clone();
     device.build_input_stream(
-        config,
+        &config,
         move |input: &[T], _| {
             let mut captured = lock(&data);
             append_mono(input, channels, max_samples, &mut captured.samples);
@@ -517,10 +517,11 @@ fn decode(bytes: Arc<[u8]>) -> Result<rodio::buffer::SamplesBuffer, String> {
     })?;
     let channels = decoder.channels();
     let rate = decoder.sample_rate();
-    if channels == 0 || channels > 8 || rate == 0 || rate > 192_000 {
+    if channels.get() > 8 || rate.get() > 192_000 {
         return Err("语音的声道数或采样率不受支持".to_string());
     }
-    let limit = (usize::from(channels) * rate as usize * MAX_PLAY_SECONDS).min(MAX_DECODED_SAMPLES);
+    let limit = (usize::from(channels.get()) * rate.get() as usize * MAX_PLAY_SECONDS)
+        .min(MAX_DECODED_SAMPLES);
     let samples: Vec<f32> = decoder.take(limit + 1).collect();
     if samples.is_empty() {
         return Err("语音没有可播放的采样数据".to_string());
@@ -605,8 +606,8 @@ mod tests {
         let wav = wav::encode(&vec![0.1; 48_000], 48_000).unwrap();
         let decoded = decode(Arc::from(wav)).unwrap();
         assert_eq!(decoded.total_duration(), Some(Duration::from_secs(1)));
-        assert_eq!(decoded.channels(), 1);
-        assert_eq!(decoded.sample_rate(), 24_000);
+        assert_eq!(decoded.channels().get(), 1);
+        assert_eq!(decoded.sample_rate().get(), 24_000);
         assert!(decode(Arc::from([0_u8; 32])).is_err());
     }
 
