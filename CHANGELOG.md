@@ -2,6 +2,11 @@
 
 本文件记录 ica-native 的变更，遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格。
 
+## [Unreleased]
+
+### Changed
+- 适配 Rust 1.99 的原子更新 API 命名，将已弃用的 `fetch_update` 改为 `try_update`，消除图片磁盘缓存代码的发布构建警告，缓存容量记账行为保持不变。
+
 ## [0.1.21] - 2026-10-04
 
 ### Changed

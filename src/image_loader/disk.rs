@@ -76,11 +76,11 @@ impl DiskCache {
         let old_size = fs::metadata(&path).map_or(0, |metadata| metadata.len());
         match fs::remove_file(&path) {
             Ok(()) => {
-                let _ = self.tracked_bytes.fetch_update(
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                    |total| Some(total.saturating_sub(old_size)),
-                );
+                let _ =
+                    self.tracked_bytes
+                        .try_update(Ordering::Relaxed, Ordering::Relaxed, |total| {
+                            Some(total.saturating_sub(old_size))
+                        });
                 debug!("已删除图片磁盘缓存: {}", path.display());
             }
             Err(err) if err.kind() == io::ErrorKind::NotFound => {}
@@ -125,7 +125,7 @@ impl DiskCache {
         }
         let _ = self
             .tracked_bytes
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |total| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |total| {
                 Some(
                     total
                         .saturating_sub(old_size)
