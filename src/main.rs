@@ -1,3 +1,13 @@
+//! ica-native 的二进制入口（crate root）。
+//!
+//! 本文件只做「装配」：声明全部子模块、解析命令行日志级别、加载配置快照、
+//! 选择渲染后端，并把 [`ConfigStore`](crate::config::ConfigStore) 交给
+//! [`IcaApp`](crate::app::IcaApp)。聊天界面、Bridge 通信与各项工具分别位于
+//! `app`、`ica` 等子模块中，入口不承载业务逻辑。
+//!
+//! 启动顺序：`main` → `init_logging` → `egui_main`；
+//! 窗口关闭后由 `egui_main` 负责把运行期内可能变化的配置写回磁盘。
+
 pub mod agent_context;
 pub mod app;
 pub mod assets;
@@ -12,11 +22,21 @@ use crate::config::{RendererBackend, WgpuBackend};
 use eframe::egui;
 use egui::IconData;
 
+/// 客户端版本号，取 `Cargo.toml` 的 `version`，供关于界面与日志标识使用。
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// 项目仓库地址，用于「关于 / 反馈入口」中引导用户打开浏览器。
 pub const GITHUB_LINK: &str = "https://github.com/shenjackyuanjie/ica-native";
 
+/// 一次性「停止通知」接收端。
+///
+/// 后台服务（如 Noticer、Agent 上下文服务）把 `oneshot::Sender<()>` 交给控制器
+/// 持有，需要停机时发送方 `send` 或直接 drop，都会让本接收端立即返回，
+/// 从而触发 `axum` 的优雅关闭。
 pub type StopGetter = tokio::sync::oneshot::Receiver<()>;
 
+/// 从命令行参数推断日志级别：`--vv` 为 `TRACE`，`--v` 为 `DEBUG`，其余为 `INFO`。
+///
+/// 与参数顺序无关，无法识别的参数被忽略；`--vv` 优先于 `--v`。
 fn cli_log_level_from_args<I, S>(args: I) -> tracing::Level
 where
     I: IntoIterator<Item = S>,
@@ -33,6 +53,10 @@ where
     level
 }
 
+/// 初始化全局 `tracing` 订阅者，级别由命令行参数决定。
+///
+/// 同时用 `EnvFilter` 静默两个高频噪声源：`egui_winit` 的剪贴板事件与
+/// 自定义图片加载器的逐图日志，避免刷屏掩盖真实告警。
 fn init_logging() {
     let level = cli_log_level_from_args(std::env::args().skip(1));
     let level_name = match level {
@@ -48,12 +72,23 @@ fn init_logging() {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
+/// 程序入口：初始化日志，打出启动探针，再进入 egui 主流程。
+///
+/// 返回 `Err` 时由 Rust 运行时打印错误并以非零退出码结束。
 fn main() -> anyhow::Result<()> {
     init_logging();
     memory_probe::log("main:start");
     egui_main()
 }
 
+/// eframe 主流程：加载配置、构造窗口选项、运行 GUI，退出前写回配置。
+///
+/// 关键步骤依次为：
+/// 1. `ConfigStore::load` 解析配置文件（命令行 `--config` > 环境变量 > 默认路径）；
+/// 2. 解码内嵌的 512×512 图标作为窗口图标；
+/// 3. 按 `screen.renderer` / `screen.wgpu_backend` / `screen.vsync` 选择渲染后端；
+/// 4. `run_native` 中创建 `IcaApp` 并阻塞运行，直到窗口关闭；
+/// 5. 退出后 `ConfigStore::save` 把内存中的配置序列化回 TOML。
 fn egui_main() -> anyhow::Result<()> {
     memory_probe::log("egui_main:start");
     let config_store = config::ConfigStore::load()?;
@@ -63,6 +98,7 @@ fn egui_main() -> anyhow::Result<()> {
     let config = config_store.snapshot();
     memory_probe::log("cfg:snapshot");
 
+    // 图标走「内嵌 PNG → RGBA8 → IconData」，egui 窗口图标只接受原始像素缓冲。
     let icon = {
         let img =
             image::load_from_memory_with_format(assets::png::ICON_512X, image::ImageFormat::Png)?;
@@ -80,6 +116,8 @@ fn egui_main() -> anyhow::Result<()> {
         RendererBackend::Glow => eframe::Renderer::Glow,
         RendererBackend::Wgpu => eframe::Renderer::Wgpu,
     };
+    // 渲染后端与呈现模式在此一次性决定：VSync 决定帧提交时机，
+    // 低延迟预设（LOW_LATENCY）用于压小输入到显示的延迟。
     let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(
         eframe::egui_wgpu::SurfaceConfig {
             present_mode: if config.screen.vsync {
@@ -151,6 +189,7 @@ fn egui_main() -> anyhow::Result<()> {
     .expect("eframe::run_native 运行失败");
 
     memory_probe::log("egui_main:exit");
+    // run_native 会阻塞到窗口关闭，因此这里的 save 只在正常退出后执行。
     config_store.save()?;
     memory_probe::log("cfg:write_back");
     Ok(())

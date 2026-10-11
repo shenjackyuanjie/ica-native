@@ -1,3 +1,9 @@
+//! 应用配置：持久化到 `ica_native.toml` 的 `IcaCfg` 及各分段设置。
+//!
+//! 本模块只定义「配置长什么样、默认值是什么、怎么校验」；文件的读取、写入与
+//! 路径解析在 [`store`] 子模块（`ConfigStore`），界面编辑位于 `app::settings`。
+//! 因为允许同时连接多个 bridge，顶层用 `bridges` 列表，其余按功能分段。
+
 pub mod appearance;
 pub mod chat_groups;
 mod store;
@@ -17,14 +23,17 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt::Display, net::IpAddr, path::PathBuf};
 pub use store::{ConfigPaths, ConfigStore};
 
+/// tokio 运行时工作线程数默认值。
 fn tokio_rt_work_thread_default() -> u32 {
     4
 }
 
+/// 图片内存缓存默认上限（128MB）。
 fn image_cache_max_bytes_default() -> u64 {
     128 * 1024 * 1024
 }
 
+/// 图片磁盘缓存默认上限（1GB）。
 fn disk_image_cache_max_bytes_default() -> u64 {
     1024 * 1024 * 1024
 }
@@ -32,6 +41,9 @@ fn disk_image_cache_max_bytes_default() -> u64 {
 /// 配置文件
 ///
 /// 考虑到允许你同时连接多个 bridge, 所以这玩意做的有点复杂
+///
+/// `chat_groups` 是唯一不落盘的字段：分组由 bridge 下发并同步回 bridge，
+/// 仅作为运行时状态存在，因此标了 `#[serde(skip)]`。
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct IcaCfg {
     /// bridge 列表
@@ -75,6 +87,7 @@ pub struct IcaCfg {
     pub agent_context: crate::agent_context::AgentContextConfig,
 }
 
+/// `Display` 实现：把配置序列化为 TOML 文本，供日志与调试输出复用。
 impl Display for IcaCfg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let text = toml::to_string_pretty(self).expect("配置序列化为 TOML 失败");
@@ -82,6 +95,7 @@ impl Display for IcaCfg {
     }
 }
 
+/// `Default` 实现：全部字段取各自的 `*_default` 函数，bridge 列表为空。
 impl Default for IcaCfg {
     fn default() -> Self {
         Self {
@@ -107,6 +121,10 @@ fn ica_bridge_enable_default() -> bool {
 }
 
 impl IcaCfg {
+    /// 校验全部启用中 bridge 的私钥，并联动校验 Noticer 与 Agent 上下文配置。
+    ///
+    /// 私钥必须是 32 字节的十六进制字符串；启用 Agent 上下文时还要求其 Token
+    /// 与 Noticer 的发送 / 直发 Token 均不重复（读取权限与发送权限隔离）。
     pub fn validate_private_keys(&self) -> anyhow::Result<()> {
         for (idx, bridge) in self.bridges.iter().enumerate() {
             if !bridge.enable {
@@ -240,6 +258,9 @@ pub struct IcaBridge {
 }
 
 impl IcaBridge {
+    /// bridge 标识：优先取名称，名称为空时回退为 URL（保证非空且稳定）。
+    ///
+    /// Noticer 房间、Bridge 注册表等都以该标识为键。
     pub fn key(&self) -> &str {
         if self.name.is_empty() {
             &self.url
@@ -249,98 +270,134 @@ impl IcaBridge {
     }
 }
 
+/// Noticer 默认监听地址：仅回环，避免未配令牌时暴露到局域网。
 fn noticer_host_default() -> String {
     "127.0.0.1".to_string()
 }
 
+/// Noticer 默认监听端口。
 fn noticer_port_default() -> u16 {
     10020
 }
 
+/// 待发送队列容量默认值（按任务个数计）。
 fn noticer_queue_capacity_default() -> usize {
     256
 }
 
+/// 单次发送超时默认值（秒）。
 fn noticer_send_timeout_default() -> f64 {
     60.0
 }
 
+/// 发送重试次数默认值。
 fn noticer_retry_attempts_default() -> usize {
     3
 }
 
+/// 重试间隔默认值（秒）。
 fn noticer_retry_delay_default() -> f64 {
     1.0
 }
 
+/// 请求体大小默认上限（72MB）。
 fn noticer_max_body_size_default() -> usize {
     72 * 1024 * 1024
 }
 
+/// 单张图片大小默认上限（8MB）。
 fn noticer_max_image_size_default() -> usize {
     8 * 1024 * 1024
 }
 
+/// 单次请求图片数量默认上限（对齐 QQ 常用多图上限）。
 fn noticer_max_image_count_default() -> usize {
     9
 }
 
+/// 单次请求图片总大小默认上限（48MB）。
 fn noticer_max_total_image_size_default() -> usize {
     48 * 1024 * 1024
 }
 
+/// 队列中待发送图片字节总量默认上限（128MB）。
 fn noticer_max_queued_image_bytes_default() -> usize {
     128 * 1024 * 1024
 }
 
+/// 幂等记录存活时间默认值（秒，10 分钟）。
 fn noticer_idempotency_ttl_default() -> u64 {
     10 * 60
 }
 
+/// 幂等记录条数默认上限。
 fn noticer_idempotency_entries_default() -> usize {
     2048
 }
 
+/// 内建 Noticer HTTP webhook 服务的持久化配置。
+///
+/// 各项上限必须同时满足 `validate` 中的区间与 `noticer` 模块的硬上限；
+/// 房间表把「名字」映射到具体 bridge + 房间，供 `/v1/send` 按名路由。
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct NoticerConfig {
+    /// 是否启用内建 HTTP 服务。
     #[serde(default)]
     pub enabled: bool,
+    /// 监听地址；非回环地址必须配置 `auth_token`（见 `validate`）。
     #[serde(default = "noticer_host_default")]
     pub host: String,
+    /// 监听端口。
     #[serde(default = "noticer_port_default")]
     pub port: u16,
+    /// `/send` 与 `/v1/send` 的 Bearer 令牌；为空表示关闭鉴权（仅限回环）。
     #[serde(default)]
     pub auth_token: String,
+    /// `/v1/send/direct` 的独立 Bearer 令牌；为空表示关闭直发端点。
     #[serde(default)]
     pub direct_token: String,
+    /// 直发端点与未指定 bridge 时使用的默认 bridge 标识。
     #[serde(default)]
     pub default_bridge: String,
+    /// 待发送队列容量（任务个数）。
     #[serde(default = "noticer_queue_capacity_default")]
     pub queue_capacity: usize,
+    /// 单次发送超时（秒）；超时后结果未知，返回 504。
     #[serde(default = "noticer_send_timeout_default")]
     pub send_timeout_seconds: f64,
+    /// 发送失败时的最大重试次数。
     #[serde(default = "noticer_retry_attempts_default")]
     pub retry_attempts: usize,
+    /// 重试间隔（秒）。
     #[serde(default = "noticer_retry_delay_default")]
     pub retry_delay_seconds: f64,
+    /// 请求体大小上限（字节）。
     #[serde(default = "noticer_max_body_size_default")]
     pub max_body_size_bytes: usize,
+    /// 单张图片大小上限（字节）。
     #[serde(default = "noticer_max_image_size_default")]
     pub max_image_size_bytes: usize,
+    /// 单次请求图片数量上限。
     #[serde(default = "noticer_max_image_count_default")]
     pub max_image_count: usize,
+    /// 单次请求图片总大小上限（字节）。
     #[serde(default = "noticer_max_total_image_size_default")]
     pub max_total_image_size_bytes: usize,
+    /// 队列中待发送图片字节总量上限（字节）。
     #[serde(default = "noticer_max_queued_image_bytes_default")]
     pub max_queued_image_bytes: usize,
+    /// 幂等记录存活时间（秒）。
     #[serde(default = "noticer_idempotency_ttl_default")]
     pub idempotency_ttl_seconds: u64,
+    /// 幂等记录条数上限。
     #[serde(default = "noticer_idempotency_entries_default")]
     pub idempotency_max_entries: usize,
+    /// 房间名 → 房间定义；名字即 `/v1/send` 的 `room` 字段取值。
     #[serde(default)]
     pub rooms: BTreeMap<String, NoticerRoom>,
 }
 
+/// `Default` 实现：默认关闭，监听回环 10020，无令牌，限额取上述默认值。
 impl Default for NoticerConfig {
     fn default() -> Self {
         Self {
@@ -367,6 +424,12 @@ impl Default for NoticerConfig {
 }
 
 impl NoticerConfig {
+    /// 校验配置合法性；未启用时直接放行。
+    ///
+    /// 检查分四组：各项限额落在 `1..=硬上限` 且层层不小于下级上限
+    /// （单图 ≤ 多图总量 ≤ 队列总量）、监听非回环地址必须配令牌、
+    /// 启用中的 bridge 标识不得重复、房间必须引用已启用 bridge 且 `room_id` 非零、
+    /// `default_bridge` 必填且已启用。
     fn validate(&self, bridges: &[IcaBridge]) -> anyhow::Result<()> {
         if !self.enabled {
             return Ok(());
@@ -421,6 +484,7 @@ impl NoticerConfig {
             "noticer idempotency_max_entries 必须在 1..={HARD_MAX_IDEMPOTENCY_ENTRIES}"
         );
 
+        // localhost 与环回 IP（127.0.0.1 / ::1）视为本机访问，允许不配令牌。
         let host = self.host.trim();
         let loopback = host.eq_ignore_ascii_case("localhost")
             || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback());
@@ -459,23 +523,28 @@ impl NoticerConfig {
     }
 }
 
+/// Noticer 中的一个房间：投递到哪个 bridge 的哪个会话。
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct NoticerRoom {
+    /// 承担发送的 bridge 标识，必须对应一个启用中的 bridge。
     pub bridge: String,
+    /// 房间（群 / 私聊）ID；0 视为未配置。
     pub room_id: i64,
+    /// 可选说明，仅用于 `/status` 展示。
     #[serde(default)]
     pub description: String,
 }
 
+/// 窗口与渲染相关的屏幕设置。
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Screen {
-    /// 宽
+    /// 窗口初始宽度（逻辑像素）。
     #[serde(default = "screen_width_default")]
     pub width: f32,
-    /// 高
+    /// 窗口初始高度（逻辑像素）。
     #[serde(default = "screen_height_default")]
     pub height: f32,
-    /// 垂直同步
+    /// 是否启用垂直同步；关闭可降低延迟但可能提高功耗。
     #[serde(default = "screen_vsync_default")]
     pub vsync: bool,
     /// 渲染后端。
@@ -484,11 +553,12 @@ pub struct Screen {
     /// WGPU 使用的图形 API；仅在 renderer = "wgpu" 时生效。
     #[serde(default)]
     pub wgpu_backend: WgpuBackend,
-    /// 初始化时是否窗口居中
+    /// 初始化时是否窗口居中。
     #[serde(default = "screen_centered_default")]
     pub centered: bool,
 }
 
+/// 渲染后端选择。
 #[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RendererBackend {
@@ -499,14 +569,19 @@ pub enum RendererBackend {
     Wgpu,
 }
 
+/// WGPU 图形 API 选择；默认值按平台不同，Windows 上选 DX12 以规避 OpenGL 闪屏。
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WgpuBackend {
+    /// Direct3D 12（Windows 默认）。
     Dx12,
+    /// Vulkan（Linux 默认）。
     Vulkan,
+    /// Metal（macOS 默认）。
     Metal,
 }
 
+/// `Default` 实现：按编译目标平台选择，未覆盖的平台回退 Vulkan。
 impl Default for WgpuBackend {
     fn default() -> Self {
         #[cfg(target_os = "windows")]
@@ -515,24 +590,30 @@ impl Default for WgpuBackend {
         return Self::Vulkan;
         #[cfg(target_os = "macos")]
         return Self::Metal;
+        // 三个平台 cfg 必命中其一，此行仅为满足编译器的返回值检查。
         #[allow(unreachable_code)]
         Self::Vulkan
     }
 }
 
+/// 窗口初始宽度默认值。
 fn screen_width_default() -> f32 {
     1024.0
 }
+/// 窗口初始高度默认值。
 fn screen_height_default() -> f32 {
     768.0
 }
+/// 默认开启垂直同步。
 fn screen_vsync_default() -> bool {
     true
 }
+/// 默认不居中（沿用平台行为）。
 fn screen_centered_default() -> bool {
     false
 }
 
+/// `Default` 实现：1024×768、开 VSync、不居中，后端取各自默认值。
 impl Default for Screen {
     fn default() -> Self {
         Self {
@@ -546,18 +627,24 @@ impl Default for Screen {
     }
 }
 
+/// 已撤回消息重新编辑时，遇到输入框已有草稿的处理策略。
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReEditDraftConflictMode {
+    /// 直接用撤回内容覆盖现有草稿（默认）。
     Overwrite,
+    /// 把撤回内容追加到现有草稿之后。
     Append,
+    /// 已有草稿时跳过恢复，保留用户正在写的内容。
     SkipIfNonEmpty,
 }
 
+/// 默认策略：覆盖。
 fn reedit_draft_conflict_mode_default() -> ReEditDraftConflictMode {
     ReEditDraftConflictMode::Overwrite
 }
 
+/// 界面交互设置：会话切换、发送行为与关系网渲染。
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UiSetting {
     /// 选择会话后是否自动清空聊天列表搜索框
@@ -577,68 +664,84 @@ pub struct UiSetting {
     pub relation_network: RelationNetworkSetting,
 }
 
+/// 默认开启：选中会话后清空搜索框，避免下一个会话被旧关键词过滤。
 fn clear_search_on_room_select_default() -> bool {
     true
 }
 
+/// 默认关闭，理由见函数体内的兼容性说明。
 fn auto_fetch_history_on_room_select_default() -> bool {
     // 与 Icalingua++ 的默认行为保持一致：首次打开只读取 bridge 缓存，
     // 只有用户明确开启该选项后，切换会话才会额外请求协议端漫游历史。
     false
 }
 
+/// 默认开启：发送后回到底部，符合即时聊天的预期。
 fn scroll_to_bottom_after_send_default() -> bool {
     true
 }
 
+/// 普通视图最多参与渲染的节点数；超出部分在布局阶段被裁掉，保证帧率。
 fn relation_network_max_visible_nodes_default() -> usize {
     2_500
 }
 
+/// 聚焦节点后一跳视图的节点上限（比普通视图宽，用于围绕焦点展开）。
 fn relation_network_max_visible_nodes_focused_default() -> usize {
     6_000
 }
 
+/// 普通视图最多绘制的连线数。
 fn relation_network_max_drawn_links_default() -> usize {
     2_500
 }
 
+/// 聚焦视图最多绘制的连线数。
 fn relation_network_max_drawn_links_focused_default() -> usize {
     6_000
 }
 
+/// 最多绘制标签的节点数，防止密集图里文字互相重叠。
 fn relation_network_max_labels_default() -> usize {
     350
 }
 
+/// 节点数超过该值时自动关闭标签（先于 max_labels 生效的整体开关）。
 fn relation_network_auto_hide_labels_node_threshold_default() -> usize {
     2_000
 }
 
+/// 节点数超过该值时自动隐藏「共同群好友」这类中间关系，突出核心结构。
 fn relation_network_auto_hide_acquaintance_node_threshold_default() -> usize {
     10_000
 }
 
+/// 节点数超过该值时自动隐藏「仅同群」的弱关系节点。
 fn relation_network_auto_hide_stranger_node_threshold_default() -> usize {
     50_000
 }
 
+/// 力导向布局的近距离斥力强度；越大密集节点越容易被推开。
 fn relation_network_force_repulsion_strength_default() -> f32 {
     0.32
 }
 
+/// “自己”到好友节点的基础弹簧长度。
 fn relation_network_force_friend_link_length_default() -> f32 {
     1.05
 }
 
+/// “自己”到群节点的基础弹簧长度（比好友更长，形成外圈）。
 fn relation_network_force_group_link_length_default() -> f32 {
     2.40
 }
 
+/// 群节点到普通成员节点的弹簧目标长度（较短，使成员聚在群周围）。
 fn relation_network_force_group_member_link_length_default() -> f32 {
     0.28
 }
 
+/// QQ 关系网的渲染与布局设置；数值同时影响帧率与可读性，按机器性能调节。
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RelationNetworkSetting {
     /// 普通视图最多参与渲染的节点数
@@ -679,6 +782,7 @@ pub struct RelationNetworkSetting {
     pub force_group_member_link_length: f32,
 }
 
+/// `Default` 实现：全部取上述默认值函数。
 impl Default for RelationNetworkSetting {
     fn default() -> Self {
         Self {
@@ -702,6 +806,7 @@ impl Default for RelationNetworkSetting {
     }
 }
 
+/// `Default` 实现：清空搜索、发送后滚动、默认覆盖草稿，关系网取其默认值。
 impl Default for UiSetting {
     fn default() -> Self {
         Self {
@@ -714,10 +819,10 @@ impl Default for UiSetting {
     }
 }
 
-/// 默认配置文件路径
+/// 默认配置文件路径（相对于进程工作目录）。
 pub const DEFAULT_CFG_PATH: &str = "ica_native.toml";
 
-/// 环境变量名称
+/// 指定配置文件路径的环境变量名；优先级低于命令行 `--config`。
 pub const CFG_ENV_VAR: &str = "ICA_NATIVE_CONFIG";
 
 // 旧版的 CLI、环境变量和默认路径解析曾放在这里，现在统一由 ConfigStore 管理。

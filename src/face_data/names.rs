@@ -1,3 +1,9 @@
+//! 表情名称表（自动生成自 Icalingua++ 的 `faceNames.js`）。
+//!
+//! 按表情 ID 升序排列，供 `get_face_name` 二分查找；数量与内容以生成脚本为准，
+//! 需要增改名时请改脚本后重新生成，不要手改本文件。
+
+/// (表情ID, 表情名称) 静态表；按 ID 升序，便于 `binary_search_by_key` 定位。
 pub static FACE_NAMES: &[(u16, &str)] = &[
     (0, "惊讶"),
     (1, "撇嘴"),
