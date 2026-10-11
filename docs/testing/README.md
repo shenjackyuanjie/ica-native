@@ -71,6 +71,11 @@ cargo test --release --locked app::chat::composer::
 cargo test --release --locked app::chat::tests::scroll:: -- --test-threads=1
 cargo test --release --locked app::chat::tests::image_preview:: -- --test-threads=1
 cargo test --release --locked app::chat::tests::notices:: -- --test-threads=1
+# GIF 连续显示、纹理与像素缓存联动
+cargo test --release --locked image_loader::texture::tests:: -- --test-threads=1
+cargo test --release --locked image_loader::gif::tests:: -- --test-threads=1
+
+# 完整图片加载器测试
 cargo test --release --locked image_loader:: -- --test-threads=1
 
 # 关系网模型与布局

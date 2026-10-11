@@ -4,6 +4,10 @@
 //! 做 LRU；SVG 继续交给 egui 默认加载器，保留其按尺寸缓存的专门行为。
 //! 纹理上传成功后会释放可重建的原始字节/CPU 像素，仅在确需保留时（如 `bytes://`）例外。
 
+#[cfg(test)]
+#[path = "tests/texture.rs"]
+mod tests;
+
 use egui::{
     Context, TextureHandle, TextureOptions,
     load::{
@@ -81,6 +85,37 @@ impl TextureState {
         }
     }
 
+    /// 命中时刷新纹理活跃状态并返回可显示的尺寸与 ID。
+    fn cached_texture(&mut self, key: &TextureKey, now: Instant) -> Option<SizedTexture> {
+        let texture = self.textures.get_mut(key).map(|entry| {
+            entry.last_used = now;
+            SizedTexture::new(entry.handle.id(), entry.source_size)
+        });
+        self.evict_stale(now);
+        texture
+    }
+
+    /// 下一帧重建中，复用同一动画、同一采样选项最近显示的帧。
+    /// 仍使用原有 LRU 的句柄与预算，离屏陈旧帧可以正常被淘汰。
+    fn cached_gif_frame(
+        &mut self,
+        image_uri: &str,
+        options: TextureOptions,
+        now: Instant,
+    ) -> Option<SizedTexture> {
+        let key = self
+            .textures
+            .iter()
+            .filter(|(key, _)| {
+                key.options == options
+                    && egui::decode_animated_image_uri(&key.uri)
+                        .is_ok_and(|(base_uri, _)| base_uri == image_uri)
+            })
+            .max_by_key(|(_, entry)| entry.last_used)
+            .map(|(key, _)| key.clone())?;
+        self.cached_texture(&key, now)
+    }
+
     /// 超过字节上限时从 LRU 头部淘汰；仍在活跃宽限内的纹理暂时保留。
     fn evict_stale(&mut self, now: Instant) {
         while self.textures.len() > 1 && (self.max_bytes == 0 || self.total_bytes > self.max_bytes)
@@ -123,8 +158,9 @@ impl TextureLoader for TrackingTextureLoader {
         Self::ID
     }
 
-    /// egui 请求纹理时的入口：命中缓存直接返回，否则取图片、上传 GPU 并记账。
+    /// egui 请求纹理时的入口：静态缓存命中直接返回，动画命中同步刷新像素缓存活跃状态。
     ///
+    /// 动画临时 Pending 时复用可用帧；未命中则取图片、上传 GPU 并记账。
     /// SVG 让给默认 loader；上传成功后按需释放可重建的原始字节/CPU 像素。
     fn load(
         &self,
@@ -146,20 +182,38 @@ impl TextureLoader for TrackingTextureLoader {
             options: texture_options,
         };
         let now = Instant::now();
+        let gif_uri = egui::decode_animated_image_uri(uri)
+            .ok()
+            .map(|(base_uri, _)| base_uri);
+        let cached = self.state.lock().cached_texture(&key, now);
+        if gif_uri.is_none()
+            && let Some(texture) = cached
         {
-            let mut state = self.state.lock();
-            if let Some(entry) = state.textures.get_mut(&key) {
-                entry.last_used = now;
-                let texture = SizedTexture::new(entry.handle.id(), entry.source_size);
-                state.evict_stale(now);
-                return Ok(TexturePoll::Ready { texture });
-            }
-            state.evict_stale(now);
+            return Ok(TexturePoll::Ready { texture });
         }
 
+        // GIF 的 GPU 命中仍要访问像素加载器，让持续播放的动画刷新活跃状态；
+        // 否则它会在帧纹理已缓存后被误判为离屏，下一次帧未命中又重新解码。
+        // 只在 Pending 时保留可用画面，格式变化和真实错误继续交给上层处理。
         let image = match ctx.try_load_image(uri, size_hint)? {
-            ImagePoll::Ready { image } => image,
-            ImagePoll::Pending { size } => return Ok(TexturePoll::Pending { size }),
+            ImagePoll::Ready { image } => {
+                if let Some(texture) = cached {
+                    return Ok(TexturePoll::Ready { texture });
+                }
+                image
+            }
+            ImagePoll::Pending { size } => {
+                let texture = cached.or_else(|| {
+                    gif_uri.and_then(|base_uri| {
+                        self.state
+                            .lock()
+                            .cached_gif_frame(base_uri, texture_options, now)
+                    })
+                });
+                return Ok(texture.map_or(TexturePoll::Pending { size }, |texture| {
+                    TexturePoll::Ready { texture }
+                }));
+            }
         };
         let source_size = image.source_size;
         let handle = ctx.load_texture(uri, image, texture_options);
@@ -197,13 +251,17 @@ impl TextureLoader for TrackingTextureLoader {
         Ok(TexturePoll::Ready { texture })
     }
 
-    /// 忘记某 URI 的所有纹理缓存项（不同选项可能各有一份）。
+    /// 忘记某 URI 的所有纹理缓存项；源 URI 同时清理其动画帧，帧 URI 只清理该帧。
     fn forget(&self, uri: &str) {
         let mut state = self.state.lock();
         let keys = state
             .textures
             .iter()
-            .filter(|(key, _)| key.uri == uri)
+            .filter(|(key, _)| {
+                key.uri == uri
+                    || egui::decode_animated_image_uri(&key.uri)
+                        .is_ok_and(|(base_uri, _)| base_uri == uri)
+            })
             .map(|(key, _)| key.clone())
             .collect::<Vec<_>>();
         for key in keys {

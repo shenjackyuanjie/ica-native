@@ -376,8 +376,9 @@ impl ImageLoader for BoundedGifLoader {
             ctx.data_mut(|data| {
                 *data.get_temp_mut_or_default(Id::new(image_uri)) = image.frame_durations.clone();
             });
-            if release_source_bytes {
+            if release_source_bytes && !image_uri.starts_with("bytes://") {
                 // 上层预览先探测原始 bytes，再请求帧；首次 Ready 被消费前不能释放源。
+                // 内嵌源没有下载/文件重建路径，与静态纹理一致保留 bytes:// 字节。
                 let loaders = ctx.loaders();
                 loaders.include.forget(image_uri);
                 for loader in loaders.bytes.lock().iter().rev() {
