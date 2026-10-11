@@ -19,6 +19,8 @@ mod tests;
 
 对应文件为 `src/app/chat/tests/message_card.rs`，测试名仍位于 `app::chat::message_card::tests::` 下。定向执行应使用实际模块路径，不通过添加无关的函数名前缀来凑筛选条件。
 
+输入框作为一个完整功能放在 `src/app/chat/composer/`：`input.rs` 负责键盘事件，`reply.rs` 负责回复预览和导航，`draft.rs` 负责编辑恢复，`mentions.rs` 与 `drop.rs` 负责提及和拖放。对应回归位于 `composer/tests/`，共用消息数据位于其中的 `support.rs`，不再依赖一个混合职责的 `composer_helpers` 模块。
+
 ## 执行要求
 
 | 类别 | 执行方式与边界 |
@@ -61,6 +63,9 @@ cargo test --release --locked -- --list
 
 # 所有聊天测试，包括消息卡片、输入、操作与无窗口场景
 cargo test --release --locked app::chat::
+
+# 输入框的键盘、回复、草稿恢复和提及规则
+cargo test --release --locked app::chat::composer::
 
 # 滚动、图片预览、通知栏和图片加载器分别执行
 cargo test --release --locked app::chat::tests::scroll:: -- --test-threads=1

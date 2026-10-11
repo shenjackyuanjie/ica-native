@@ -1,8 +1,8 @@
 #[cfg(test)]
-#[path = "tests/composer_mentions.rs"]
+#[path = "tests/mentions.rs"]
 mod tests;
 
-use super::composer_helpers::{composer_keyboard_active, consume_composer_shortcut};
+use super::input::{composer_keyboard_active, consume_composer_shortcut};
 use crate::app::IcaApp;
 
 const MENTION_RESULTS_MAX_HEIGHT: f32 = 260.0;

@@ -1,15 +1,24 @@
+//! 聊天输入框视图及其输入、回复、草稿、提及和拖放子模块。
+
+mod draft;
+mod drop;
+mod input;
+mod mentions;
+mod reply;
+#[cfg(test)]
+mod tests;
+
 use super::{
-    composer_helpers::{
-        ReplyDirection, composer_keyboard_active, consume_composer_send_key,
-        consume_composer_shortcut, edit_last_own_message, move_reply_selection, reply_preview_text,
-    },
     format_pending_size, insert_mention_at_saved_cursor, insert_text_at_saved_cursor,
     saved_cursor_preceded_by,
 };
 use crate::app::media::MediaTask;
 use crate::app::stickers::{StickerEntry, StickerPickerTab};
 use crate::app::{IcaApp, PendingImage};
+use draft::edit_last_own_message;
 use egui::{Button, Image, Label, RichText};
+use input::{composer_keyboard_active, consume_composer_send_key, consume_composer_shortcut};
+use reply::{ReplyDirection, move_reply_selection, reply_preview_text};
 
 pub struct ComposerParams {
     pub active_bridge_idx: usize,
