@@ -973,7 +973,7 @@ pub fn write_back_cfg() -> anyhow::Result<()> {
 /// 使用闭包更新配置
 ///
 /// # Example
-/// ```
+/// ```text
 /// update_cfg(|cfg| {
 ///     cfg.ui_setting.some_field = new_value;
 /// });
@@ -1025,7 +1025,7 @@ pub fn reload_cfg() -> anyhow::Result<()> {
 /// 或者需要在不持有锁的情况下处理配置的场景
 ///
 /// # Example
-/// ```
+/// ```text
 /// let cfg_snapshot = get_cfg_snapshot();
 /// // 现在可以随意使用 cfg_snapshot，不会阻塞其他线程
 /// ```
@@ -1042,7 +1042,7 @@ pub fn get_cfg_snapshot() -> IcaCfg {
 /// 这是一个便捷函数，直接从全局配置中获取图片缓存路径
 ///
 /// # Example
-/// ```
+/// ```text
 /// let cache_path = get_image_cache_path();
 /// println!("图片缓存路径: {:?}", cache_path);
 /// ```
