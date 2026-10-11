@@ -399,41 +399,62 @@ pub fn render_message_image(
     max_width: f32,
     max_height: f32,
 ) -> Option<ImageAction> {
-    if should_try_gif_preview(&source.url, file_type)
-        && let Some(action) = render_gif_message_image(ui, source, max_width, max_height)
-    {
-        return action;
-    }
+    let options = egui::TextureOptions::default();
+    let hint = egui::load::SizeHint::default();
+    let gif = should_try_gif_preview(&source.url, file_type)
+        .then(|| try_load_gif_texture(ui.ctx(), &source.url, options, hint))
+        .flatten();
+    let poll = gif.unwrap_or_else(|| {
+        let result = ui.ctx().try_load_texture(&source.url, options, hint);
+        if result
+            .as_ref()
+            .is_err_and(should_probe_gif_after_static_error)
+            && let Some(gif) = try_load_gif_texture(ui.ctx(), &source.url, options, hint)
+        {
+            return gif;
+        }
+        result
+    });
 
-    match ui.ctx().try_load_texture(
-        &source.url,
-        egui::TextureOptions::default(),
-        egui::load::SizeHint::default(),
-    ) {
+    // 父级只分配一次固定预览槽。加载、失败和纹理淘汰都不能改写消息行高；
+    // 子 UI 不参与父级 advance，长错误详情也不能把槽撑开。
+    let slot_size = egui::vec2(max_width.min(ui.available_width()).max(0.0), max_height);
+    let (slot, _) = ui.allocate_exact_size(slot_size, egui::Sense::hover());
+    let mut preview = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(slot)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    preview.set_clip_rect(preview.clip_rect().intersect(slot));
+    match poll {
         Ok(egui::load::TexturePoll::Ready { texture }) => {
-            let response = ui.add(
+            let scale = (slot.width() / texture.size.x.max(1.0))
+                .min(slot.height() / texture.size.y.max(1.0))
+                .min(1.0);
+            let image_size = texture.size * scale;
+            let image_rect = egui::Align2([ui.layout().horizontal_align(), egui::Align::Min])
+                .align_size_within_rect(image_size, slot);
+            let response = preview.place(
+                image_rect,
                 Image::from_texture(texture)
-                    .max_width(max_width)
-                    .max_height(max_height)
-                    .maintain_aspect_ratio(true)
+                    .fit_to_exact_size(image_size)
                     .sense(egui::Sense::click()),
             );
-            return image_response_action(response, source);
+            // 仅图片本身可点击，槽内留白不触发打开或右键菜单。
+            image_response_action(response, source)
         }
         Ok(egui::load::TexturePoll::Pending { .. }) => {
-            ui.add(egui::Spinner::new());
-            ui.weak("图片加载中...");
+            preview.place(
+                egui::Rect::from_center_size(slot.center(), egui::vec2(20.0, 20.0)),
+                egui::Spinner::new(),
+            );
+            None
         }
         Err(err) => {
-            if should_probe_gif_after_static_error(&err)
-                && let Some(action) = render_gif_message_image(ui, source, max_width, max_height)
-            {
-                return action;
-            }
-            show_image_load_error(ui, &err);
+            show_image_load_error(&mut preview, &err);
+            None
         }
     }
-    None
 }
 
 fn should_try_gif_preview(url: &str, file_type: &str) -> bool {
@@ -443,40 +464,6 @@ fn should_try_gif_preview(url: &str, file_type: &str) -> bool {
     }
 
     image_url_looks_like_gif(url)
-}
-
-fn render_gif_message_image(
-    ui: &mut egui::Ui,
-    source: &ImageSource,
-    max_width: f32,
-    max_height: f32,
-) -> Option<Option<ImageAction>> {
-    match try_load_gif_texture(
-        ui.ctx(),
-        &source.url,
-        egui::TextureOptions::default(),
-        egui::load::SizeHint::default(),
-    )? {
-        Ok(egui::load::TexturePoll::Pending { .. }) => {
-            ui.add(egui::Spinner::new());
-            ui.weak("图片加载中...");
-            Some(None)
-        }
-        Ok(egui::load::TexturePoll::Ready { texture }) => {
-            let response = ui.add(
-                Image::from_texture(texture)
-                    .max_width(max_width)
-                    .max_height(max_height)
-                    .maintain_aspect_ratio(true)
-                    .sense(egui::Sense::click()),
-            );
-            Some(image_response_action(response, source))
-        }
-        Err(err) => {
-            show_image_load_error(ui, &err);
-            Some(None)
-        }
-    }
 }
 
 fn image_response_action(response: egui::Response, source: &ImageSource) -> Option<ImageAction> {
@@ -515,13 +502,13 @@ fn image_response_action(response: egui::Response, source: &ImageSource) -> Opti
 
 fn show_image_load_error(ui: &mut egui::Ui, err: &egui::load::LoadError) {
     let err_text = err.to_string();
-    if err_text.contains("图片链接已过期") {
-        ui.colored_label(egui::Color32::LIGHT_RED, "图片链接已过期");
-        ui.weak("需要重新获取该图片 URL");
+    let (label, details) = if err_text.contains("图片链接已过期") {
+        ("图片链接已过期", "需要重新获取该图片 URL".to_owned())
     } else {
-        ui.colored_label(egui::Color32::LIGHT_RED, "图片加载失败");
-        ui.weak(err_text);
-    }
+        ("图片加载失败", err_text)
+    };
+    ui.add(egui::Label::new(egui::RichText::new(label).color(egui::Color32::LIGHT_RED)).truncate())
+        .on_hover_text(details);
 }
 
 pub struct MessageRenderOptions {

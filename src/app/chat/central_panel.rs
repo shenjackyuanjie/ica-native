@@ -308,7 +308,7 @@ impl IcaApp {
             let conversation = self.bridge_states[active_bridge_idx].conversation(room_id);
             let has_requested =
                 conversation.is_some_and(|conversation| conversation.requested_snapshot);
-            let should_scroll_to_bottom =
+            let mut should_scroll_to_bottom =
                 conversation.is_some_and(|conversation| conversation.scroll_to_bottom);
             let forward_mode_active =
                 self.bridge_states[active_bridge_idx].is_forward_selection_active(room_id);
@@ -404,18 +404,40 @@ impl IcaApp {
                 show_message_avatar,
                 forward_mode_active,
             };
-            {
+            let layout_reading_anchor = {
                 let conversation = self.bridge_states[active_bridge_idx].conversation_mut(room_id);
                 let layout_changed = conversation
                     .message_layout_cache_key
                     .is_none_or(|old_key| !old_key.matches(message_layout_key));
                 if layout_changed {
+                    // 换行或头像布局变化后，旧像素偏移已不对应原消息。清缓存前保存消息行和行内偏移。
+                    // 显式定位、底部吸附仍优先，不抢占用户要求的目标。
+                    let anchor = if !should_scroll_to_bottom
+                        && !conversation.near_bottom
+                        && conversation.scroll_to_message_id.is_none()
+                        && conversation.message_row_layouts.len() == conversation.messages.len()
+                    {
+                        conversation.message_scroll_offset.and_then(|offset| {
+                            let idx = conversation
+                                .message_row_layouts
+                                .partition_point(|row| row.top + row.height <= offset);
+                            conversation
+                                .message_row_layouts
+                                .get(idx)
+                                .map(|row| (idx, offset - row.top))
+                        })
+                    } else {
+                        None
+                    };
                     conversation.message_row_heights.clear();
                     conversation.message_row_layouts.clear();
                     conversation.last_content_height = None;
                     conversation.message_layout_cache_key = Some(message_layout_key);
+                    anchor
+                } else {
+                    None
                 }
-            }
+            };
 
             let scroll_to_target = self.bridge_states[active_bridge_idx]
                 .conversation(room_id)
@@ -425,11 +447,11 @@ impl IcaApp {
                 .and_then(|conversation| conversation.highlight_message_id.clone());
             let mut scroll_target_found = scroll_to_target.is_none();
             let mut scroll_target_rendered = scroll_to_target.is_none();
-            let saved_scroll_offset = self.bridge_states[active_bridge_idx]
+            let mut saved_scroll_offset = self.bridge_states[active_bridge_idx]
                 .conversation(room_id)
                 .and_then(|conversation| conversation.message_scroll_offset)
                 .unwrap_or(0.0);
-            let mut measured_message_heights = Vec::<(String, f32)>::new();
+            let mut measured_message_heights = Vec::<(usize, f32)>::new();
 
             let needs_row_layout = {
                 let bridge_state = &self.bridge_states[active_bridge_idx];
@@ -507,6 +529,47 @@ impl IcaApp {
                 self.bridge_states[active_bridge_idx]
                     .conversation_mut(room_id)
                     .message_row_layouts = rows;
+            }
+
+            if let Some((idx, within_row)) = layout_reading_anchor
+                && let Some(row) = self.bridge_states[active_bridge_idx]
+                    .conversation(room_id)
+                    .and_then(|conversation| conversation.message_row_layouts.get(idx))
+            {
+                saved_scroll_offset = (row.top + within_row).max(0.0);
+            }
+
+            // 历史前插必须在选可见行、绘制之前补偿；帧末再改 offset 会先跳一帧。
+            {
+                let conversation = self.bridge_states[active_bridge_idx].conversation_mut(room_id);
+                if std::mem::take(&mut conversation.prepend_scroll_fix) {
+                    let content_height = conversation
+                        .message_row_layouts
+                        .last()
+                        .map_or(0.0, |row| row.top + row.height);
+                    let old_height = conversation.last_content_height.unwrap_or(content_height);
+                    saved_scroll_offset =
+                        (saved_scroll_offset + content_height - old_height).max(0.0);
+                }
+            }
+
+            // 首屏校准不能抢占用户输入。滚轮（包括平滑尾帧）或点击滚动条时立即解除底部锁。
+            let message_list_rect = egui::Rect::from_min_size(
+                ui.cursor().min,
+                egui::vec2(ui.available_width(), message_list_height),
+            );
+            let user_controls_scroll = ui.input(|input| {
+                input
+                    .pointer
+                    .hover_pos()
+                    .is_some_and(|pos| message_list_rect.contains(pos))
+                    && (input.smooth_scroll_delta.y != 0.0 || input.pointer.any_pressed())
+            });
+            if should_scroll_to_bottom && user_controls_scroll {
+                should_scroll_to_bottom = false;
+                self.bridge_states[active_bridge_idx]
+                    .conversation_mut(room_id)
+                    .scroll_to_bottom = false;
             }
 
             let initial_scroll_offset = if should_scroll_to_bottom {
@@ -591,7 +654,21 @@ impl IcaApp {
                                 let is_scroll_target =
                                     scroll_to_target.as_deref() == Some(&message.msg_id);
                                 let before_y = ui.cursor().min.y;
-                                ui.scope(|ui| {
+                                // 当前帧按缓存槽定位；真实高度留到帧末统一提交，避免总高度
+                                // 在“边画边校准”和下一帧重建之间来回跳，也避免上方冷行挤动正文。
+                                let spacing = ui.spacing().item_spacing.y;
+                                let (row_rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(row_width, (row.height - spacing).max(0.0)),
+                                    egui::Sense::hover(),
+                                );
+                                let mut row_ui = ui.new_child(
+                                    egui::UiBuilder::new()
+                                        .id_salt(("message_row", &message.msg_id))
+                                        .max_rect(row_rect),
+                                );
+                                row_ui.set_clip_rect(row_ui.clip_rect().intersect(row_rect));
+                                let ui = &mut row_ui;
+                                {
                                     if show_date_separator {
                                         render_date_separator(ui, &message.date_text);
                                     }
@@ -609,8 +686,8 @@ impl IcaApp {
                                     ) {
                                         pending_action = Some(action);
                                     }
-                                });
-                                let measured_height = (ui.cursor().min.y - before_y).max(24.0);
+                                }
+                                let measured_height = (ui.min_rect().height() + spacing).max(24.0);
                                 if highlighted_message.as_deref() == Some(message.msg_id.as_str()) {
                                     let rect = egui::Rect::from_min_size(
                                         egui::pos2(ui.min_rect().left(), before_y),
@@ -624,8 +701,7 @@ impl IcaApp {
                                     );
                                 }
                                 if (measured_height - row.height).abs() > 1.0 {
-                                    measured_message_heights
-                                        .push((message.msg_id.clone(), measured_height));
+                                    measured_message_heights.push((idx, measured_height));
                                 }
                                 if is_scroll_target {
                                     scroll_target_rendered = true;
@@ -690,31 +766,47 @@ impl IcaApp {
             }
 
             let message_heights_changed = !measured_message_heights.is_empty();
-            if message_heights_changed {
-                let conversation = self.bridge_states[active_bridge_idx].conversation_mut(room_id);
-                let heights = &mut conversation.message_row_heights;
-                for (msg_id, height) in measured_message_heights {
-                    heights.insert(msg_id, height);
-                }
-                conversation.message_row_layouts.clear();
-                ui.ctx().request_repaint();
-            }
-
-            // 前插旧消息后调整滚动偏移量，避免无限触发加载
             let mut scroll_output = scroll_output;
             {
                 let conversation = self.bridge_states[active_bridge_idx].conversation_mut(room_id);
-                let new_content_height = scroll_output.content_size.y;
-                if std::mem::take(&mut conversation.prepend_scroll_fix) {
-                    // 计算新增内容高度，将 scroll offset 下移相应距离
-                    let old_height = conversation.last_content_height.unwrap_or(0.0);
-                    let delta = new_content_height - old_height;
-                    if delta > 0.0 {
-                        scroll_output.state.offset.y += delta;
-                        scroll_output.state.store(ui.ctx(), scroll_output.id);
+                let old_content_height = scroll_output.content_size.y;
+                if message_heights_changed {
+                    let rows = &mut conversation.message_row_layouts;
+                    let anchor = rows.partition_point(|row| {
+                        row.top + row.height <= scroll_output.state.offset.y
+                    });
+                    let old_max_scroll =
+                        (old_content_height - scroll_output.inner_rect.height()).max(0.0);
+                    let at_bottom = should_scroll_to_bottom
+                        || (scroll_output.state.offset.y - old_max_scroll).abs() <= 1.0;
+                    let mut anchor_delta = 0.0;
+                    let mut total_delta = 0.0;
+                    for (idx, height) in measured_message_heights {
+                        let row = &mut rows[idx];
+                        let delta = height - row.height;
+                        total_delta += delta;
+                        if idx < anchor {
+                            anchor_delta += delta;
+                        }
+                        row.height = height;
+                        conversation
+                            .message_row_heights
+                            .insert(conversation.messages[idx].msg_id.clone(), height);
                     }
+                    let mut top = 0.0;
+                    for row in rows {
+                        row.top = top;
+                        top += row.height;
+                    }
+                    // 只补偿阅读锚点上方的误差；锚点自身与其下方变化不应拖动视口。
+                    scroll_output.state.offset.y = (scroll_output.state.offset.y
+                        + if at_bottom { total_delta } else { anchor_delta })
+                    .max(0.0);
+                    scroll_output.content_size.y = (old_content_height + total_delta).max(0.0);
+                    ui.ctx().request_repaint();
                 }
-                conversation.last_content_height = Some(new_content_height);
+                scroll_output.state.store(ui.ctx(), scroll_output.id);
+                conversation.last_content_height = Some(scroll_output.content_size.y);
                 conversation.message_scroll_offset = Some(scroll_output.state.offset.y);
             }
 

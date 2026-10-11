@@ -16,6 +16,11 @@ mod message_search;
 mod room_ops;
 mod search;
 
+#[cfg(test)]
+mod image_preview_regression;
+#[cfg(test)]
+mod scroll_regression;
+
 use std::borrow::Cow;
 use std::ops::Range;
 use std::time::Duration;

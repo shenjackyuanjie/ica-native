@@ -89,23 +89,28 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
                             state.conversation_mut(room_id).no_more_history = true;
                         } else {
                             // 合并到已有消息列表前面（去重）
-                            let existing = &mut state.conversation_mut(room_id).messages;
+                            let conversation = state.conversation_mut(room_id);
+                            let existing = &mut conversation.messages;
+                            let previous_first_id =
+                                existing.first().map(|message| message.msg_id.clone());
                             let existing_ids: std::collections::HashSet<&str> =
                                 existing.iter().map(|m| m.msg_id.as_str()).collect();
                             let mut new_msgs: Vec<Message> = older_messages
                                 .into_iter()
                                 .filter(|m| !existing_ids.contains(m.msg_id.as_str()))
                                 .collect();
-                            // 将旧消息放在前面
-                            new_msgs.append(existing);
-                            *existing = new_msgs;
-                            // 前插消息会改变新旧消息交界处是否需要日期分隔框，
-                            // 缓存高度包含分隔框，因此这里必须整体失效。
-                            state.conversation_mut(room_id).message_row_heights.clear();
-                            state.invalidate_message_rows(room_id);
-                            // 标记需要调整 scroll offset
-                            state.conversation_mut(room_id).prepend_scroll_fix = true;
-                            state.trim_after_history_prepend(room_id);
+                            if !new_msgs.is_empty() {
+                                // 只有原首条消息的前驱发生变化（日期框、发言人分组）；
+                                // 保留其它真实行高，否则前插会把整屏重新变成估算高度。
+                                new_msgs.append(existing);
+                                *existing = new_msgs;
+                                if let Some(id) = previous_first_id {
+                                    conversation.message_row_heights.remove(&id);
+                                }
+                                conversation.message_row_layouts.clear();
+                                conversation.prepend_scroll_fix = true;
+                                state.trim_after_history_prepend(room_id);
+                            }
                         }
                     }
                     Err(e) => {
