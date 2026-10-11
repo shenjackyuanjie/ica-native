@@ -156,6 +156,23 @@ pub fn try_load_gif_texture(
     texture_options: egui::TextureOptions,
     size_hint: egui::load::SizeHint,
 ) -> Option<egui::load::TextureLoadResult> {
+    // 已成功解码的 GIF 有帧时长记录。源 bytes 会在上传后释放，不应每帧
+    // 再探测/下载它；帧缓存未命中时，ImageLoader 自己会重新取源并后台解码。
+    if ctx.data(|data| {
+        data.get_temp::<egui::FrameDurations>(egui::Id::new(url))
+            .is_some()
+    }) {
+        let frame_uri = gif_frame_uri(ctx, url);
+        let result = ctx.try_load_texture(&frame_uri, texture_options, size_hint);
+        if !result
+            .as_ref()
+            .is_err_and(should_probe_gif_after_static_error)
+        {
+            return Some(result);
+        }
+        // 同 URI 内容被替换为静态图时，不让过期的 GIF 元数据挡住格式重新探测。
+        ctx.data_mut(|data| data.remove::<egui::FrameDurations>(egui::Id::new(url)));
+    }
     match ctx.try_load_bytes(url) {
         Ok(egui::load::BytesPoll::Pending { size }) => {
             Some(Ok(egui::load::TexturePoll::Pending { size }))
