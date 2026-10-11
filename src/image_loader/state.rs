@@ -32,13 +32,9 @@ pub enum PrepareLoad {
     /// 仍在等待底层 `BytesLoader` 返回结果。
     ///
     /// 这种状态不能直接短路返回，后续帧仍然要继续 poll `ctx.try_load_bytes`。
-    WaitingBytes {
-        generation: u64,
-    },
+    WaitingBytes { generation: u64 },
     /// 原始字节已经拿到，后台 decode job 也已经提交。
-    Decoding {
-        size: Option<Vec2>,
-    },
+    Decoding { size: Option<Vec2> },
     /// 已缓存的加载错误（含用户可读信息）。
     Error(Arc<str>),
 }
