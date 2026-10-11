@@ -7,21 +7,6 @@ impl IcaApp {
             egui::MenuBar::new().ui(ui, |ui| {
                 self.render_top_menus(ui);
             });
-            if let Some(error) = self.media_error.clone() {
-                ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
-                    if ui.small_button("关闭").clicked() {
-                        self.media_error = None;
-                    }
-                });
-            } else if let Some(notice) = self.media_notice.clone() {
-                ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(egui::Color32::LIGHT_GREEN, notice);
-                    if ui.small_button("关闭").clicked() {
-                        self.media_notice = None;
-                    }
-                });
-            }
         });
     }
 

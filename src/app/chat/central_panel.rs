@@ -83,16 +83,13 @@ impl IcaApp {
             let Some(active_bridge_idx) = self.active_bridge_idx else {
                 ui.heading("未启用 bridge");
                 ui.weak("请先在配置里启用至少一个 bridge。");
+                self.render_chat_notices(ui);
                 return;
             };
 
             let bridge_key = self.bridge_states[active_bridge_idx].bridge_key.clone();
             let socket_state = self.bridge_states[active_bridge_idx].socket_state;
             let auth_state = self.bridge_states[active_bridge_idx].auth_state;
-            self.bridge_states[active_bridge_idx].sync_status_history();
-            let last_error = self.bridge_states[active_bridge_idx].last_error.clone();
-            let last_notice = self.bridge_states[active_bridge_idx].last_notice.clone();
-            let status_history = self.bridge_states[active_bridge_idx].status_history.clone();
             let is_shut_up = self.bridge_states[active_bridge_idx].is_shut_up;
             let selected_room_id = self.bridge_states[active_bridge_idx].selected_room_id;
             let db_upgrade_progress = self.bridge_states[active_bridge_idx]
@@ -203,21 +200,9 @@ impl IcaApp {
                 });
             }
 
-            let mut clear_error = false;
-            let mut clear_notice = false;
+            self.render_chat_notices(ui);
+            let status_history = self.bridge_states[active_bridge_idx].status_history.clone();
             let mut clear_status_history = false;
-            if let Some(last_error) = last_error {
-                ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(egui::Color32::LIGHT_RED, last_error);
-                    clear_error = ui.small_button("清除").clicked();
-                });
-            }
-            if let Some(last_notice) = last_notice {
-                ui.horizontal_wrapped(|ui| {
-                    ui.weak(last_notice);
-                    clear_notice = ui.small_button("清除").clicked();
-                });
-            }
             // Bridge 诊断只在未进入会话时展示。聊天时把有限的顶部空间留给
             // 会话信息和常用操作；完整诊断仍可从“选项 → Socket.IO 状态”查看。
             if selected_room_id.is_none() {
@@ -259,12 +244,6 @@ impl IcaApp {
                                 }
                             });
                     });
-            }
-            if clear_error {
-                self.bridge_states[active_bridge_idx].clear_error();
-            }
-            if clear_notice {
-                self.bridge_states[active_bridge_idx].clear_notice();
             }
             if clear_status_history {
                 self.bridge_states[active_bridge_idx].clear_status_history();

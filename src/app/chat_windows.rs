@@ -63,6 +63,7 @@ impl IcaApp {
             {
                 self.open_chat_window(ui.ctx(), bridge_idx, room_id);
             }
+            self.render_chat_notices(ui);
         });
     }
 

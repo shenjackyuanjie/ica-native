@@ -13,11 +13,14 @@ mod image_viewer;
 mod message_card;
 mod message_ops;
 mod message_search;
+mod notices;
 mod room_ops;
 mod search;
 
 #[cfg(test)]
 mod image_preview_regression;
+#[cfg(test)]
+mod notice_regression;
 #[cfg(test)]
 mod scroll_regression;
 
