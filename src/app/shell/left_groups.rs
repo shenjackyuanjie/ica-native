@@ -1,8 +1,18 @@
+//! 最左侧的聊天分组导航栏：所有聊天/群聊/私聊/自定义分组与账号头像。
+//!
+//! 窄栏固定 70px，只放图标按钮与截断的文字标签。选中状态在闭包内先改本地
+//! 副本，绘制结束后再经 `select_active_chat_group` 统一提交，保证键盘导航
+//! 与鼠标点击走同一条路径；分组增删（把当前会话加入/移出分组）同样先记录
+//! 意图，最后统一同步到 Bridge。
+
 use crate::app::{ChatListScrollTarget, CompactChatPanel, IcaApp, SelectedChatGroup};
 use egui::{Button, Image, Label, RichText};
 
 impl IcaApp {
     /// 分类按钮与键盘共用入口；不改变当前房间，也不持久化临时筛选。
+    ///
+    /// 分组功能被外观设置禁用、目标分组越界时返回 `false`；成功切换时复位
+    /// 列表滚动位置，窄屏下同时回到会话列表页。
     pub fn select_active_chat_group(&mut self, group: SelectedChatGroup) -> bool {
         if self.custom_chat.disable_chat_group || self.custom_chat.hide_chat_group_sidebar {
             return false;
@@ -23,6 +33,12 @@ impl IcaApp {
         true
     }
 
+    /// 绘制最左侧分组导航栏。
+    ///
+    /// 顶部是账号头像（点击打开在线状态），随后是所有聊天/群聊/私聊与用户
+    /// 自定义分组，底部是分组管理入口。未读红点只画在未选中的分组上。
+    /// 为避免在 egui 闭包里同时可变借用 `self`，这里先把当前 bridge 的
+    /// 分组、房间等数据克隆成局部副本，闭包结束后再整体写回。
     pub fn render_left_groups_panel(&mut self, ui: &mut egui::Ui) {
         let disable_groups = self.custom_chat.disable_chat_group;
         let disable_dot = self.custom_chat.disable_chat_group_dot;
@@ -225,6 +241,7 @@ impl IcaApp {
                 });
             });
 
+        // 闭包期间改的是本地副本，结束后统一写回并失效可见房间缓存。
         if let Some(bridge_idx) = active_bridge_idx
             && let Some(state) = self.bridge_states.get_mut(bridge_idx)
         {
@@ -242,6 +259,7 @@ impl IcaApp {
                 .get(group_idx)
                 .cloned()
         {
+            // 成员变化只上报这一个分组，不做全量覆盖。
             self.send_update_chat_group(
                 bridge_idx,
                 &group.name,

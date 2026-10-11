@@ -1,8 +1,16 @@
+//! “关于”窗口：版本、项目信息、致谢与更新日志。
+//!
+//! 更新日志直接内嵌仓库根目录的 `CHANGELOG.md`（编译期 `include_str!`），
+//! 在运行时按 Keep a Changelog 的格式粗略解析成“每个版本一个折叠分组”，
+//! 默认展开最新一个版本。解析刻意保持宽松：无法识别的行按普通文本展示。
+
 use crate::app::IcaApp;
 use egui::Hyperlink;
 
+/// 编译期内嵌的更新日志原文。
 const CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
 
+/// 按 `## ` 标题切分出所有版本，产出 (版本标题, 版本正文)。
 fn changelog_releases() -> impl Iterator<Item = (&'static str, &'static str)> {
     CHANGELOG.split("\n## ").skip(1).filter_map(|release| {
         let (title, content) = release.split_once('\n').unwrap_or((release, ""));
@@ -11,6 +19,7 @@ fn changelog_releases() -> impl Iterator<Item = (&'static str, &'static str)> {
     })
 }
 
+/// 把 Keep a Changelog 的分节名翻译成中文；未识别的分节名原样返回。
 fn changelog_section_name(name: &str) -> &str {
     match name {
         "Added" => "新增",
@@ -23,6 +32,7 @@ fn changelog_section_name(name: &str) -> &str {
     }
 }
 
+/// 渲染一个版本号下的正文：`### ` 为分节标题，`- ` 为列表项（缩进的视为二级）。
 fn render_release_notes(ui: &mut egui::Ui, content: &str) {
     for line in content.lines() {
         let trimmed = line.trim();
@@ -43,6 +53,7 @@ fn render_release_notes(ui: &mut egui::Ui, content: &str) {
     }
 }
 
+/// 在可滚动区域内渲染整个更新日志，每个版本一个折叠分组。
 fn render_changelog(ui: &mut egui::Ui) {
     egui::ScrollArea::vertical()
         .id_salt("about_changelog")
@@ -58,6 +69,7 @@ fn render_changelog(ui: &mut egui::Ui) {
 }
 
 impl IcaApp {
+    /// 绘制“关于”窗口；开关状态取自 `open_page.about`。
     pub fn render_about_window(&mut self, ctx: &egui::Context) {
         egui::Window::new("关于 Icalingua++ native")
             .open(&mut self.open_page.about)

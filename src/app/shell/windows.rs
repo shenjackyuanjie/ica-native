@@ -1,9 +1,26 @@
+//! 各功能窗口与独立 viewport 的统一渲染入口。
+//!
+//! 主窗口每帧调用 `render_windows`，由它按 `open_page` 上的开关决定绘制哪些
+//! 窗口：定制聊天界面以独立 viewport 打开（改动经共享状态回传），在线状态、
+//! 验证消息、Socket.IO 状态、分组管理与各工具页直接以 `egui::Window` 绘制。
+//! 每帧先回收独立窗口的“关闭通知”开关，再把定制聊天界面窗口的草稿变更应用
+//! 到主状态；跨窗口通信有两种手段：`open_page` 布尔开关决定窗口是否存在，
+//! `Arc<AtomicBool>` / `Arc<Mutex<..>>` 让独立 viewport 反向通知主视口
+//! （关闭、草稿变脏）。窗口内的编辑同样遵循“先记录意图、闭包结束后统一
+//! 提交”的约定。
+
 use crate::app::IcaApp;
 use crate::app::online_mode::OnlineMode;
 use crate::config::ReEditDraftConflictMode;
 use std::sync::atomic::Ordering;
 
 impl IcaApp {
+    /// 把定制聊天界面窗口的草稿变更应用到主状态与配置。
+    ///
+    /// 草稿未标记 `dirty` 时直接返回；应用时逐项与旧值比较，只对真正变化
+    /// 的项调用对应的 setter（内部负责持久化），避免无谓写盘。隐藏分组
+    /// 导航栏时同时把各 bridge 的选中分组复位为“所有聊天”，防止筛选条件
+    /// 指向一个用户再也看不到的分组。
     fn apply_chat_appearance_viewport_changes(&mut self) {
         let pending = {
             let mut viewport = self.chat_appearance_viewport.lock().unwrap();
@@ -58,6 +75,12 @@ impl IcaApp {
     }
 
     // 将所有窗口渲染相关的独立函数合并到一个功能块里（内部分支式处理每个窗口）
+    /// 渲染全部功能窗口与独立 viewport。
+    ///
+    /// 顺序大致为：回收独立窗口关闭信号、应用定制界面草稿、两个定制聊天
+    /// 界面 viewport、各 bridge 的聊天窗口、在线状态、验证消息、关于、
+    /// Socket.IO 状态、各类工具窗口、聊天分组编辑器、配置文件编辑、
+    /// Noticer 设置、通知等级说明与图片查看器。
     pub fn render_windows(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         if self
@@ -546,7 +569,15 @@ impl IcaApp {
     }
 }
 
+/// 依赖当前活跃 bridge 的聊天相关窗口（转发目标选择、转发查看、群公告等）。
+///
+/// 这些窗口的内容随活跃 bridge 变化，`render_windows` 会为每个 bridge
+/// 临时切换 `active_bridge_idx` 后调用，因此内部一律显式使用当前下标。
 impl IcaApp {
+    /// 渲染转发目标选择窗口及依赖当前 bridge 的聊天子窗口。
+    ///
+    /// 仅在存在待转发消息且选择器打开时绘制目标列表；Escape 关闭与
+    /// “发送到 N 个会话”在闭包结束后统一生效。
     pub fn render_bridge_chat_windows(&mut self, ctx: &egui::Context) {
         if let Some(active_bridge_idx) = self.active_bridge_idx {
             let picker_state = self.bridge_states.get(active_bridge_idx).and_then(|state| {

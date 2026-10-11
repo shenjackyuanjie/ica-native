@@ -1,4 +1,8 @@
 //! 图片查看器状态。
+//!
+//! 查看器跑在独立 egui viewport 里，与主窗口通过 `Arc<Mutex<..>>` 共享本状态；
+//! 复制、保存等有副作用的操作不在 viewport 内直接执行，而是记入
+//! `pending_action`，由主循环下一帧统一处理。
 
 #[cfg(test)]
 #[path = "tests/image_viewer.rs"]
@@ -33,10 +37,12 @@ pub struct ImageViewerState {
 }
 
 impl ImageViewerState {
+    /// 创建只含单张图片的查看器。
     pub fn new(url: String) -> Self {
         Self::with_images(url.clone(), vec![url])
     }
 
+    /// 用一组可连续浏览的 URL 创建查看器；`url` 决定初始定位到哪一张。
     pub fn with_images(url: String, mut images: Vec<String>) -> Self {
         if images.is_empty() {
             images.push(url.clone());
@@ -58,6 +64,9 @@ impl ImageViewerState {
         }
     }
 
+    /// 用带来源信息的一组图片创建查看器，支持复制、保存与定位到消息。
+    ///
+    /// 先按结构相等定位当前图片，找不到时退回按 URL 匹配，都失败则定位第一张。
     pub fn with_sources(current: ImageSource, mut sources: Vec<ImageSource>) -> Self {
         if sources.is_empty() {
             sources.push(current.clone());
@@ -83,6 +92,7 @@ impl ImageViewerState {
         }
     }
 
+    /// 取当前图片的来源信息；缺失时用裸 URL 兜底。
     pub fn current_source(&self) -> ImageSource {
         self.sources
             .get(self.image_index)
@@ -90,6 +100,9 @@ impl ImageViewerState {
             .unwrap_or_else(|| ImageSource::url(self.url.clone()))
     }
 
+    /// 相对当前图片前后翻页；越界时返回 `false` 不做任何改变。
+    ///
+    /// 翻页后重置缩放与平移，并清除 1:1 请求。
     pub fn navigate(&mut self, offset: isize) -> bool {
         let next_index = self.image_index as isize + offset;
         if !(0..self.images.len() as isize).contains(&next_index) {
@@ -102,23 +115,23 @@ impl ImageViewerState {
         true
     }
 
-    /// 适应窗口大小（重置缩放和偏移）
+    /// 适应窗口大小（重置缩放和偏移）。
     pub fn fit_to_window(&mut self) {
         self.zoom = 1.0;
         self.pan_offset = egui::Vec2::ZERO;
     }
 
-    /// 放大 20%
+    /// 放大 20%，上限 20 倍。
     pub fn zoom_in(&mut self) {
         self.zoom = (self.zoom * 1.2).min(20.0);
     }
 
-    /// 缩小 20%
+    /// 缩小 20%，下限 5%。
     pub fn zoom_out(&mut self) {
         self.zoom = (self.zoom / 1.2).max(0.05);
     }
 
-    /// 缩放百分比文本（相对于原始像素大小）
+    /// 缩放百分比文本（相对于原始像素大小，含基础适配比例）。
     pub fn zoom_percent_text(&self) -> String {
         format!("{:.0}%", self.base_scale * self.zoom * 100.0)
     }

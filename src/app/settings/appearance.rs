@@ -1,8 +1,16 @@
+//! 定制聊天界面的外观选项 UI。
+//!
+//! 两组选项分别对应两个独立窗口：`show_ica_ui` 复刻 ica（Electron 版）已有
+//! 的设置项，`show_extra_ui` 是 ica-native 特有的补充项。两者都直接修改
+//! `ChatAppearanceSettings` 及调用方传入的行为开关，由窗口在关闭时统一
+//! 决定是否保存。
+
 use crate::config::{ChatAppearanceSettings, appearance::MessageSendKey};
 use egui::{Grid, Ui};
 
+/// 在 `ChatAppearanceSettings` 上直接渲染外观选项，不经过中间状态。
 impl ChatAppearanceSettings {
-    /// 展示 ica 也有的选项
+    /// 展示 ica 也有的选项（发送快捷键、隐藏图片/视频、超级表情、分组红点等）。
     pub fn show_ica_ui(&mut self, ui: &mut Ui) {
         Grid::new("custom_chat_ica_grid")
             .num_columns(2)
@@ -91,7 +99,10 @@ impl ChatAppearanceSettings {
             });
     }
 
-    /// 展示 ica-native 特有的选项
+    /// 展示 ica-native 特有的选项（话题按钮、纯文字模式、消息头像、自动拉取历史等）。
+    ///
+    /// 后三个参数不属于 `ChatAppearanceSettings`，而是 `ui_setting` 里的行为
+    /// 开关，由调用方（定制聊天界面 extra 窗口）持有并回写。
     pub fn show_extra_ui(
         &mut self,
         ui: &mut Ui,

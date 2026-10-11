@@ -1,3 +1,12 @@
+//! 左侧会话列表面板：bridge 选择、搜索、置顶排序与手写虚拟列表。
+//!
+//! 会话数量可能上千，因此列表是“手写虚拟列表”：用固定行高估算总高度，
+//! `show_viewport` 只渲染可见行（外加上下各两行的缓冲），行内全部用
+//! painter 直接绘制而不产生子 widget。这样做既保证快速滚动时的帧率，
+//! 也避免同一屏幕矩形在多次 pass 中对应不同房间导致 egui id 冲突。
+//! 所有会修改状态的操作（选中、置顶、删除等）先在闭包内记录意图，
+//! 绘制结束后统一执行。
+
 #[cfg(test)]
 #[path = "tests/chat_list.rs"]
 mod tests;
@@ -6,6 +15,9 @@ use crate::app::chat::format_message_content;
 use crate::app::{ChatListScrollTarget, IcaApp};
 use crate::ica::types::room::Room;
 
+/// 根据视口范围计算可见行区间（含上下各两行缓冲）。
+///
+/// 虚拟列表只需要绘制可见行；缓冲行让快速滚动时不会出现明显空白。
 fn visible_row_range(
     viewport_top: f32,
     viewport_bottom: f32,
@@ -17,11 +29,17 @@ fn visible_row_range(
     start.min(row_count)..end.min(row_count)
 }
 
+/// 取用于列表预览的草稿：去掉首尾空白，空白草稿视为没有草稿。
 fn visible_draft(draft: Option<&str>) -> Option<&str> {
     draft.map(str::trim).filter(|draft| !draft.is_empty())
 }
 
 impl IcaApp {
+    /// 绘制左侧会话列表面板。
+    ///
+    /// 面板自上而下包含：bridge 切换下拉框、标题栏按钮（联系人/刷新/顶部/
+    /// 底部）、会话搜索框，以及虚拟化的会话列表。空列表时区分“没有会话”
+    /// 与“没有匹配”两种提示。
     pub fn render_chat_list_panel(&mut self, ui: &mut egui::Ui) {
         egui::Panel::left("聊天列表")
             .resizable(true)
@@ -121,6 +139,8 @@ impl IcaApp {
                 let row_spacing = ui.spacing().item_spacing.y;
                 let row_height = content_height + content_top_padding + row_spacing;
                 let total_height = row_height * room_count as f32;
+                // 交互只记录意图，绘制结束后统一执行：egui 闭包内同时借用
+                // `self` 与状态容易引发重入/借用问题。
                 let mut pending_pin_change = None;
                 let mut pending_remove_chat = None;
                 let mut pending_ignore_chat: Option<(i64, String)> = None;
@@ -275,6 +295,7 @@ impl IcaApp {
                     }
                 });
 
+                // 滚动目标是一次性请求：本帧已用掉，随即复位。
                 if !matches!(self.chat_list_scroll_target, ChatListScrollTarget::None) {
                     self.chat_list_scroll_target = ChatListScrollTarget::None;
                 }
@@ -300,6 +321,10 @@ impl IcaApp {
             });
     }
 
+    /// 在给定矩形内绘制单个会话行（头像、名称、时间、置顶、预览、未读角标）。
+    ///
+    /// 只接收渲染所需数据，不访问 `self`：虚拟滚动中同一矩形会对应不同房间，
+    /// 行内绝不能产生依赖帧序的 widget id。
     fn render_room(&self, ui: &mut egui::Ui, rect: egui::Rect, room: &Room, draft: Option<&str>) {
         // 聊天列表是手写虚拟列表：快速滚动时，同一个屏幕 rect 会在 egui
         // 的多次 pass 之间对应到不同 room。这里刻意不用 Label/Button 等子

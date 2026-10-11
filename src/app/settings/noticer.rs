@@ -1,3 +1,10 @@
+//! 内建 Noticer 的设置编辑器。
+//!
+//! Noticer 是内置的 Webhook 服务：把消息经 HTTP 投递给外部系统。本编辑器
+//! 管理它的服务与鉴权、投递限制、房间路由。编辑采用“草稿 + 已加载”双份
+//! 模式：用户改动只进草稿，点保存才校验、写盘并即时应用；外部（其他窗口）
+//! 改过配置时，若本地没有未保存修改则自动同步，避免相互覆盖。
+
 use crate::config::{ConfigStore, IcaBridge, NoticerConfig, NoticerRoom};
 use crate::noticer::{
     HARD_MAX_BODY_SIZE, HARD_MAX_IDEMPOTENCY_ENTRIES, HARD_MAX_IDEMPOTENCY_TTL_SECONDS,
@@ -6,20 +13,31 @@ use crate::noticer::{
     HARD_MAX_SEND_TIMEOUT_SECONDS, HARD_MAX_TOTAL_IMAGE_SIZE, SUPPORTED_IMAGE_TYPES,
 };
 
+/// Noticer 设置编辑器；持有一份草稿与一份“已保存”配置用于比对。
 #[derive(Debug, Clone)]
 pub struct NoticerEditor {
+    /// 编辑中的配置草稿。
     draft: NoticerConfig,
+    /// 最近一次保存/加载时的配置，用于判断有无未保存修改。
     loaded: NoticerConfig,
+    /// “新增房间”表单：名称。
     new_room_name: String,
+    /// “新增房间”表单：所属 bridge key。
     new_room_bridge: String,
+    /// “新增房间”表单：Room ID 文本（提交时解析为 i64）。
     new_room_id: String,
+    /// “新增房间”表单：描述。
     new_room_description: String,
+    /// 当前错误提示（校验/保存失败）。
     error: Option<String>,
+    /// 保存成功提示。
     saved_notice: Option<String>,
+    /// 已启用 bridge 的配置副本，供下拉框选择。
     bridge_cfgs: Vec<IcaBridge>,
 }
 
 impl NoticerEditor {
+    /// 从配置存储加载当前 Noticer 配置与 bridge 列表。
     pub fn new(store: &ConfigStore) -> Self {
         let noticer = store.snapshot().noticer;
         let bridge_cfgs = store.snapshot().bridges;
@@ -36,6 +54,10 @@ impl NoticerEditor {
         }
     }
 
+    /// 从配置存储刷新 bridge 列表与草稿。
+    ///
+    /// 仅当草稿与已保存配置一致（用户没有未保存修改）时才跟随外部变化，
+    /// 否则保留用户正在编辑的内容。
     fn sync_from_store(&mut self, store: &ConfigStore) {
         let config = store.snapshot();
         let current = config.noticer;
@@ -49,6 +71,10 @@ impl NoticerEditor {
         }
     }
 
+    /// 校验并保存草稿到配置存储。
+    ///
+    /// 成功时把草稿记为“已保存”并返回它（供调用方即时应用到运行中的服务）；
+    /// 失败时记录错误并返回 `None`。
     fn save(&mut self, store: &ConfigStore) -> Option<NoticerConfig> {
         let mut config = store.snapshot();
         config.noticer = self.draft.clone();
@@ -72,15 +98,21 @@ impl NoticerEditor {
         }
     }
 
+    /// 切换 Noticer 启用状态并立即保存。
     pub fn set_enabled(&mut self, enabled: bool, store: &ConfigStore) -> Option<NoticerConfig> {
         self.draft.enabled = enabled;
         self.save(store)
     }
 
+    /// 绘制设置界面（丢弃“已应用的配置”返回值时使用）。
     pub fn ui(&mut self, ui: &mut egui::Ui, store: &ConfigStore) {
         let _ = self.ui_with_apply(ui, store);
     }
 
+    /// 绘制设置界面，并在发生保存时返回最新配置供调用方即时应用。
+    ///
+    /// 界面分四节：服务与鉴权、投递与限制、房间路由、不可突破的硬上限
+    /// （只读展示）；底部提供保存与撤销未保存修改。
     pub fn ui_with_apply(
         &mut self,
         ui: &mut egui::Ui,
@@ -100,6 +132,8 @@ impl NoticerEditor {
                 .checkbox(&mut bridge.allow_protocol_mismatch, bridge_label)
                 .changed();
             if changed {
+                // 协议兼容开关影响“下次重连”，不等待底部保存，立即写盘；
+                // 写盘失败时把开关弹回原值，避免界面显示一个并未持久化的状态。
                 let mut config = store.snapshot();
                 if let Some(current) = config
                     .bridges
@@ -320,6 +354,8 @@ impl NoticerEditor {
                             ui.end_row();
                         });
                     if ui.button("添加房间").clicked() {
+                        // 名称非空 + Room ID 为非零整数才允许加入；
+                        // 群号写作正数，Room ID 为 0 视为无效输入。
                         match self.new_room_id.trim().parse::<i64>() {
                             Ok(room_id)
                                 if !self.new_room_name.trim().is_empty() && room_id != 0 =>
@@ -381,6 +417,7 @@ impl NoticerEditor {
     }
 }
 
+/// 绘制一行“标签 + 数值拖动框”。
 fn number_row<T>(ui: &mut egui::Ui, label: &str, value: &mut T)
 where
     T: egui::emath::Numeric,
@@ -390,6 +427,7 @@ where
     ui.end_row();
 }
 
+/// 绘制一行“标签 + 只读等宽数值”（用于硬上限展示）。
 fn limit_row<T: std::fmt::Display>(ui: &mut egui::Ui, label: &str, value: T) {
     ui.label(label);
     ui.monospace(value.to_string());
