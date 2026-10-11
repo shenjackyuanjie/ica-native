@@ -1,3 +1,19 @@
+//! ica 协议客户端核心：与 Icalingua Bridge 之间的 Socket.IO 主连接。
+//!
+//! 每个启用的 bridge 由 `app::runtime` 各起一个 `run_bridge` 任务，职责是：
+//! - 按 `ws://` / `wss://` 连接 Bridge，注册协议事件回调，把服务端事件转成 `BridgeEvent`
+//!   通过 unbounded channel 发回 GUI 主线程；
+//! - 从另一个 unbounded channel 接收 GUI 侧产生的 `IcaCommand`，交给 `handler` 分发执行；
+//! - 维护"连接 -> 断线 -> 退避等待 -> 重连"的外层循环，重连次数用尽后通知 GUI 并退出。
+//!
+//! 关键设计：
+//! - 主连接只承载协议事件。鉴权在 `requireAuth` 回调里用 ed25519 私钥对服务端下发的
+//!   `auth_key` 签名完成，私钥在注册回调时就与当前 bridge 绑定，多 bridge 不会串 key；
+//! - 文件管理（fileMgr）不复用主连接，而是另建一次性 socket，见 `file_manager`；
+//! - 未知协议事件不静默丢弃：`on_any` 兜底会打一条日志，便于排查 Bridge 升级后
+//!   客户端"无响应"的兼容问题；确实不消费的事件则显式列入忽略清单；
+//! - 重连只由主循环调度，断开回调只负责发送内部控制信号，避免多处同时决定重连。
+
 pub mod ack;
 pub mod client;
 mod command;
@@ -77,31 +93,37 @@ const IGNORED_SOCKET_EVENTS: &[&str] = &[
     "notify",       // 远端客户端桌面通知请求；原生端暂不支持系统通知
 ];
 
-/// 启动 socketio client，并把服务端事件用 unbounded channel 发回 GUI 主线程
+/// 启动 socketio client，并把服务端事件用 unbounded channel 发回 GUI 主线程。
 ///
-/// 参数说明：
-/*
- - stop_alrm: 停止信号（oneshot receiver 的别名 StopGetter）
- - bridge_cfg: 当前 bridge 的配置（包含 url 与 private_key）
- - event_tx: 类型化 bridge 事件发送端
-*/
+/// 该函数会一直运行到收到停止信号、重连次数耗尽或 bridge 未启用时返回：
+/// - `stop_alrm`：停止信号（oneshot receiver 的别名 `StopGetter`），触发后主动断开连接并返回；
+/// - `bridge_cfg`：当前 bridge 的配置（包含 url、private_key 与协议版本容错开关）；
+/// - `event_tx`：类型化 bridge 事件发送端，所有协议事件与连接状态变化都经它回传 GUI；
+/// - `command_rx`：GUI 侧命令接收端，收到的每条 `IcaCommand` 在此循环内被处理。
+///
+/// 返回 `Ok(())` 表示正常结束（未启用、收到停止信号或重连耗尽）；只有内部错误才会返回 `Err`。
 pub async fn run_bridge(
     stop_alrm: StopGetter,
     bridge_cfg: &IcaBridge,
     event_tx: UnboundedSender<BridgeEvent>,
     mut command_rx: UnboundedReceiver<IcaCommand>,
 ) -> anyhow::Result<()> {
+    // 未启用的 bridge 直接返回，避免为一个不会连接的配置占用任务与 channel。
     if !bridge_cfg.enable {
         return Ok(());
     }
+    // 包装成 Option 是为了和 emit_ui_event 的签名对齐：channel 尚未建立时只打日志。
     let event_tx = Some(event_tx);
 
     // 这里的值都固定绑定到当前 bridge，后面注册回调时直接捕获它们。
+    // bridge_key 作为多 bridge 场景下的连接标识，配置里没写名字时退回用 url。
     let bridge_key = if bridge_cfg.name.is_empty() {
         bridge_cfg.url.clone()
     } else {
         bridge_cfg.name.clone()
     };
+    // Bridge 的 HTTP API 与 socket 同源同端口，只是把 ws/wss 换成 http/https，
+    // 大 payload 发送（含 base64 图片）会走这个地址，见 handler::http_send。
     let http_api_url = {
         if let Some(rest) = bridge_cfg.url.strip_prefix("ws://") {
             format!("http://{}", rest)
@@ -281,6 +303,8 @@ pub async fn run_bridge(
 
                 reconnect_attempt += 1;
                 if reconnect_attempt > MAX_RECONNECT_ATTEMPTS {
+                    // 达到上限属于预期的停止条件而不是故障：正常返回，
+                    // 具体原因已经通过 socketReconnectExhausted 告知 GUI。
                     emit_ui_event(
                         &event_tx,
                         &bridge_key,
@@ -325,6 +349,8 @@ pub async fn run_bridge(
         let should_reconnect = loop {
             tokio::select! {
                 _ = &mut stop_alrm => {
+                    // 主动断开只做尽力尝试：失败也不影响流程走向，
+                    // 真正重要的是通知 GUI 本次连接已经结束。
                     match client.disconnect().await {
                         Ok(_) => {
                             tracing::info!(bridge = %bridge_key, socket = "main", "Socket.IO 已断开");
@@ -338,6 +364,7 @@ pub async fn run_bridge(
                 }
                 Some(signal) = connection_signal_rx.recv() => {
                     match signal {
+                        // 只有这一种内部控制信号；保留枚举是为了将来扩展其它信号时有编译提示。
                         ConnectionSignal::Disconnected => {
                             break true;
                         }
@@ -368,6 +395,7 @@ pub async fn run_bridge(
             );
 
             if reconnect_attempt > MAX_RECONNECT_ATTEMPTS {
+                // 同上：断线重连达到上限后正常收尾，不再向 GUI 以外抛错。
                 emit_ui_event(
                     &event_tx,
                     &bridge_key,

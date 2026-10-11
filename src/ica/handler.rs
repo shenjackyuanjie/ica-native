@@ -1,3 +1,12 @@
+//! 命令分发：把 `IcaCommand` 交给对应领域的实现。
+//!
+//! `run_bridge` 的内层循环收到命令后调用本模块的 `handle_command`，它只做两件事：
+//! 用 `CommandContext` 打包共享依赖，再把命令路由到按领域拆分的子模块
+//! （消息、历史、群、房间、转发、账户、桥接 API 等）。
+//!
+//! 消息发送的公共实现（选 socket 还是 HTTP 通道、失败如何回报）也留在本文件，
+//! 因为各领域命令都会复用到它。
+
 mod announcement;
 mod contacts;
 mod file_upload;
@@ -31,6 +40,10 @@ use serde_json::Value as JsonValue;
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedSender;
 
+/// 把 ACK 回调返回的参数归一成数组。
+///
+/// Bridge 对"单个返回值"有时直接给值、有时包一层数组，这里统一成数组形状，
+/// 让调用方可以用固定下标读取；多参数时原样保留顺序。
 fn normalize_ack_list(mut values: Vec<JsonValue>) -> JsonValue {
     if values.len() == 1 {
         return match values.remove(0) {
@@ -41,6 +54,11 @@ fn normalize_ack_list(mut values: Vec<JsonValue>) -> JsonValue {
     JsonValue::Array(values)
 }
 
+/// 发送一条消息并按通道选择实现，返回可展示的错误文本。
+///
+/// 含 base64 媒体的消息不能走 socket：payload 过大且 Bridge 需要明确的接收确认，
+/// 因此先取一次性 token 再走 HTTP `sendMessage`（202 即视为已接收）。
+/// 其余消息仍走 socket，保持既有路径不变。
 async fn send_message_result(
     message: SendMessage,
     client: &Client,
@@ -57,6 +75,10 @@ async fn send_message_result(
     }
 }
 
+/// 发送一条消息，失败时以 `commandFailed` 事件通知 GUI。
+///
+/// 命令处理器不直接返回错误：GUI 只需要一个统一的失败通知来弹提示，
+/// 因此这里负责把错误包装成事件，字段里的 `kind` 指明是哪个命令出的问题。
 async fn send_message(
     message: SendMessage,
     client: &Client,
@@ -84,6 +106,10 @@ async fn send_message(
 ///
 /// 这里刻意保持穷尽匹配：新增 IcaCommand 变体时会在本函数编译失败，
 /// 提醒补上对应的处理函数，而不会被默认分支悄悄吞掉。
+///
+/// 参数均由 `run_bridge` 从当前连接捕获后传入：`client` 是主 socket，
+/// `event_tx` / `bridge_key` 用于把结果发回正确的 bridge，`socket_url` 与
+/// `api_base_url` 分别供 fileMgr 短连接与 HTTP 发送使用，`http` 是复用的客户端。
 pub async fn handle_command(
     command: IcaCommand,
     client: &Client,
@@ -201,6 +227,8 @@ pub async fn handle_command(
             .await
         }
         IcaCommand::SendNoticerMessage { payload, result_tx } => {
+            // Noticer 的表情发送只取第一张图（与 set_img 的"覆盖"语义一致），
+            // 普通发送则按顺序追加全部图片。
             let mut message = SendMessage::new(payload.content, payload.room_id, None);
             if payload.as_sticker {
                 if let Some(image) = payload.images.first() {
