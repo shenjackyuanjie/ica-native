@@ -1,6 +1,12 @@
+//! 关系网顶栏：标题统计与加载/刷新/多选等操作。
+
 use super::loading::queue_relation_member_requests;
 use super::*;
 
+/// 绘制关系网顶栏：左侧标题与总量统计，右侧操作按钮与状态徽标。
+///
+/// “加载全部群成员”入队加载请求；“刷新”请求重建图谱；多选按钮按当前
+/// 视图模式在“多选模式 / 查看关系 / 退出关系视图”之间切换。
 pub fn render_relation_network_header(
     ui: &mut egui::Ui,
     relation_network: &mut RelationNetworkState,
@@ -56,6 +62,7 @@ pub fn render_relation_network_header(
     });
 }
 
+/// 绘制顶栏按钮；`primary` 使用选区配色以强调主要操作。
 fn relation_toolbar_button(ui: &mut egui::Ui, label: &str, primary: bool) -> egui::Response {
     let theme = RelationTheme::from_ui(ui);
     let (fill, stroke, text_color) = if primary {
@@ -77,6 +84,7 @@ fn relation_toolbar_button(ui: &mut egui::Ui, label: &str, primary: bool) -> egu
     )
 }
 
+/// 绘制胶囊状状态徽标（圆点 + 文字），用于性能档位与连接状态。
 fn relation_status_badge(ui: &mut egui::Ui, text: &str, fill: egui::Color32, color: egui::Color32) {
     egui::Frame::new()
         .fill(fill)

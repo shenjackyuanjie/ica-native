@@ -11,18 +11,29 @@ use crate::agent_context::{
 };
 use std::{collections::HashSet, time::Duration};
 
+/// 待批准的读取请求；`snapshot` 为已生成但等待用户批准的快照。
 pub struct PendingRead {
+    /// 原始请求。
     pub request: GuiRequest,
+    /// 已生成的快照（指定目标时预生成，待批准后交付）。
     pub snapshot: Option<Box<Snapshot>>,
 }
+
+/// Agent 上下文界面的草稿状态与待处理请求。
 pub struct AgentContextUi {
+    /// 当前待批准请求。
     pub pending: Option<PendingRead>,
+    /// 设置界面中的编辑草稿。
     pub draft: AgentContextConfig,
+    /// 已保存/已应用的配置，用于判断有无未保存修改。
     pub loaded: AgentContextConfig,
+    /// 设置界面错误提示。
     pub settings_error: Option<String>,
+    /// 设置界面成功提示。
     pub settings_notice: Option<String>,
 }
 impl AgentContextUi {
+    /// 用当前配置初始化（草稿与已加载一致）。
     pub fn new(config: &AgentContextConfig) -> Self {
         Self {
             pending: None,
@@ -34,6 +45,9 @@ impl AgentContextUi {
     }
 }
 impl IcaApp {
+    /// 把配置存储中的 Agent 上下文配置同步到运行时与草稿。
+    ///
+    /// 配置变化时应用新配置、作废待处理请求；本地无未保存修改时同步草稿。
     pub fn sync_agent_context_config(&mut self) {
         let current = self.config.snapshot().agent_context;
         if current != self.agent_context_ui.loaded {
@@ -49,6 +63,9 @@ impl IcaApp {
         self.prune_agent_context_request();
     }
 
+    /// 返回当前已打开的会话目录：活跃 bridge 的选中会话 + 各 bridge 的独立窗口会话。
+    ///
+    /// 按 (bridge, room_id) 去重，并附带房间显示名。
     pub fn opened_agent_contexts(&self) -> Vec<Context> {
         let mut targets = Vec::new();
         if let Some(index) = self.active_bridge_idx
@@ -88,6 +105,9 @@ impl IcaApp {
             .collect()
     }
 
+    /// 为指定目标生成快照：仅使用该会话已加载的消息与当前多选集合。
+    ///
+    /// 目标未打开或会话不存在时返回 `target_not_open`。
     fn snapshot_agent_context(
         &self,
         target: &Target,
@@ -122,6 +142,10 @@ impl IcaApp {
         agent_context::snapshot(context, params, messages, &selected)
     }
 
+    /// 处理来自 HTTP 服务的请求。
+    ///
+    /// 列表请求直接按白名单过滤返回；读取请求先校验，白名单目标直接生成
+    /// 快照交付，其余进入待批准队列（同时只允许一个待批准请求）。
     pub fn handle_agent_context_request(&mut self, request: GuiRequest) {
         self.prune_agent_context_request();
         if !request.valid() || *request.config != self.config.snapshot().agent_context {
@@ -164,6 +188,7 @@ impl IcaApp {
         }
     }
 
+    /// 用户在批准弹窗中选定目标后：白名单直接交付，否则预生成快照转待批准。
     fn choose_agent_context(&mut self, request: GuiRequest, target: &Target) {
         if !request.valid() {
             request.finish(Err(ApiError::cancelled()));
@@ -183,6 +208,7 @@ impl IcaApp {
         }
     }
 
+    /// 清理已失效的待处理请求（租约过期、配置变更或目标会话已关闭）。
     fn prune_agent_context_request(&mut self) {
         let Some(pending) = self.agent_context_ui.pending.as_ref() else {
             return;
@@ -208,6 +234,7 @@ impl IcaApp {
         }
     }
 
+    /// 结束批准流程：批准则交付快照，取消/拒绝则以 `denied` 结束。
     fn finish_agent_context_consent(&mut self, approved: bool) {
         self.prune_agent_context_request();
         if let Some(pending) = self.agent_context_ui.pending.take() {
@@ -223,6 +250,10 @@ impl IcaApp {
         }
     }
 
+    /// 绘制 Agent 上下文的设置窗口与批准弹窗。
+    ///
+    /// 弹窗展示调用方自述用途与快照概要；白名单会话选中即交付，
+    /// 非白名单需逐次批准。等待期间定时重绘以及时移除超时弹窗。
     pub fn render_agent_context(&mut self, ctx: &egui::Context) {
         self.render_agent_context_settings(ctx);
         self.prune_agent_context_request();

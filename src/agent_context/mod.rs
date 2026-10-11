@@ -10,25 +10,37 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+/// 单次快照最多返回的消息条数。
 pub const MAX_MESSAGES: usize = 200;
+/// 单次响应体的硬上限（256 KiB），序列化前与序列化后各校验一次。
 pub const MAX_RESPONSE_BYTES: usize = 256 * 1024;
+/// 等待用户批准的单请求超时（秒）。
 pub const REQUEST_TIMEOUT_SECONDS: u64 = 120;
 
+/// 读取目标：一个 bridge 中的一个会话。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Target {
+    /// Bridge 标识。
     pub bridge: String,
+    /// 会话 ID（私聊为对方 QQ，群聊为负群号）。
     pub room_id: i64,
 }
 
+/// Agent 上下文服务配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentContextConfig {
+    /// 是否启用服务。
     pub enabled: bool,
+    /// 监听端口（仅本机）。
     pub port: u16,
+    /// 鉴权 Token；启用时必填，且不得与 Noticer Token 复用。
     pub auth_token: String,
+    /// 已打开会话白名单。
     pub allowlist: Vec<Target>,
 }
+/// 默认关闭，监听 10021，空白名单。
 impl Default for AgentContextConfig {
     fn default() -> Self {
         Self {
@@ -40,6 +52,8 @@ impl Default for AgentContextConfig {
     }
 }
 impl AgentContextConfig {
+    /// 校验配置：端口非零；启用时 Token 必须为非空可见 ASCII；
+    /// 白名单条目必须指定 Bridge 与非零会话 ID。
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(self.port != 0, "Agent 上下文端口不能为 0");
         if self.enabled {
@@ -57,34 +71,50 @@ impl AgentContextConfig {
         );
         Ok(())
     }
+
+    /// 判断目标是否在白名单内。
     pub fn allows(&self, target: &Target) -> bool {
         self.allowlist.contains(target)
     }
 }
 
+/// 快照对应的会话上下文（目标 + 房间名）。
 #[derive(Debug, Clone, Serialize)]
 pub struct Context {
+    /// 目标 bridge 与会话。
     #[serde(flatten)]
     pub target: Target,
+    /// 房间显示名。
     pub room_name: String,
 }
+
+/// 读取模式。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadMode {
+    /// 最近若干条已加载消息。
     #[default]
     Recent,
+    /// 界面中多选的消息。
     Selected,
 }
+
+/// 读取请求体。
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadRequest {
+    /// 目标会话；缺省时由服务端按当前打开会话补全。
     pub target: Option<Target>,
+    /// 读取模式。
     #[serde(default)]
     pub mode: ReadMode,
+    /// 近期模式的消息条数（1～200）。
     pub limit: Option<usize>,
+    /// 用途说明（≤ 200 字符，无控制字符），供批准界面展示。
     pub reason: Option<String>,
 }
 impl ReadRequest {
+    /// 校验请求：目标完整、多选模式不接受 limit、条数与用途说明合法。
     pub fn validate(&self) -> Result<(), ApiError> {
         if self
             .target
@@ -113,33 +143,58 @@ impl ReadRequest {
         Ok(())
     }
 }
+/// 消息附件的最小投影：仅类型与文件名，不含下载凭据。
 #[derive(Debug, Serialize)]
 pub struct Attachment {
+    /// 附件 MIME/类型。
     pub kind: String,
+    /// 文件名（可能缺失）。
     pub name: Option<String>,
 }
+
+/// 交付给调用方的单条消息投影。
 #[derive(Debug, Serialize)]
 pub struct ContextMessage {
+    /// 消息 ID。
     pub message_id: String,
+    /// 发送者 QQ。
     pub sender_id: i64,
+    /// 发送者昵称。
     pub sender_name: String,
+    /// 发送时间（UTC）。
     pub time: DateTime<Utc>,
+    /// 正文；受保护消息为占位文本。
     pub content: String,
+    /// 是否已撤回。
     pub deleted: bool,
+    /// 是否对界面隐藏。
     pub hidden: bool,
+    /// 是否闪照。
     pub flash: bool,
+    /// 是否系统消息。
     pub system: bool,
+    /// 被回复消息的 ID；受保护消息不返回引用详情。
     pub reply_to: Option<String>,
+    /// 附件投影列表。
     pub attachments: Vec<Attachment>,
 }
+
+/// 一次读取的完整快照。
 #[derive(Debug, Serialize)]
 pub struct Snapshot {
+    /// 数据来源标识（固定为 `loaded_only`）。
     pub source: &'static str,
+    /// 目标会话上下文。
     pub context: Context,
+    /// 使用的读取模式。
     pub mode: ReadMode,
+    /// 快照生成时间（UTC）。
     pub captured_at: DateTime<Utc>,
+    /// 会话中已加载的消息总数。
     pub loaded_count: usize,
+    /// 实际返回的消息数。
     pub returned_count: usize,
+    /// 返回的消息列表。
     pub messages: Vec<ContextMessage>,
 }
 /// 仅投影允许的字段，即使 GUI 已展开撤回内容也不恢复正文。
@@ -248,20 +303,29 @@ pub fn snapshot(
     }
     Ok(result)
 }
+/// 查询结果：会话列表或某个会话的快照。
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum QueryResult {
+    /// 已打开且在白名单内的会话列表。
     Contexts { contexts: Vec<Context> },
+    /// 单个会话的快照。
     Snapshot(Box<Snapshot>),
 }
+
+/// API 错误：HTTP 状态码 + 稳定错误码 + 可读信息。
 #[derive(Debug, Clone, Serialize)]
 pub struct ApiError {
+    /// HTTP 状态码（不参与序列化，仅用于响应）。
     #[serde(skip)]
     pub status: StatusCode,
+    /// 稳定错误码。
     pub code: &'static str,
+    /// 面向调用方的可读信息。
     pub message: String,
 }
 impl ApiError {
+    /// 构造自定义错误。
     pub fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             status,

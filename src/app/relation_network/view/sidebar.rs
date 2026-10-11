@@ -1,6 +1,13 @@
+//! 关系网左侧边栏：数据统计与加载进度、显示选项、节点搜索、群列表与当前视图。
+
 use super::loading::{queue_relation_member_requests, relation_member_load_progress};
 use super::*;
 
+/// 绘制整个侧边栏（可滚动）。
+///
+/// 自上而下：数据统计与群成员加载进度、显示选项与标签开关、节点搜索、
+/// 群列表（含“显示未加载群”与批量加载按钮）、当前视图摘要（非总览时），
+/// 以及节点大小图例。
 pub fn render_relation_network_sidebar(
     ui: &mut egui::Ui,
     relation_network: &mut RelationNetworkState,
@@ -94,6 +101,7 @@ pub fn render_relation_network_sidebar(
         });
 }
 
+/// 绘制一张带标题的分组卡片，内容由闭包提供。
 fn relation_sidebar_card(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
     let theme = RelationTheme::from_ui(ui);
     egui::Frame::new()
@@ -114,6 +122,9 @@ fn relation_sidebar_card(ui: &mut egui::Ui, title: &str, add_contents: impl FnOn
         });
 }
 
+/// 绘制可搜索的群列表（最多展示 200 个匹配项）。
+///
+/// 点击群名进入以该群为中心的聚焦视图；点击意图在滚动区域结束后执行。
 fn render_relation_group_list(ui: &mut egui::Ui, relation_network: &mut RelationNetworkState) {
     ui.add_sized(
         [ui.available_width(), 28.0],
@@ -178,6 +189,7 @@ fn render_relation_group_list(ui: &mut egui::Ui, relation_network: &mut Relation
     }
 }
 
+/// 绘制数据统计卡片：好友/群数量与总节点、总边数。
 fn render_relation_stats(ui: &mut egui::Ui, relation_network: &RelationNetworkState) {
     let counts = relation_network.graph.node_counts();
     egui::Grid::new("relation_stats_grid")
@@ -193,6 +205,7 @@ fn render_relation_stats(ui: &mut egui::Ui, relation_network: &RelationNetworkSt
         });
 }
 
+/// 绘制单个统计小卡片（标签 + 大号数值）。
 fn relation_stat_card(ui: &mut egui::Ui, label: &str, value: usize) {
     let theme = RelationTheme::from_ui(ui);
     egui::Frame::NONE
@@ -213,6 +226,7 @@ fn relation_stat_card(ui: &mut egui::Ui, label: &str, value: usize) {
         });
 }
 
+/// 绘制各类型节点的显示开关（带颜色圆点与右侧数量）。
 fn render_relation_filter_options(ui: &mut egui::Ui, relation_network: &mut RelationNetworkState) {
     let counts = relation_network.graph.node_counts();
     relation_option_row(
@@ -247,6 +261,7 @@ fn render_relation_filter_options(ui: &mut egui::Ui, relation_network: &mut Rela
     );
 }
 
+/// 绘制一行显示选项：复选框、类型颜色圆点、类型名与节点数量。
 fn relation_option_row(
     ui: &mut egui::Ui,
     kind: RelationNodeKind,
@@ -270,6 +285,7 @@ fn relation_option_row(
     });
 }
 
+/// 用一行彩色文字说明当前所处的视图模式。
 fn render_relation_view_hint(ui: &mut egui::Ui, relation_network: &RelationNetworkState) {
     let accent = ui.visuals().hyperlink_color;
     match &relation_network.view_mode {
@@ -297,6 +313,7 @@ fn render_relation_view_hint(ui: &mut egui::Ui, relation_network: &RelationNetwo
     }
 }
 
+/// 清空全部选中与视图状态，返回总览。
 pub fn clear_relation_selection(relation_network: &mut RelationNetworkState) {
     relation_network.focused_node_id = None;
     relation_network.selected_node_id = None;
@@ -306,6 +323,7 @@ pub fn clear_relation_selection(relation_network: &mut RelationNetworkState) {
     reset_relation_canvas_view(relation_network);
 }
 
+/// 把画布缩放与平移复位到“适应画布”的初始状态。
 pub fn reset_relation_canvas_view(relation_network: &mut RelationNetworkState) {
     relation_network.canvas_zoom = 1.0 / super::super::layout::RELATION_LAYOUT_SCALE;
     relation_network.canvas_pan = egui::Vec2::ZERO;

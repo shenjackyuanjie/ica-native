@@ -5,7 +5,10 @@
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelationAction {
+    /// 用当前数据重建关系图。
     Rebuild,
+    /// 加载群成员；`Some(limit)` 限制本次加载的群数，`None` 表示全部加载。
     LoadGroups(Option<usize>),
+    /// 关闭关系网窗口。
     Close,
 }

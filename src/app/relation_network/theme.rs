@@ -3,28 +3,51 @@
 /// 所有颜色都从当前 egui 主题的 `Visuals` 派生，保证关系网窗口与整体界面风格一致。
 #[derive(Clone, Copy)]
 pub struct RelationTheme {
+    /// 页面背景。
     pub page_bg: egui::Color32,
+    /// 普通表面（面板）背景。
     pub surface: egui::Color32,
+    /// 交替/弱化表面背景。
     pub surface_alt: egui::Color32,
+    /// 画布背景。
     pub canvas: egui::Color32,
+    /// 普通边框。
     pub border: egui::Color32,
+    /// 主文本。
     pub text: egui::Color32,
+    /// 次要文本。
     pub muted: egui::Color32,
+    /// 更弱的提示文本。
     pub subtle: egui::Color32,
+    /// 按钮填充。
     pub button_fill: egui::Color32,
+    /// 按钮边框。
     pub button_border: egui::Color32,
+    /// 按钮文本。
     pub control_text: egui::Color32,
+    /// 画布网格线。
     pub grid: egui::Color32,
+    /// 关系连线。
     pub edge: egui::Color32,
+    /// 悬停高亮的连线。
     pub edge_hover: egui::Color32,
+    /// 画布上的文本。
     pub canvas_text: egui::Color32,
+    /// 画布上的提示文本。
     pub canvas_hint: egui::Color32,
+    /// 浮层填充。
     pub overlay_fill: egui::Color32,
+    /// 浮层边框。
     pub overlay_border: egui::Color32,
+    /// 浮层投影。
     pub shadow: egui::Color32,
+    /// 成功状态填充。
     pub success_fill: egui::Color32,
+    /// 成功状态文本。
     pub success_text: egui::Color32,
+    /// 警告色。
     pub warning: egui::Color32,
+    /// 节点描边。
     pub node_outline: egui::Color32,
 }
 

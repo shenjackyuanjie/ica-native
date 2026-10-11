@@ -1,6 +1,9 @@
+//! Agent 上下文设置窗口：服务开关、Token、白名单与保存/撤销。
+
 use super::IcaApp;
 
 impl IcaApp {
+    /// 保存设置草稿到配置存储；失败时回滚到保存前的配置。
     fn save_agent_context_settings(&mut self) {
         let previous = self.config.snapshot();
         let mut updated = previous.clone();
@@ -22,6 +25,8 @@ impl IcaApp {
             }
         }
     }
+    /// 绘制设置窗口：服务状态、启用开关、端口与独立 Token（可生成/复制）、
+    /// 白名单管理（仅可加入当前已打开会话）与保存/放弃操作。
     pub fn render_agent_context_settings(&mut self, ctx: &egui::Context) {
         if !self.open_page.agent_context_settings {
             return;

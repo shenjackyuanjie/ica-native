@@ -13,9 +13,12 @@ use crate::ica::IcaCommand;
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 
+/// 同时进行的群成员请求上限，避免一次发起过多请求压垮 Bridge。
 const RELATION_MEMBER_LOAD_CONCURRENCY: usize = 12;
+/// “加载全部”过程中，每新加载多少个群就重建一次图谱。
 const RELATION_REBUILD_GROUP_STEP: usize = 12;
 
+/// 关系网数据加载与图谱维护的应用层实现。
 impl IcaApp {
     /// 根据当前桥接状态重新构建关系网图谱。
     ///
@@ -110,6 +113,10 @@ impl IcaApp {
         tracing::debug!(queued, limit = ?limit, "关系网群成员批次已排队");
     }
 
+    /// Bridge 数据更新后按需刷新关系网。
+    ///
+    /// 仅在涉及当前活跃 bridge 时生效；每新增 `RELATION_REBUILD_GROUP_STEP`
+    /// 个已加载群、或加载全部结束才重建图谱，加载中则继续补充请求。
     pub fn refresh_relation_network_after_bridge_update(&mut self, bridge_idx: usize) {
         if Some(bridge_idx) != self.active_bridge_idx {
             return;
@@ -155,6 +162,7 @@ impl IcaApp {
         }
     }
 
+    /// 按并发上限继续排队群成员请求；全部完成时结束“加载全部”状态。
     pub fn continue_relation_network_member_loading(&mut self) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
@@ -216,6 +224,8 @@ impl IcaApp {
         );
     }
 
+    /// 节点数超过配置阈值时自动隐藏标签与低优先级节点类型，
+    /// 保证大图下的可读性与帧率。
     pub fn apply_relation_network_auto_degrade(&mut self) {
         let mut relation_network = self.relation_network.lock().unwrap();
         let node_count = relation_network.graph.nodes.len();
@@ -247,18 +257,26 @@ impl IcaApp {
 /// 使子视口无需直接访问 `BridgeState`。
 #[derive(Debug, Clone)]
 pub struct RelationBridgeSnapshot {
+    /// 房间列表长度。
     pub rooms_len: usize,
     /// 当前桥接房间列表中的群总数，不能使用上一次图谱构建时缓存的总数。
     pub total_groups: usize,
+    /// 已加载成员列表的群数。
     pub loaded_groups: usize,
+    /// 正在加载成员列表的群数。
     pub loading_groups: usize,
+    /// 尚未开始加载的群数。
     pub pending_groups: usize,
 }
 
+/// 群成员加载进度。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RelationMemberLoadProgress {
+    /// 已加载群数（已钳制在总数内）。
     pub loaded: usize,
+    /// 群总数（可能为 0）。
     pub total: usize,
+    /// 0 到 1 的进度比；总数为 0 时为 0。
     pub ratio: f32,
 }
 
@@ -283,6 +301,7 @@ pub fn relation_member_load_progress(
     }
 }
 
+/// 由子视口的工具条按钮排队一个“加载群成员”动作，交由主视口下一帧执行。
 pub fn queue_relation_member_requests(
     relation_network: &mut RelationNetworkState,
     limit: Option<usize>,
@@ -291,6 +310,10 @@ pub fn queue_relation_member_requests(
     tracing::debug!(limit = ?limit, "关系网成员加载动作已排队");
 }
 
+/// 向 Bridge 命令通道排队最多 `limit` 个群的成员请求。
+///
+/// 跳过已加载/加载中的群并把它们标记为加载中；发送失败时回滚标记、
+/// 记录错误并停止继续排队。返回实际排队的群数。
 pub fn request_relation_network_members_with_tx(
     state: &mut BridgeState,
     command_tx: &UnboundedSender<IcaCommand>,
@@ -329,6 +352,7 @@ pub fn request_relation_network_members_with_tx(
     queued
 }
 
+/// 返回当前 bridge 的登录 QQ；未登录（QQ 为 0）时返回 `None`。
 pub fn relation_login_user_id(state: &BridgeState) -> Option<i64> {
     (state.online_data.qqid > 0).then_some(state.online_data.qqid)
 }

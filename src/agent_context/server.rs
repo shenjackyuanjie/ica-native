@@ -32,28 +32,44 @@ use tokio::{
     sync::{Semaphore, mpsc, oneshot, watch},
 };
 
+/// 经 GUI 事件队列转发的操作。
 #[derive(Debug)]
 pub enum Operation {
+    /// 列出已打开且在白名单内的会话。
     List,
+    /// 读取指定会话的上下文。
     Read(ReadRequest),
 }
+
+/// 请求租约：绑定配置代次与截止时间，用于作废过期请求。
 #[derive(Debug, Clone)]
 pub struct Lease {
+    /// 配置代次计数器；配置变化时递增。
     pub generation: Arc<AtomicU64>,
+    /// 本请求签发时看到的代次。
     pub expected_generation: u64,
+    /// 请求截止时刻。
     pub deadline: Instant,
 }
 impl Lease {
+    /// 租约是否有效：代次未变且未超时。
     pub fn valid(&self) -> bool {
         self.generation.load(Ordering::SeqCst) == self.expected_generation
             && Instant::now() < self.deadline
     }
 }
+
+/// 送入 GUI 事件队列的上下文请求。
 pub struct GuiRequest {
+    /// 请求 ID（用于日志与响应关联）。
     pub id: u64,
+    /// 操作（列表或读取）。
     pub operation: Operation,
+    /// 请求签发时的配置快照。
     pub config: Arc<AgentContextConfig>,
+    /// 请求租约。
     pub lease: Lease,
+    /// 回传结果的 oneshot 通道。
     pub result_tx: oneshot::Sender<Result<QueryResult, ApiError>>,
 }
 impl fmt::Debug for GuiRequest {
@@ -64,9 +80,12 @@ impl fmt::Debug for GuiRequest {
     }
 }
 impl GuiRequest {
+    /// 请求是否仍可完成：租约有效且调用方尚未取消等待。
     pub fn valid(&self) -> bool {
         self.lease.valid() && !self.result_tx.is_closed()
     }
+
+    /// 完成请求并回传结果；已失效的请求一律以“已取消”结束。
     pub fn finish(self, result: Result<QueryResult, ApiError>) {
         let result = if self.valid() {
             result
@@ -77,12 +96,14 @@ impl GuiRequest {
     }
 }
 
+/// 服务控制器：供 GUI 侧热更新配置与查询运行状态。
 pub struct Controller {
     config_tx: watch::Sender<AgentContextConfig>,
     generation: Arc<AtomicU64>,
     status: Arc<RwLock<String>>,
 }
 impl Controller {
+    /// 应用新配置；配置变化时递增代次，同步作废所有在途请求。
     pub fn apply(&self, config: AgentContextConfig) {
         if *self.config_tx.borrow() != config {
             // 同步作废旧 GUI 请求，不等待后台服务重建。
@@ -90,26 +111,43 @@ impl Controller {
             self.config_tx.send_replace(config);
         }
     }
+
+    /// 返回服务当前状态文本（供设置界面展示）。
     pub fn status(&self) -> String {
         self.status.read().expect("Agent 服务状态锁被污染").clone()
     }
 }
+
+/// 单个服务实例的运行状态（随配置变化整体重建）。
 #[derive(Clone)]
 struct ServiceState {
+    /// 当前配置。
     config: Arc<AgentContextConfig>,
+    /// 全局配置代次。
     generation: Arc<AtomicU64>,
+    /// 本实例签发时期望的代次。
     expected_generation: u64,
+    /// 通向 GUI 事件队列的发送端。
     event_tx: mpsc::UnboundedSender<AppEvent>,
+    /// egui 上下文，用于请求重绘。
     ctx: egui::Context,
+    /// 停止信号。
     stop_rx: watch::Receiver<bool>,
     // 包括目录请求也限流，不能通过只读目录接口淹没 GUI 队列。
     slot: Arc<Semaphore>,
+    /// 单请求超时。
     timeout: Duration,
 }
+
+/// 更新服务状态文本并请求界面重绘。
 fn set_status(status: &RwLock<String>, ctx: &egui::Context, value: String) {
     *status.write().expect("Agent 服务状态锁被污染") = value;
     ctx.request_repaint();
 }
+/// 在给定 tokio 运行时上启动（或按配置停用）Agent 上下文服务。
+///
+/// 返回的 `Controller` 供 GUI 侧热更新配置；内部循环监听配置变化，
+/// 启用时重建监听实例，停用或超时时优雅停止。
 pub fn spawn(
     runtime: &Runtime,
     config: AgentContextConfig,
@@ -163,6 +201,7 @@ pub fn spawn(
     });
     controller
 }
+/// 运行单轮 HTTP 服务：校验配置、绑定本机端口并提供优雅停止。
 async fn serve(state: ServiceState, status: Arc<RwLock<String>>) {
     if let Err(error) = state.config.validate() {
         set_status(&status, &state.ctx, error.to_string());
@@ -195,6 +234,8 @@ async fn serve(state: ServiceState, status: Arc<RwLock<String>>) {
         set_status(&status, &state.ctx, "监听服务异常停止".into());
     }
 }
+/// 构造路由：`/v1/contexts`（GET 列表）与 `/v1/context`（POST 读取），
+/// 未知路径与方法分别返回 404/405。
 fn router(state: ServiceState) -> Router {
     Router::new()
         .route("/v1/contexts", get(query))
@@ -221,6 +262,7 @@ fn router(state: ServiceState) -> Router {
         })
         .with_state(state)
 }
+/// 鉴权：拒绝带浏览器 `Origin` 的请求，并按恒定时间比较 Bearer Token。
 fn authorize(request: &Request, token: &str) -> Result<(), ApiError> {
     if request.headers().contains_key(header::ORIGIN) {
         return Err(ApiError::new(
@@ -250,6 +292,8 @@ fn authorize(request: &Request, token: &str) -> Result<(), ApiError> {
     }
     Ok(())
 }
+/// 统一请求入口：鉴权 → 限流（同时只允许一个读取）→ 代次检查 →
+/// 在总超时内分发到 GUI 队列等待用户批准，并记录结构化日志。
 async fn query(State(state): State<ServiceState>, request: Request) -> Response {
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
@@ -299,6 +343,7 @@ async fn query(State(state): State<ServiceState>, request: Request) -> Response 
     state.ctx.request_repaint();
     respond(id, result)
 }
+/// 解析请求体（≤ 4 KiB）并校验后，经 GUI 事件队列转交，等待结果。
 async fn dispatch(
     state: &ServiceState,
     id: u64,
@@ -339,6 +384,7 @@ async fn dispatch(
     state.ctx.request_repaint();
     result_rx.await.map_err(|_| ApiError::cancelled())?
 }
+/// 组装 JSON 响应：成功/错误信封、`no-store` 等安全头，并做最终容量检查。
 fn respond(id: u64, result: Result<QueryResult, ApiError>) -> Response {
     let (status, body) = match result {
         Ok(data) => (StatusCode::OK, json!({"request_id": id, "data": data})),

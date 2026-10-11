@@ -1,3 +1,9 @@
+//! 关系网的力导向布局引擎：可见节点筛选、布局缓存与逐帧迭代。
+//!
+//! 布局在“单位坐标系”中进行，再经 `RelationCanvasTransform` 映射到画布像素；
+//! 物理参数集中在 `RelationForceParameters`，全部来自用户配置并做安全钳制。
+//! 本模块不依赖 egui 窗口状态，可在测试中直接驱动。
+
 #[cfg(test)]
 #[path = "tests/layout.rs"]
 mod tests;
@@ -7,23 +13,36 @@ use crate::config::RelationNetworkSetting;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+/// 关系网的视图模式。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum RelationViewMode {
+    /// 总览：显示全部允许的节点。
     #[default]
     Default,
+    /// 聚焦：只显示指定节点及其一跳邻居。
     Focused(String),
+    /// 多选：勾选多个节点。
     MultiSelect,
+    /// 多选关系：显示多选节点之间的共同群等关系。
     MultiSelectRelationship,
 }
 
+/// 布局缓存：可见节点/边的下标、单位坐标与逐帧迭代状态。
 #[derive(Debug, Clone, Default)]
 pub struct RelationLayoutCache {
+    /// 构建本缓存时的视图键（`relation_view_cache_key`）。
     pub view_key: u64,
+    /// 参与布局的节点 ID（顺序即绘制的稳定顺序）。
     pub visible_ids: Vec<String>,
+    /// 可见节点在 `graph.nodes` 中的下标。
     pub visible_node_indices: Vec<usize>,
+    /// 可见边在 `graph.links` 中的下标（已按上限截断）。
     pub visible_link_indices: Vec<usize>,
+    /// 节点 ID 到单位坐标的映射。
     pub unit_positions: HashMap<String, egui::Vec2>,
+    /// 节点 ID 到当前速度的映射；下一帧从当前速度继续演化。
     pub velocities: HashMap<String, egui::Vec2>,
+    /// 下一次力导向迭代的执行时刻；`None` 表示未安排。
     pub force_next_tick_at: Option<Instant>,
     /// 力导向已经稳定，无需再请求重绘；任何会改变布局的操作都会把它重置。
     pub converged: bool,
@@ -35,16 +54,25 @@ pub struct RelationLayoutCache {
 /// 同时仍允许功能状态持有它。
 #[derive(Debug, Clone)]
 pub struct RelationLayoutModel {
+    /// 各类型节点的显示开关。
     pub options: RelationGraphOptions,
+    /// 侧边栏点击的聚焦节点（与视图模式中的聚焦相互独立）。
     pub focused_node_id: Option<String>,
+    /// 多选模式勾选的节点集合。
     pub selected_node_ids: HashSet<String>,
+    /// 当前视图模式。
     pub view_mode: RelationViewMode,
+    /// 图谱修订号；`replace_graph` 时递增，用于失效缓存。
     pub graph_revision: u64,
+    /// 布局缓存。
     pub layout_cache: RelationLayoutCache,
+    /// 关系图数据。
     pub graph: RelationGraph,
+    /// 渲染与物理参数配置。
     pub render_setting: RelationNetworkSetting,
 }
 
+/// 默认总览、全部显示、空图。
 impl Default for RelationLayoutModel {
     fn default() -> Self {
         Self {
@@ -95,9 +123,13 @@ const REPULSION_CELL_OFFSETS: [(i32, i32); 9] = [
 /// 导致节点瞬间飞出画布或产生无法收敛的速度。
 #[derive(Debug, Clone, Copy)]
 struct RelationForceParameters {
+    /// 节点间斥力强度。
     repulsion_strength: f32,
+    /// 好友边（及一跳邻居）的弹簧目标长度。
     friend_link_length: f32,
+    /// “自己—群”边的弹簧目标长度。
     group_link_length: f32,
+    /// 群成员边的弹簧目标长度。
     group_member_link_length: f32,
     /// 节点数量带来的额外径向分散范围，节点越多，同类边长的差异越大。
     radial_spread: f32,
@@ -106,6 +138,7 @@ struct RelationForceParameters {
 }
 
 impl RelationForceParameters {
+    /// 从配置与可见节点数生成物理参数；配置值一律钳制到安全范围。
     fn from_state(relation_network: &RelationLayoutModel, node_count: usize) -> Self {
         let setting = &relation_network.render_setting;
         let friend_link_length =
@@ -221,6 +254,10 @@ pub fn relation_view_cache_key(relation_network: &RelationLayoutModel, query: &s
     hash | 1
 }
 
+/// 为给定视图键与可见节点重建布局缓存。
+///
+/// 筛选可见边（聚焦视图只保留与聚焦节点相关的边）、生成初始单位坐标，
+/// 聚焦视图再预热少量迭代，使首帧即具有基本合理的相对位置。
 pub fn build_relation_layout_cache(
     relation_network: &RelationLayoutModel,
     view_key: u64,
@@ -644,6 +681,7 @@ fn relation_force_link_length(
     }
 }
 
+/// 返回当前生效的聚焦节点：聚焦视图模式优先，否则用侧边栏选中节点。
 fn relation_focused_node_id(relation_network: &RelationLayoutModel) -> Option<&str> {
     match &relation_network.view_mode {
         RelationViewMode::Focused(node_id) => Some(node_id.as_str()),
@@ -651,6 +689,8 @@ fn relation_focused_node_id(relation_network: &RelationLayoutModel) -> Option<&s
     }
 }
 
+/// 计算多选关系视图应显示的节点：多选用户与其所在群、
+/// 多选群的共同成员，以及多选时的“自己”。
 fn relation_multi_select_relationship_ids(relation_network: &RelationLayoutModel) -> Vec<String> {
     if relation_network.selected_node_ids.is_empty() {
         return Vec::new();
@@ -737,6 +777,10 @@ pub fn relation_node_by_id<'a>(graph: &'a RelationGraph, id: &str) -> Option<&'a
         .and_then(|index| graph.nodes.get(*index))
 }
 
+/// 聚焦视图中判断一条边是否应当绘制。
+///
+/// 与聚焦节点相连的边总显示；两个一跳邻居之间的边只在涉及群节点时显示，
+/// 避免用户之间的间接边把聚焦视图缠成乱麻。
 fn relation_link_visible_for_focus(
     graph: &RelationGraph,
     link: &RelationLink,
@@ -754,6 +798,7 @@ fn relation_link_visible_for_focus(
                 }))
 }
 
+/// 把节点 ID 集合按“类型层级 → 关联数 → 名称”排序后返回。
 fn relation_node_kind_ordered_ids(graph: &RelationGraph, ids: HashSet<String>) -> Vec<String> {
     let mut ids: Vec<_> = ids.into_iter().collect();
     ids.sort_by(|left, right| {
@@ -771,6 +816,11 @@ fn relation_node_kind_ordered_ids(graph: &RelationGraph, ids: HashSet<String>) -
     ids
 }
 
+/// 总览/多选视图的可见节点：先保证“自己 + 群”骨架占满名额，
+/// 剩余名额再按图中既有顺序填充用户节点。
+///
+/// 骨架优先是因为边只产生在群/自己与用户之间；若简单截断，
+/// 排在后列的群会被整体挤掉，画布将退化成没有连线的散点。
 pub fn relation_visible_ids_default(
     relation_network: &RelationLayoutModel,
     query: &str,
@@ -812,6 +862,7 @@ pub fn relation_visible_ids_default(
     visible_ids
 }
 
+/// 聚焦视图的可见节点：聚焦节点必占一个名额，其余按搜索过滤后取邻居。
 fn relation_visible_ids_from_focus(
     relation_network: &RelationLayoutModel,
     focused: &str,
@@ -847,6 +898,7 @@ fn relation_visible_ids_from_focus(
     visible_ids
 }
 
+/// 当前视图的可见节点上限（聚焦视图用更小的上限）。
 fn relation_view_limit(relation_network: &RelationLayoutModel) -> usize {
     if matches!(relation_network.view_mode, RelationViewMode::Focused(_)) {
         relation_network.render_setting.max_visible_nodes_focused
@@ -855,6 +907,7 @@ fn relation_view_limit(relation_network: &RelationLayoutModel) -> usize {
     }
 }
 
+/// 当前视图的绘边上限（聚焦视图用更小的上限）。
 fn relation_drawn_link_limit(relation_network: &RelationLayoutModel) -> usize {
     if matches!(relation_network.view_mode, RelationViewMode::Focused(_)) {
         relation_network.render_setting.max_drawn_links_focused
@@ -863,6 +916,7 @@ fn relation_drawn_link_limit(relation_network: &RelationLayoutModel) -> usize {
     }
 }
 
+/// 返回与指定节点直接相邻的节点 ID 列表。
 fn relation_neighbors<'a>(graph: &'a RelationGraph, node_id: &str) -> Vec<&'a str> {
     graph
         .links
@@ -1005,11 +1059,17 @@ pub fn relation_unit_node_positions(
 /// 由画布矩形、缩放、平移以及布局最大半径共同决定中心点与缩放比例。
 #[derive(Clone, Copy)]
 pub struct RelationCanvasTransform {
+    /// 画布可用区域中心（已应用平移）。
     center: egui::Pos2,
+    /// 单位坐标到像素的缩放比例。
     scale: f32,
 }
 
 impl RelationCanvasTransform {
+    /// 由画布矩形、缩放、平移与布局最大半径构造变换。
+    ///
+    /// 画布矩形先向内收缩，为节点半径、标签与操作按钮留出边距；
+    /// 缩放使布局最大半径恰好落在短边的一定比例内。
     pub fn new(rect: egui::Rect, zoom: f32, pan: egui::Vec2, layout_max_radius: f32) -> Self {
         let usable_rect = rect.shrink2(egui::vec2(54.0, 54.0));
         Self {
@@ -1020,6 +1080,7 @@ impl RelationCanvasTransform {
         }
     }
 
+    /// 把单位坐标映射为画布像素坐标。
     pub fn position(self, unit_position: egui::Vec2) -> egui::Pos2 {
         egui::pos2(
             self.center.x + unit_position.x * self.scale,
@@ -1028,6 +1089,9 @@ impl RelationCanvasTransform {
     }
 }
 
+/// 由节点 ID 派生两个稳定的 [0,1] 随机量，分别用于角度与半径扰动。
+///
+/// 相同 ID 总是得到相同结果，保证重复打开同一关系网时布局不乱跳。
 fn stable_relation_unit_pair(value: &str) -> (f32, f32) {
     let hash = stable_relation_hash(value);
     let mixed = hash ^ hash.rotate_left(21).wrapping_mul(0x9e37_79b9_7f4a_7c15);
@@ -1036,6 +1100,7 @@ fn stable_relation_unit_pair(value: &str) -> (f32, f32) {
     (first, second)
 }
 
+/// FNV-1a 稳定哈希：不依赖 Rust 标准库的随机化种子，跨进程结果一致。
 fn stable_relation_hash(value: &str) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for byte in value.as_bytes() {

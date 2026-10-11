@@ -1,5 +1,8 @@
+//! 节点详情卡片与节点尺寸图例。
+
 use super::*;
 
+/// 绘制单个节点的详情：名称、类型、QQ/群号、成员数、共同群与关联数。
 pub fn render_relation_node_detail(ui: &mut egui::Ui, node: &RelationNode) {
     ui.strong(&node.name);
     ui.label(node.kind.label());
@@ -21,6 +24,7 @@ pub fn render_relation_node_detail(ui: &mut egui::Ui, node: &RelationNode) {
     }
 }
 
+/// 绘制节点尺寸图例：示例圆按成员数分档着色，说明“越大关联越多”。
 pub fn render_relation_size_legend(ui: &mut egui::Ui) {
     let theme = RelationTheme::from_ui(ui);
     for (label, radius, border, member_count) in [

@@ -6,6 +6,7 @@ use super::super::state::RelationNetworkState;
 use super::super::theme::RelationTheme;
 use super::detail::render_relation_node_detail;
 
+/// 绘制画布点阵网格；间距随缩放变化并受平移偏移，形成“纸面”参照。
 pub fn render_relation_canvas_grid(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -26,6 +27,9 @@ pub fn render_relation_canvas_grid(
     }
 }
 
+/// 绘制画布右下角的缩放/适应控件，返回是否有按钮被点击。
+///
+/// 调用方据此判断空白点击是否应当穿透到画布（退出当前视图）。
 pub fn render_relation_canvas_controls(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -87,6 +91,10 @@ pub fn render_relation_canvas_controls(
     zoom_out || zoom_in || fit
 }
 
+/// 以指定屏幕点为锚点设置缩放。
+///
+/// 锚点在世界坐标中的位置保持不变：先按新旧缩放比修正平移量，
+/// 缩放本身钳制在 0.05 到 4 倍之间。
 pub fn set_relation_canvas_zoom(
     relation_network: &mut RelationNetworkState,
     zoom: f32,
@@ -102,6 +110,10 @@ pub fn set_relation_canvas_zoom(
     relation_network.canvas_zoom = zoom;
 }
 
+/// 计算节点的屏幕绘制半径。
+///
+/// 由模型半径归一化后按性能档位映射到像素区间；“自己”额外放大，
+/// 再按缩放开根号轻微调整，避免缩放后节点大小失衡。
 pub fn relation_node_draw_radius(
     node: &RelationNode,
     performance: RelationPerformanceLevel,
@@ -125,6 +137,9 @@ pub fn relation_node_draw_radius(
     .max(2.0)
 }
 
+/// 绘制画布浮层：左上统计徽标、左下操作提示与视图模式指示条。
+///
+/// 筛选后没有可见连线时额外给出提示，避免用户误以为数据缺失。
 pub fn render_relation_network_overlay(
     ui: &mut egui::Ui,
     relation_network: &RelationNetworkState,
@@ -197,6 +212,7 @@ pub fn render_relation_network_overlay(
     }
 }
 
+/// 在画布顶部中央绘制当前视图模式的胶囊指示条。
 pub fn render_relation_indicator(ui: &mut egui::Ui, rect: egui::Rect, text: &str) {
     let fill = ui.visuals().selection.bg_fill;
     let text_color = ui.visuals().selection.stroke.color;
@@ -218,6 +234,7 @@ pub fn render_relation_indicator(ui: &mut egui::Ui, rect: egui::Rect, text: &str
     );
 }
 
+/// 绘制悬停节点的详情弹出卡（跟随指针，靠近边缘时翻转到另一侧）。
 pub fn render_relation_node_popup(
     ui: &mut egui::Ui,
     canvas_rect: egui::Rect,
@@ -277,11 +294,15 @@ pub fn render_relation_node_popup(
 }
 
 #[derive(Debug, Clone, Copy)]
+/// 性能档位：按可见节点数分级，档位越高绘制越精简。
 pub struct RelationPerformanceLevel {
+    /// 档位下标（0 最流畅）。
     pub index: usize,
+    /// 档位中文名。
     pub label: &'static str,
 }
 
+/// 按节点数量返回性能档位（流畅/良好/标准/性能/极速）。
 pub fn relation_performance_level(node_count: usize) -> RelationPerformanceLevel {
     match node_count {
         0..=100 => RelationPerformanceLevel {

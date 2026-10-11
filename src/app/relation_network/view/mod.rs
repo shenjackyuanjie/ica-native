@@ -1,3 +1,10 @@
+//! 关系网独立窗口的装配与各视图部件。
+//!
+//! 关系网运行在 deferred 子视口中：本文件负责视口生命周期、跨视口动作
+//! 队列与面板布局；`canvas` 画图，`sidebar`/`toolbar`/`overlay`/`detail`
+//! 分别是侧边栏、顶栏、浮层与节点详情，`interaction` 处理点击与多选，
+//! `loading` 负责群成员的后台加载与进度快照。
+
 mod canvas;
 mod detail;
 mod interaction;
@@ -132,11 +139,13 @@ impl IcaApp {
         // 避免只有鼠标移入窗口或关闭窗口时界面才更新。
         ctx.request_repaint_of(viewport_id);
     }
+    /// 把配置中的渲染设置同步进关系网共享状态。
     fn sync_relation_network_render_setting(&mut self) {
         let render_setting = self.config.snapshot().ui_setting.relation_network;
         self.relation_network.lock().unwrap().render_setting = render_setting;
     }
 
+    /// 消费子视口写入的待执行动作（关闭/重建/加载群成员）。
     fn apply_relation_network_viewport_actions(&mut self) {
         let action = self.relation_network.lock().unwrap().pending_action.take();
         match action {
@@ -148,6 +157,7 @@ impl IcaApp {
     }
 }
 
+/// 绘制关系网窗口主体：顶栏、侧边栏与中央画布的面板布局。
 fn render_relation_network_ui(
     ui: &mut egui::Ui,
     relation_network: &Arc<Mutex<RelationNetworkState>>,
@@ -207,6 +217,7 @@ fn render_relation_network_ui(
     });
 }
 
+/// 没有可用 bridge 时的占位界面。
 fn render_relation_network_empty_state(ui: &mut egui::Ui) {
     let theme = RelationTheme::from_ui(ui);
     egui::CentralPanel::default()

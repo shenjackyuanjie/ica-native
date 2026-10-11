@@ -1,3 +1,9 @@
+//! 关系网的数据模型与从房间/成员数据构建图谱的逻辑。
+//!
+//! 这里只放纯数据与纯函数：节点/连线的定义、按成员数换算的视觉尺寸、
+//! 群节点颜色渐变，以及 `RelationGraphBuilder` 的分步构建流程。
+//! 界面状态与绘制分别见 `state` 与 `view`。
+
 #[cfg(test)]
 #[path = "tests/model.rs"]
 mod tests;
@@ -11,10 +17,15 @@ use std::collections::{HashMap, HashSet};
 /// 分类决定节点的固定颜色、在列表中的排序层级，以及筛选开关对应的类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RelationNodeKind {
+    /// 登录用户自己。
     SelfUser,
+    /// 私聊会话中的好友。
     Friend,
+    /// 与自己在两个及以上共同群出现的用户。
     Acquaintance,
+    /// 仅同在一个群的用户。
     Stranger,
+    /// 群聊。
     Group,
 }
 
@@ -48,20 +59,32 @@ impl RelationNodeKind {
 /// 或群成员数换算得到，用于绘制时的视觉大小。
 #[derive(Debug, Clone)]
 pub struct RelationNode {
+    /// 稳定节点 ID：用户为 `u:{qq}`，群为 `g:{群号}`。
     pub id: String,
+    /// 展示名称（群名或昵称，为空时回退为 ID）。
     pub name: String,
+    /// 节点分类。
     pub kind: RelationNodeKind,
+    /// 关联数（相连的边数量）。
     pub value: usize,
+    /// 绘制半径（像素）。
     pub radius: f32,
+    /// 尺寸档位（0 到 4），用于分档的视觉强调。
     pub size_level: u8,
+    /// 用户节点的 QQ 号。
     pub qq: Option<i64>,
+    /// 群节点的群号（正数）。
     pub group_id: Option<i64>,
+    /// 群节点的已知成员数；未加载成员列表时为 `None`。
     pub member_count: Option<usize>,
+    /// 与该用户共同所在的群数量。
     pub common_group_count: usize,
+    /// 群内身份（群主/管理员等），仅群成员节点有值。
     pub role: String,
 }
 
 impl RelationNode {
+    /// 创建用户节点；初始关联数为 0，尺寸在 `finalize` 时统一换算。
     fn new_user(user_id: i64, name: String, kind: RelationNodeKind) -> Self {
         Self {
             id: format!("u:{user_id}"),
@@ -78,6 +101,7 @@ impl RelationNode {
         }
     }
 
+    /// 由房间创建群节点；群名为空时回退为群号。
     fn new_group(room: &Room, member_count: Option<usize>) -> Self {
         let group_id = -room.room_id;
         Self {
@@ -99,6 +123,10 @@ impl RelationNode {
         }
     }
 
+    /// 按关联数（群节点用成员数）换算绘制半径与尺寸档位。
+    ///
+    /// 使用对数归一化：QQ 群人数跨度极大，线性映射会让绝大多数节点
+    /// 挤在最小尺寸附近；半径钳制在 8 到 44 像素之间。
     fn update_size(&mut self) {
         let min_size = 8.0_f32;
         let max_size = 44.0_f32;
@@ -178,7 +206,9 @@ pub fn relation_group_color(member_count: Option<usize>) -> egui::Color32 {
 /// 连线无方向，存储时统一按 ID 字典序去重。
 #[derive(Debug, Clone)]
 pub struct RelationLink {
+    /// 一端节点 ID。
     pub source: String,
+    /// 另一端节点 ID。
     pub target: String,
 }
 
@@ -188,12 +218,19 @@ pub struct RelationLink {
 /// 群节点的下标，便于侧边栏群列表直接遍历。
 #[derive(Debug, Clone, Default)]
 pub struct RelationGraph {
+    /// 全部节点，已按类型层级与关联数排序。
     pub nodes: Vec<RelationNode>,
+    /// 全部无向连线，已按端点 ID 排序。
     pub links: Vec<RelationLink>,
+    /// 节点 ID 到 `nodes` 下标的映射。
     pub node_index: HashMap<String, usize>,
+    /// 所有群节点在 `nodes` 中的下标，供群列表直接遍历。
     pub group_node_indices: Vec<usize>,
+    /// 各类型节点数量统计。
     pub node_counts: RelationNodeCounts,
+    /// 已加载成员列表的群数（用于“加载进度”展示）。
     pub loaded_group_count: usize,
+    /// 房间列表中的群总数。
     pub total_group_count: usize,
 }
 
@@ -207,10 +244,15 @@ impl RelationGraph {
 /// 各类型节点的数量统计，用于侧边栏展示与筛选行计数。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RelationNodeCounts {
+    /// 自己节点数量。
     pub self_user: usize,
+    /// 好友节点数量。
     pub friend: usize,
+    /// 共同群好友节点数量。
     pub acquaintance: usize,
+    /// 仅同群节点数量。
     pub stranger: usize,
+    /// 群节点数量。
     pub group: usize,
 }
 
@@ -219,10 +261,15 @@ pub struct RelationNodeCounts {
 /// 这些开关对应侧边栏“显示选项”中的复选框，决定哪些类型的节点参与布局与绘制。
 #[derive(Debug, Clone)]
 pub struct RelationGraphOptions {
+    /// 是否显示自己。
     pub show_self_user: bool,
+    /// 是否显示好友。
     pub show_friends: bool,
+    /// 是否显示共同群好友。
     pub show_acquaintances: bool,
+    /// 是否显示仅同群的用户。
     pub show_strangers: bool,
+    /// 是否显示群。
     pub show_groups: bool,
 }
 
@@ -286,6 +333,7 @@ impl RelationGraphBuilder {
         builder.finalize(rooms, group_members_by_room)
     }
 
+    /// 放入“自己”节点；未拿到登录 QQ 时跳过。
     fn add_self_user(&mut self) {
         let Some(user_id) = self.login_user_id else {
             return;
@@ -294,6 +342,7 @@ impl RelationGraphBuilder {
         self.nodes.insert(node.id.clone(), node);
     }
 
+    /// 放入全部私聊房间为好友节点，并与自己连边。
     fn add_private_rooms(&mut self, rooms: &[Room]) {
         for room in rooms.iter().filter(|room| room.room_id > 0) {
             let user_id = room.room_id;
@@ -314,6 +363,10 @@ impl RelationGraphBuilder {
         }
     }
 
+    /// 放入全部群节点并与自己连边。
+    ///
+    /// `include_unloaded_groups` 为 `false` 时跳过尚未加载成员列表的群，
+    /// 避免出现没有连线的孤立群节点。
     fn add_groups(
         &mut self,
         rooms: &[Room],
@@ -339,6 +392,10 @@ impl RelationGraphBuilder {
         }
     }
 
+    /// 遍历已加载的群成员，补齐用户节点、修正类型并与群连边。
+    ///
+    /// 类型判定优先级：好友 > 共同群好友（共同群数 ≥ 2）> 仅同群；
+    /// 已判定为好友的节点不被后续覆盖。自己不计入成员节点。
     fn add_group_members(&mut self, group_members_by_room: &HashMap<RoomId, Vec<GroupMember>>) {
         for (&room_id, members) in group_members_by_room {
             if room_id >= 0 {
@@ -399,6 +456,7 @@ impl RelationGraphBuilder {
         }
     }
 
+    /// 添加一条无向边：端点按 ID 字典序存储以便去重，两端关联数各加一。
     fn add_link(&mut self, source: String, target: String) {
         if source == target {
             return;
@@ -420,6 +478,8 @@ impl RelationGraphBuilder {
         self.links.insert(key, RelationLink { source, target });
     }
 
+    /// 收尾：计算共同群数与尺寸，按“类型层级 → 关联数 → 名称”排序，
+    /// 建立 ID 下标映射并统计各类型数量。
     fn finalize(
         mut self,
         rooms: &[Room],

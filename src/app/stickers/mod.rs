@@ -1,3 +1,9 @@
+//! 收藏表情（贴纸）存储：目录解析、扫描、增删与分类管理。
+//!
+//! 目录结构与 Icalingua++ 互通：根目录存放“默认”分类，一级子目录是其他分类。
+//! 首选目录不可写时回退到 ica-native 数据目录，并通过 `fallback_notice`
+//! 向界面提示；所有写入经存储内部的锁串行化，并用“临时文件 + 重命名”提交。
+
 #[cfg(test)]
 mod tests;
 
@@ -8,29 +14,41 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+/// 根目录直下文件所属的默认分类名。
 const DEFAULT_CATEGORY: &str = "默认";
 
+/// 表情选择器的页签。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StickerPickerTab {
+    /// QQ 系统表情。
     #[default]
     QqFaces,
+    /// 收藏表情。
     Favorites,
 }
 
+/// 一个收藏表情文件。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StickerEntry {
+    /// 文件绝对路径。
     pub path: PathBuf,
+    /// 文件名（含扩展名）。
     pub name: String,
+    /// 所属分类名。
     pub category: String,
+    /// MIME 类型（按内容探测，非扩展名猜测）。
     pub mime_type: String,
+    /// 修改时间（Unix 毫秒），用于按时间排序。
     pub modified_millis: u128,
 }
 
+/// 收藏表情存储；内部状态经 `Arc<RwLock<_>>` 共享，可跨界面克隆使用。
 #[derive(Debug, Clone)]
 pub struct StickerStore {
     inner: Arc<RwLock<StickerState>>,
 }
 
+/// 存储的内部状态：根目录、已扫描条目与回退提示。
 #[derive(Debug)]
 struct StickerState {
     root: PathBuf,
@@ -38,13 +56,17 @@ struct StickerState {
     fallback_notice: Option<String>,
 }
 
+/// 按内容探测出的图片格式信息。
 #[derive(Debug, Clone, Copy)]
 pub struct DetectedImage {
+    /// 文件扩展名（不含点）。
     pub extension: &'static str,
+    /// MIME 类型。
     pub mime_type: &'static str,
 }
 
 impl StickerStore {
+    /// 构造一个“不可用”的存储：条目为空，仅携带回退提示。
     pub fn unavailable(root: PathBuf, error: impl ToString) -> Self {
         Self {
             inner: Arc::new(RwLock::new(StickerState {
@@ -55,6 +77,11 @@ impl StickerStore {
         }
     }
 
+    /// 按配置解析收藏表情目录。
+    ///
+    /// 优先使用配置的 `sticker_path`，其次 Icalingua++ 的默认 stickers 目录；
+    /// 都不可写时回退到数据目录下的 `stickers` 并记录提示。两个目录都不可用
+    /// 才返回错误。
     pub fn resolve(config: &IcaCfg, paths: &ConfigPaths) -> Result<Self> {
         let preferred = config
             .sticker_path
@@ -92,6 +119,7 @@ impl StickerStore {
         })
     }
 
+    /// 返回当前生效的根目录。
     pub fn root(&self) -> PathBuf {
         self.inner
             .read()
@@ -100,6 +128,7 @@ impl StickerStore {
             .clone()
     }
 
+    /// 发生目录回退时的提示文本；无回退时为 `None`。
     pub fn fallback_notice(&self) -> Option<String> {
         self.inner
             .read()
@@ -108,6 +137,7 @@ impl StickerStore {
             .clone()
     }
 
+    /// 返回全部已扫描条目（拷贝）。
     pub fn entries(&self) -> Vec<StickerEntry> {
         self.inner
             .read()
@@ -141,6 +171,7 @@ impl StickerStore {
         categories
     }
 
+    /// 返回指定分类下的条目。
     pub fn entries_in_category(&self, category: &str) -> Vec<StickerEntry> {
         self.entries()
             .into_iter()
@@ -190,10 +221,15 @@ impl StickerStore {
         Ok(count)
     }
 
+    /// 把图片字节写入默认分类，返回新条目。
     pub fn add_bytes(&self, bytes: &[u8]) -> Result<StickerEntry> {
         self.add_bytes_to_category(bytes, DEFAULT_CATEGORY)
     }
 
+    /// 把图片字节写入指定分类。
+    ///
+    /// 文件名取“毫秒时间戳 + 内容哈希前 8 位”，重名时追加序号；
+    /// 先写隐藏临时文件再重命名，避免收藏中断留下半个文件。
     pub fn add_bytes_to_category(&self, bytes: &[u8], category: &str) -> Result<StickerEntry> {
         let detected = detect_image(bytes)?;
         // 串行化经由此存储执行的写入，避免两个并发收藏选择相同的时间戳/哈希目标。
@@ -261,6 +297,7 @@ impl StickerStore {
         Ok(entry)
     }
 
+    /// 读取一个条目的文件内容；拒绝根目录之外的路径，防止越权读取。
     pub fn read_entry(&self, entry: &StickerEntry) -> Result<Vec<u8>> {
         let root = self.root();
         anyhow::ensure!(
@@ -272,6 +309,7 @@ impl StickerStore {
             .with_context(|| format!("读取收藏表情失败: {}", entry.path.display()))
     }
 
+    /// 创建新分类（“默认”分类无需创建）。
     pub fn create_category(&self, category: &str) -> Result<()> {
         let root = self.root();
         let category = normalize_category_name(category)?;
@@ -279,6 +317,7 @@ impl StickerStore {
         ensure_writable_directory(&category_directory(&root, &category))
     }
 
+    /// 把条目移动到指定分类；目标存在同名文件时自动追加序号。
     pub fn move_entry(&self, entry: &StickerEntry, category: &str) -> Result<()> {
         let root = self.root();
         anyhow::ensure!(
@@ -323,6 +362,9 @@ impl StickerStore {
     }
 }
 
+/// 把一个目录项收集为表情条目。
+///
+/// 跳过非文件、写入中的临时文件、不可读文件与损坏图片，并记录警告。
 fn collect_sticker_entry(
     item: &std::fs::DirEntry,
     category: &str,
@@ -365,6 +407,7 @@ fn collect_sticker_entry(
     });
 }
 
+/// 校验分类名：非空、非 `.`/`..`、不含路径分隔符与控制字符。
 fn valid_category_name(name: &str) -> bool {
     !name.is_empty()
         && name != "."
@@ -373,6 +416,7 @@ fn valid_category_name(name: &str) -> bool {
         && !name.chars().any(|character| character.is_control())
 }
 
+/// 规范化用户输入的分类名（去空白并校验长度 ≤ 32）。
 fn normalize_category_name(category: &str) -> Result<String> {
     let category = category.trim();
     anyhow::ensure!(valid_category_name(category), "表情分类名称无效");
@@ -380,6 +424,7 @@ fn normalize_category_name(category: &str) -> Result<String> {
     Ok(category.to_string())
 }
 
+/// 返回分类对应的目录：“默认”分类即根目录本身。
 fn category_directory(root: &Path, category: &str) -> PathBuf {
     if category == DEFAULT_CATEGORY {
         root.to_path_buf()
@@ -388,10 +433,12 @@ fn category_directory(root: &Path, category: &str) -> PathBuf {
     }
 }
 
+/// 判断条目路径是否位于根目录或其一级子目录内。
 fn is_sticker_path_in_root(path: &Path, root: &Path) -> bool {
     path.parent() == Some(root) || path.parent().and_then(Path::parent) == Some(root)
 }
 
+/// 探测字节内容的图片格式并校验可解码；仅支持常见静态图片格式。
 pub fn detect_image(bytes: &[u8]) -> Result<DetectedImage> {
     let format = image::guess_format(bytes).context("无法识别图片格式")?;
     image::load_from_memory_with_format(bytes, format).context("图片内容损坏或不完整")?;
@@ -425,10 +472,12 @@ pub fn detect_image(bytes: &[u8]) -> Result<DetectedImage> {
     Ok(detected)
 }
 
+/// 判断是否为写入中的临时文件名（隐藏且包含 `.tmp-`）。
 fn is_temporary_name(name: &OsStr) -> bool {
     name.to_string_lossy().starts_with('.') && name.to_string_lossy().contains(".tmp-")
 }
 
+/// 确保目录存在且可写：创建目录后写入并删除一个探针文件。
 fn ensure_writable_directory(path: &Path) -> Result<()> {
     std::fs::create_dir_all(path).with_context(|| format!("创建目录失败: {}", path.display()))?;
     let probe = path.join(format!(".ica-native-write-test-{}", std::process::id()));
@@ -442,6 +491,7 @@ fn ensure_writable_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// 返回 Icalingua++ 的默认收藏表情目录（按平台推导），失败时回退临时目录。
 fn default_icalingua_sticker_dir() -> PathBuf {
     #[cfg(windows)]
     {
