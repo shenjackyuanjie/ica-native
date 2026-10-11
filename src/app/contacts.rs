@@ -1,3 +1,9 @@
+//! 联系人窗口：好友与群列表的加载、搜索与会话发起。
+//!
+//! 数据来自 Bridge 的 `FetchContacts` 命令，按 `request_id` 归属写入
+//! `ContactDirectory`；本模块负责把目录渲染到独立 viewport，并处理“点联系人开聊”。
+//! 测试位于 `tests/contacts.rs`，经 `#[path]` 挂到本模块下以便访问私有项。
+
 #[cfg(test)]
 #[path = "tests/contacts.rs"]
 mod tests;
@@ -12,32 +18,57 @@ use crate::ica::types::{
 };
 use std::sync::{Arc, Mutex, atomic::Ordering};
 
+/// 联系人窗口顶部的好友/群分页。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ContactTab {
+    /// 好友列表（默认页）。
     #[default]
     Friends,
+    /// 群列表。
     Groups,
 }
 
+/// 单个 Bridge 连接的联系人目录状态。
+///
+/// 好友与群分两批异步加载，用 `request_id` 归属响应；`pending_*` 字段是界面与后台
+/// 事件之间传递意图的桥梁（点击刷新/开聊在渲染期记录，主循环再执行）。
 #[derive(Debug, Default, Clone)]
 pub struct ContactDirectory {
+    /// 好友列表。
     friends: Vec<FriendContact>,
+    /// 群列表。
     groups: Vec<GroupContact>,
+    /// 搜索关键字（匹配昵称/备注/号码）。
     search_query: String,
+    /// 当前展示的分页。
     tab: ContactTab,
+    /// 最近一次刷新请求序号，用于丢弃过期响应。
     request_id: u64,
+    /// 是否已发起过至少一次加载。
     requested_once: bool,
+    /// 好友是否正在加载。
     friends_loading: bool,
+    /// 群是否正在加载。
     groups_loading: bool,
+    /// 好友是否已成功加载过。
     friends_loaded: bool,
+    /// 群是否已成功加载过。
     groups_loaded: bool,
+    /// 好友加载错误信息。
     friends_error: Option<String>,
+    /// 群加载错误信息。
     groups_error: Option<String>,
+    /// 是否有待处理的刷新请求。
     pending_refresh: bool,
+    /// 有待发起会话的联系人目标。
     pending_target: Option<ContactTarget>,
 }
 
+/// 联系人目录的加载状态机与响应归属逻辑。
 impl ContactDirectory {
+    /// 开始一次新的刷新：递增并返回请求序号，重置加载/错误状态。
+    ///
+    /// 返回的 `request_id` 需随命令下发，后续响应只接受序号匹配者。
     pub fn begin_refresh(&mut self) -> u64 {
         self.request_id = self.request_id.wrapping_add(1).max(1);
         self.requested_once = true;
@@ -48,10 +79,12 @@ impl ContactDirectory {
         self.request_id
     }
 
+    /// 是否从未加载过（用于首次打开时自动拉取）。
     pub fn needs_initial_load(&self) -> bool {
         !self.requested_once
     }
 
+    /// 写入好友响应；请求序号过期时忽略。
     pub fn apply_friends(&mut self, request_id: u64, friends: Vec<FriendContact>) {
         if request_id != self.request_id {
             return;
@@ -62,6 +95,7 @@ impl ContactDirectory {
         self.friends_error = None;
     }
 
+    /// 写入群响应；请求序号过期时忽略。
     pub fn apply_groups(&mut self, request_id: u64, groups: Vec<GroupContact>) {
         if request_id != self.request_id {
             return;
@@ -72,6 +106,7 @@ impl ContactDirectory {
         self.groups_error = None;
     }
 
+    /// 标记某一分页（friends/groups）加载失败；序号过期或分页名未知时返回 `false`。
     pub fn fail_part(&mut self, request_id: u64, part: &str, error: String) -> bool {
         if request_id != self.request_id {
             return false;
@@ -90,15 +125,18 @@ impl ContactDirectory {
         true
     }
 
+    /// 把同一错误同时应用到好友与群两个分页（如命令根本发不出去时）。
     fn fail_all(&mut self, request_id: u64, error: String) {
         self.fail_part(request_id, "friends", error.clone());
         self.fail_part(request_id, "groups", error);
     }
 
+    /// 任一/两个分页仍在加载中。
     fn is_loading(&self) -> bool {
         self.friends_loading || self.groups_loading
     }
 
+    /// 合并两个分页的错误信息用于展示：都错且相同则合一条，否则分别标注来源。
     fn error_message(&self) -> Option<String> {
         match (&self.friends_error, &self.groups_error) {
             (Some(friends), Some(groups)) if friends == groups => Some(friends.clone()),
@@ -109,6 +147,7 @@ impl ContactDirectory {
         }
     }
 
+    /// 取走并清空待处理的刷新/开聊意图，返回 `(是否刷新, 目标)`。
     fn take_pending_action(&mut self) -> (bool, Option<ContactTarget>) {
         (
             std::mem::take(&mut self.pending_refresh),
@@ -117,12 +156,19 @@ impl ContactDirectory {
     }
 }
 
+/// 点击联系人后要发起会话的目标（房间 ID 与展示名）。
 #[derive(Debug, Clone)]
 pub struct ContactTarget {
+    /// 目标房间 ID（正数为好友/私聊，负数为群）。
     pub room_id: RoomId,
+    /// 目标房间展示名。
     pub room_name: String,
 }
 
+/// 为尚不存在的联系人凭空构造一个本地房间占位，便于立即打开会话。
+///
+/// 好友/群各给一组最小化 `users` 占位；`priority`、`at` 等取中性默认值，真实数据
+/// 由 Bridge 随后的 `updateRoom`/`setAllRooms` 覆盖。
 fn create_contact_room(room_id: RoomId, room_name: String, timestamp: i64) -> Room {
     let mut users = vec![
         serde_json::json!({ "_id": 1, "username": "1" }),
@@ -150,7 +196,9 @@ fn create_contact_room(room_id: RoomId, room_name: String, timestamp: i64) -> Ro
     }
 }
 
+/// 联系人窗口的打开、数据刷新、发起会话与渲染逻辑。
 impl IcaApp {
+    /// 打开联系人窗口；若当前 bridge 从未加载过则立即触发一次拉取。
     pub fn open_contacts(&mut self) {
         self.open_page.contacts = true;
         self.contacts_viewport_closed
@@ -168,6 +216,7 @@ impl IcaApp {
         }
     }
 
+    /// 向指定 bridge 发送 `FetchContacts`；命令发送失败时直接把错误写回目录。
     fn refresh_contacts(&mut self, bridge_idx: usize) {
         let Some(session) = self.bridge_states.get_mut(bridge_idx) else {
             return;
@@ -184,6 +233,7 @@ impl IcaApp {
         }
     }
 
+    /// 与某联系人开聊：房间不存在则先本地占位并 `AddRoom`，再切到该 bridge 并选中。
     pub fn start_contact_chat(&mut self, bridge_idx: usize, target: ContactTarget) {
         if target.room_id == 0 {
             return;
@@ -216,6 +266,10 @@ impl IcaApp {
         self.select_active_room(target.room_id);
     }
 
+    /// 渲染联系人窗口（deferred viewport），并处理跨视口的关闭与意图回传。
+    ///
+    /// 无启用 bridge 时显示提示占位；有待处理的刷新或开聊意图时在主循环执行，
+    /// 并通过 `request_repaint_of` 让父视口及时反映状态变化。
     pub fn render_contacts_window(&mut self, ctx: &egui::Context) {
         if self.contacts_viewport_closed.swap(false, Ordering::Relaxed) {
             self.open_page.contacts = false;
@@ -290,6 +344,10 @@ impl IcaApp {
         );
     }
 
+    /// 绘制联系人目录主体：搜索框、刷新按钮、好友/群分页与结果列表。
+    ///
+    /// 传入共享的 `Arc<Mutex<..>>`，因为渲染闭包可能在 deferred viewport 中运行，
+    /// 需要与主线程共享同一份目录状态。
     fn render_contact_directory(ui: &mut egui::Ui, directory: &Arc<Mutex<ContactDirectory>>) {
         let mut directory = directory.lock().unwrap();
 
@@ -451,6 +509,9 @@ impl IcaApp {
         }
     }
 
+    /// 绘制单个联系人行（头像 + 主标题 + 副标题），返回其交互 `Response`。
+    ///
+    /// 手工布局而非用 `ui.horizontal`，以便对头像、两行文字做精确定位与裁切。
     fn render_contact_row(
         ui: &mut egui::Ui,
         title: &str,
@@ -504,6 +565,7 @@ impl IcaApp {
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     }
 
+    /// 为联系人行挂右键菜单：复制名称、ID 或头像 URL。
     fn contact_context_menu(
         response: &egui::Response,
         display_name: &str,

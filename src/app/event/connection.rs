@@ -1,4 +1,8 @@
 //! 连接、鉴权与在线状态相关的事件。
+//!
+//! 这里维护 `BridgeState` 上的 socket 连接状态机（`SocketState`）与鉴权状态
+//! （`AuthState`），并把 Bridge 版本/协议信息、致命错误等落到界面上。多数分支
+//! 只更新状态与错误文案，真正的重连与重试由 Bridge 侧负责，客户端仅被动反映。
 
 use super::payload;
 use crate::app::state::{AuthState, BridgeState, SocketState};
@@ -36,6 +40,8 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
         "socketReconnectExhausted" => {
             state.socket_state = SocketState::Failed;
             state.last_error = payload::payload_message(payload);
+            // 连接彻底放弃重连后，处于“编辑待确认发送”的草稿再也等不到回执。
+            // 这里统一清掉挂起标记并提示用户手动核对，避免草稿永远卡在发送中状态。
             let mut pending_edit = false;
             for conversation in state.conversations.values_mut() {
                 if std::mem::take(&mut conversation.editing_send_pending) {
@@ -66,6 +72,8 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
         "bridgeProtocolMismatch" => {
             let message = payload::payload_message(payload)
                 .unwrap_or_else(|| "Bridge 协议版本不匹配".to_string());
+            // `allowed` 表示 Bridge 认为版本差异可容忍：只提示不阻断；
+            // 否则视为鉴权失败并阻止后续请求，直到升级到匹配版本。
             if payload
                 .get("allowed")
                 .and_then(JsonValue::as_bool)

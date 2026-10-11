@@ -1,7 +1,14 @@
+//! 群公告查看与管理相关的事件。
+//!
+//! 处理群公告的拉取结果与发布/删除等操作的完成/失败回调，统一反馈到
+//! `group_announcement_viewer`。CGI 的 `ec` 语义在 `parse_announcement_list` 内判定，
+//! 因此接口层失败（未登录、无权限）与网络失败会走到同一条错误展示路径。
+
 use crate::app::state::BridgeState;
 use crate::ica::types::announcement::parse_announcement_list;
 use serde_json::Value as JsonValue;
 
+/// 从 payload 读取请求序号，缺失时按 0 处理（与 viewer 的默认序号对齐）。
 fn request_id(payload: &JsonValue) -> u64 {
     payload
         .get("requestId")
@@ -9,6 +16,7 @@ fn request_id(payload: &JsonValue) -> u64 {
         .unwrap_or_default()
 }
 
+/// 从 payload 读取群号，缺失时按 0 处理。
 fn room_id(payload: &JsonValue) -> i64 {
     payload
         .get("roomId")
@@ -74,6 +82,7 @@ fn apply_response(state: &mut BridgeState, payload: &JsonValue) {
     }
 }
 
+/// 公告拉取被 Bridge 端拒绝或超时：把错误写回 viewer 对应请求。
 fn apply_failure(state: &mut BridgeState, payload: &JsonValue) {
     let request_id = request_id(payload);
     let room_id = room_id(payload);
@@ -86,6 +95,7 @@ fn apply_failure(state: &mut BridgeState, payload: &JsonValue) {
     viewer.lock().unwrap().fail(request_id, room_id, message);
 }
 
+/// 公告操作（发布/删除等）成功：通知 viewer 收起进行态，并在顶部给出成功提示。
 fn apply_action_done(state: &mut BridgeState, payload: &JsonValue) {
     let action = payload
         .get("action")
@@ -97,6 +107,7 @@ fn apply_action_done(state: &mut BridgeState, payload: &JsonValue) {
     state.last_notice = Some(format!("群公告已{action}"));
 }
 
+/// 公告操作失败：把“操作失败：原因”写回 viewer，保留用户已填内容以便重试。
 fn apply_action_failed(state: &mut BridgeState, payload: &JsonValue) {
     let action = payload
         .get("action")

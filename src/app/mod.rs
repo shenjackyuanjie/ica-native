@@ -1,3 +1,9 @@
+//! 应用根模块：装配 `IcaApp`、egui 生命周期与每帧更新流程。
+//!
+//! `IcaApp` 是 eframe 应用入口，持有运行时、配置与全局状态，并在 `ui` 中按固定顺序
+//! 驱动输入处理、事件轮询、各功能视图与独立窗口的绘制。子模块按职责拆分：`runtime`
+//! 管 Tokio/Bridge 装配，`event` 把协议事件映射为状态，其余模块各自负责一类界面功能。
+
 mod agent_context;
 pub mod audio;
 pub mod auto_sign;
@@ -30,6 +36,10 @@ use runtime::AppRuntime;
 pub use state::*;
 use std::ops::{Deref, DerefMut};
 
+/// 判断本帧是否应把一次粘贴当作“粘贴图片”处理。
+///
+/// 仅当窗口与视口均聚焦、没有文字粘贴事件、且按下了粘贴快捷键（egui 捕获到的 Ctrl+V
+/// 或系统按键状态）时成立——此时剪贴板里更可能是图片而非文本。
 fn clipboard_image_paste_requested(
     raw_input: &egui::RawInput,
     system_paste_shortcut_pressed: bool,
@@ -60,36 +70,55 @@ fn clipboard_image_paste_requested(
     !has_text_paste && (has_paste_shortcut || system_paste_shortcut_pressed)
 }
 
+/// 左侧会话列表的筛选分组。
+///
+/// `Custom(index)` 指向用户在“聊天分组编辑器”里自定义的分组下标。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectedChatGroup {
+    /// 显示全部会话。
     All,
+    /// 仅群（room_id < 0）。
     Group,
+    /// 仅私聊/好友（room_id > 0）。
     Private,
+    /// 用户自定义分组，值为分组下标。
     Custom(usize),
 }
 
+/// eframe 应用主体：持有运行时、配置存储、全局状态与独立聊天窗口集合。
 pub struct IcaApp {
+    /// Tokio/Bridge 运行时与跨线程事件通道。
     runtime: AppRuntime,
+    /// 配置存储，负责读写 `ica_native*.toml`。
     config: ConfigStore,
+    /// 全局应用状态（各 bridge 状态、UI 状态等）。
     state: state::AppState,
+    /// 已拆分的独立聊天窗口列表。
     chat_windows: Vec<chat_windows::ChatWindow>,
 }
 
+/// 让 `IcaApp` 可直接访问内部 `AppState` 的字段/方法，省去到处写 `self.state.`。
 impl Deref for IcaApp {
+    /// 解引用目标为全局状态 `AppState`。
     type Target = state::AppState;
 
+    /// 不可变借用全局状态。
     fn deref(&self) -> &Self::Target {
         &self.state
     }
 }
 
+/// 对应的可变解引用，便于直接修改全局状态。
 impl DerefMut for IcaApp {
+    /// 可变借用全局状态。
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.state
     }
 }
 
+/// `IcaApp` 的应用级行为：配置更新、快捷键/输入处理、字体与样式装配、每帧更新等。
 impl IcaApp {
+    /// 修改配置并立即持久化；保存失败仅记日志，不中断当前操作。
     pub fn update_config(&self, updater: impl FnOnce(&mut crate::config::IcaCfg)) {
         self.config.update(updater);
         if let Err(error) = self.config.save() {
@@ -112,6 +141,9 @@ impl IcaApp {
             })
     }
 
+    /// 处理聊天界面的 Esc：按优先级取消浮层/编辑/转发选择，或在独立窗口关闭视口。
+    ///
+    /// IME 合成中、有模态框/浮层、焦点不在输入框等情况下直接放过，避免误吞 Esc。
     pub fn handle_chat_escape(&mut self, ctx: &egui::Context) {
         if self.ime_composing
             || self.ime_event_this_frame
@@ -191,6 +223,7 @@ impl IcaApp {
         }
     }
 
+    /// 每帧更新输入法状态，并识别“Ctrl+V 但无文字粘贴”以支持粘贴图片。
     pub fn update_chat_input(&mut self, ctx: &egui::Context) {
         let raw_input = ctx.input(|input| input.raw.clone());
         self.ime_event_this_frame = false;
@@ -220,6 +253,7 @@ impl IcaApp {
             clipboard_image_paste_requested(&raw_input, system_paste_shortcut_pressed);
     }
 
+    /// 装配字体：内置中文字体作主字体，系统字体补充覆盖，并显式注册 emoji 与 Unifont。
     fn setup_fonts(ctx: &egui::Context) {
         use egui_system_fonts::{FontPreset, FontStyle};
 
@@ -269,6 +303,7 @@ impl IcaApp {
         });
     }
 
+    /// 统一交互样式：去掉控件的 hover/active/open 外扩，让按钮和面板不随交互膨胀。
     fn setup_interaction_style(ctx: &egui::Context) {
         ctx.all_styles_mut(|style| {
             style.visuals.widgets.hovered.expansion = 0.0;
@@ -287,6 +322,7 @@ impl IcaApp {
             && ctx.content_rect().width() < 720.0
     }
 
+    /// 构造应用：装配字体/样式、运行时与初始状态，并触发一次收藏表情刷新。
     pub fn new(cc: &CreationContext<'_>, config_store: ConfigStore) -> Self {
         Self::setup_fonts(&cc.egui_ctx);
         Self::setup_interaction_style(&cc.egui_ctx);
@@ -320,6 +356,7 @@ impl IcaApp {
         app
     }
 
+    /// 把一个媒体任务 spawn 到 Tokio，完成后把结果作为 `AppEvent::Media` 投回主线程。
     fn spawn_media_task(&self, ctx: &egui::Context, task: MediaTask) {
         let event_tx = self.runtime.event_sender();
         let repaint = ctx.clone();
@@ -330,6 +367,7 @@ impl IcaApp {
         });
     }
 
+    /// 应用媒体后台任务回传的结果：更新提示/错误，或把读取到的表情加入待发送图片。
     fn apply_media_event(&mut self, event: MediaEvent) {
         match event {
             MediaEvent::Completed(message) => {
@@ -363,18 +401,23 @@ impl IcaApp {
         }
     }
 
+    /// 取当前激活 bridge 的协议状态（无激活或索引越界时为 `None`）。
     pub fn active_bridge_state(&self) -> Option<&BridgeState> {
         self.active_bridge_idx
             .and_then(|idx| self.bridge_states.get(idx))
             .map(|session| session.state())
     }
 
+    /// 取当前激活 bridge 协议状态的可变引用。
     pub fn active_bridge_state_mut(&mut self) -> Option<&mut BridgeState> {
         self.active_bridge_idx
             .and_then(|idx| self.bridge_states.get_mut(idx))
             .map(|session| session.state_mut())
     }
 
+    /// 切换激活的 bridge，并重置一系列与旧 bridge 相关的临时 UI 状态。
+    ///
+    /// 索引越界或与当前激活相同则不做任何事。
     pub fn switch_active_bridge(&mut self, bridge_idx: usize) {
         if self.active_bridge_idx == Some(bridge_idx) || bridge_idx >= self.bridge_states.len() {
             return;
@@ -393,6 +436,10 @@ impl IcaApp {
         self.mention_selected_index = 0;
     }
 
+    /// 每帧非阻塞地消费跨线程事件（Bridge/媒体/Agent 上下文），并应用到本地状态。
+    ///
+    /// 单帧最多处理 `MAX_EVENTS_PER_FRAME` 条，若有积压则请求下一帧重绘继续处理，
+    /// 避免一次性处理过多导致掉帧；所属 bridge 已不存在的事件被丢弃。
     fn poll_socketio_events(&mut self, ctx: &egui::Context) {
         const MAX_EVENTS_PER_FRAME: usize = 128;
         let mut processed = 0;
@@ -482,6 +529,8 @@ impl IcaApp {
                 Self::apply_bridge_event(state, event_kind);
                 state.sync_status_history();
 
+                // 仅在“本次事件使鉴权从未成功变为成功”时拉取一次系统消息，
+                // 避免鉴权成功后每个事件都重复请求。
                 prev_auth_state != AuthState::Succeeded && state.auth_state == AuthState::Succeeded
             };
 
@@ -500,13 +549,19 @@ impl IcaApp {
     }
 }
 
+/// eframe 应用生命周期。
 impl eframe::App for IcaApp {
+    /// 退出前停止所有 bridge 会话，发送停止信号让后台任务收尾。
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         for session in &mut self.state.bridge_states {
             session.stop();
         }
     }
 
+    /// 每帧绘制入口：先处理输入与事件，再按布局渲染各面板与独立窗口。
+    ///
+    /// 顺序重要：事件轮询要早于视图绘制，保证本帧反映最新状态；窄窗口下只显示一个
+    /// 主面板，避免各区域互相挤压。
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.sync_agent_context_config();
         self.update_chat_input(ui.ctx());

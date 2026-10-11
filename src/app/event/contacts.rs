@@ -1,4 +1,8 @@
 //! 好友与群联系人列表相关的事件。
+//!
+//! 处理 `contactsPartResponse` / `contactsPartFailed`：Bridge 把好友与群分成两批
+//! 异步返回，这里按 `requestId` 归属写入对应的 `ContactDirectory`，经去重、排序后
+//! 供联系人窗口渲染。`requestId` 不匹配的迟到响应会被静默丢弃，避免覆盖更新结果。
 
 use super::payload;
 use crate::app::state::BridgeState;
@@ -30,6 +34,8 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
             match part {
                 "friends" => match Vec::<FriendContact>::deserialize(items) {
                     Ok(mut friends) => {
+                        // 先按 uin 排序去重（保留首个），再按展示名排序；
+                        // 保证 Bridge 端重复项不会渲染成两行，同名时顺序稳定。
                         friends.sort_by_key(|friend| friend.uin);
                         friends.dedup_by_key(|friend| friend.uin);
                         friends.sort_by(|left, right| {
@@ -63,6 +69,7 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
                 },
                 "groups" => match Vec::<GroupContact>::deserialize(items) {
                     Ok(mut groups) => {
+                        // 与好友一致：先按 group_id 去重，再按展示名排序。
                         groups.sort_by_key(|group| group.group_id);
                         groups.dedup_by_key(|group| group.group_id);
                         groups.sort_by(|left, right| {

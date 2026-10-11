@@ -1,4 +1,8 @@
 //! 会话列表、入群/加好友请求与系统消息相关的事件。
+//!
+//! 维护左侧会话列表（`setAllRooms` / `updateRoom`）、已读同步（`syncRead`）与验证
+//! 消息/系统消息（`handleRequest` / `sendAddRequest` / `setSystemMessages`）。任何
+//! 改变房间集合的分支都会 `bump_rooms_revision`，触发列表与可见索引缓存重建。
 
 use super::payload;
 use crate::app::state::BridgeState;
@@ -86,6 +90,7 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
             if let Some(room_id) = payload::first_payload_value(payload).and_then(|v| v.as_i64())
                 && let Some(room) = state.rooms.iter_mut().find(|r| r.room_id == room_id)
             {
+                // 远端（其它设备）已读：清零未读并清除 @ 标记，让角标立即消失。
                 room.unread_count = 0;
                 room.at = crate::ica::types::message::At::Bool(false);
                 state.bump_rooms_revision();

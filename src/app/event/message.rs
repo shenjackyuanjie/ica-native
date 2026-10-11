@@ -1,4 +1,8 @@
 //! 消息列表与单条消息变更相关的事件。
+//!
+//! 这是最高频的事件域：维护每个会话的消息数组、草稿、编辑发送状态与各种消息级
+//! 变更（删除、隐藏、URL 刷新等）。解析失败统一走 `payload::log_event_parse_failure`，
+//! 保证坏数据只降级为错误提示而不会 panic。
 
 #[cfg(test)]
 #[path = "tests/message.rs"]
@@ -21,12 +25,16 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
                 return true;
             };
             let conversation = state.conversation_mut(room_id);
+            // 只结算当前正在等待回执的那次编辑；不是同一条消息的迟到结果直接忽略，
+            // 避免把用户已切换到别的编辑对象的状态误清空。
             if !conversation.editing_send_pending
                 || conversation.editing_message_id.as_deref() != Some(message_id)
             {
                 return true;
             }
             conversation.editing_send_pending = false;
+            // 被接受则清空草稿及关联的回复/@/待发送图片；被拒绝则保留草稿，
+            // 仅取消“发送后滚动到底部”的意图，方便用户改完再发。
             if payload.get("accepted").and_then(JsonValue::as_bool) == Some(true) {
                 conversation.draft.clear();
                 conversation.reply_to = None;

@@ -54,14 +54,25 @@ pub fn filtered_sorted_room_indices(
     indices
 }
 
+/// 主窗口支持的会话导航快捷键语义。
+///
+/// 由 `chat_shortcut` 从 egui 按键事件解析而来，`shortcut_room` 再据此决定目标会话。
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ChatShortcut {
+    /// 切换到上一个会话（Ctrl+Shift+Tab 或 Alt+↑）。
     Previous,
+    /// 切换到下一个会话（Ctrl+Tab 或 Alt+↓）。
     Next,
+    /// 跳到下一条未读会话（裸 Tab）。
     Unread,
+    /// 切换到指定聊天分组（Ctrl+数字键）。
     Group(SelectedChatGroup),
 }
 
+/// 把单个 egui 按键事件解析成导航语义，非导航键返回 `None`。
+///
+/// 只认声明好的 Ctrl/Alt 组合，刻意排除 AltGr、Ctrl+Alt 与 mac Command，避免与
+/// 系统或输入法快捷键冲突。
 fn chat_shortcut(event: &Event) -> Option<ChatShortcut> {
     let Event::Key {
         key,
@@ -112,6 +123,10 @@ fn chat_shortcut(event: &Event) -> Option<ChatShortcut> {
     (*key == Key::Tab && modifiers.is_none()).then_some(ChatShortcut::Unread)
 }
 
+/// 根据导航语义与当前可见会话列表，算出应当跳转到的会话 ID。
+///
+/// `Next`/`Previous` 在可见列表内循环；`Unread` 按未读优先级 5→1 查找且不跨出当前
+/// 筛选；`Group` 不指向具体会话，返回 `None`。
 fn shortcut_room(
     shortcut: &ChatShortcut,
     rooms: &[Room],
@@ -150,7 +165,11 @@ fn shortcut_room(
     }
 }
 
+/// 会话导航快捷键的处理逻辑。
 impl IcaApp {
+    /// 当前是否有会拦截按键的浮层/窗口打开（设置页、图片查看器、各类选择器与工具页等）。
+    ///
+    /// 命中时任一导航快捷键都不生效，避免在浮层里误切会话。
     fn chat_navigation_has_overlay(&self) -> bool {
         let page = &self.open_page;
         let page_open = [

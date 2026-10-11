@@ -1,4 +1,8 @@
 //! 聊天记录搜索与成员发言记录分页相关的事件。
+//!
+//! 处理两类分页拉取：全局聊天记录搜索（`searchMessagesResponse`）与单个群成员的
+//! 发言记录（`memberHistoryResponse`）。两者都按 `offset` 决定覆盖首页还是向前追加，
+//! 并用请求序号与 msg_id 去重防止迟到响应造成重复或串页。
 
 use super::payload;
 use crate::app::state::BridgeState;
@@ -65,6 +69,8 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
             state.member_history.loading = false;
             match payload.get("messages").map(Vec::<Message>::deserialize) {
                 Some(Ok(messages)) => {
+                    // 返回不足一页即认为已到底；随后按 msg_id 去重，
+                    // offset==0 覆盖首页，否则把新页拼到已有结果前面（按时间倒序翻页）。
                     const MEMBER_HISTORY_PAGE_SIZE: usize = 20;
                     state.member_history.exhausted = messages.len() < MEMBER_HISTORY_PAGE_SIZE;
                     let mut existing_ids = state

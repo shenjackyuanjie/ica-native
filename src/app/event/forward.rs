@@ -1,4 +1,8 @@
 //! 合并转发查看与转发发送相关的事件。
+//!
+//! 处理合并转发的拉取结果（`forwardMessagesResponse` / `forwardMessagesFailed`），
+//! 把解析出的消息列表送入 `forward_viewer` 供查看；`forwardSendRequested` 仅在界面
+//! 上确认“已请求发送”。解析失败时会尽量定位到具体是哪一条消息不合规，便于排查。
 
 use super::payload;
 use crate::app::state::BridgeState;
@@ -46,6 +50,8 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
                         .apply_response(request_id, res_id, messages);
                 }
                 Some(Err(error)) => {
+                    // 整体反序列化只知道“失败”，这里再逐条定位第一条不合规的消息
+                    // 及其 JSON 形状，便于在 debug 日志指出具体下标，加速协议排查。
                     let invalid_message = payload["messages"].as_array().and_then(|messages| {
                         messages.iter().enumerate().find_map(|(index, value)| {
                             serde_json::from_value::<Message>(value.clone())

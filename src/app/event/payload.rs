@@ -21,6 +21,10 @@ pub fn payload_message(payload: &JsonValue) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// 把一个可能是字符串或 `{title,message}` 对象的值转成可读文本。
+///
+/// 标题与正文同时存在时用 `标题: 正文` 拼接；只有其一时取其一；都缺失或为空串时
+/// 返回 `None`，交由调用方决定回退文案。
 pub fn value_to_display_message(value: &JsonValue) -> Option<String> {
     if let Some(msg) = value.as_str() {
         return Some(msg.to_string());
@@ -38,10 +42,14 @@ pub fn value_to_display_message(value: &JsonValue) -> Option<String> {
     }
 }
 
+/// 取数组包装 payload 的第一个元素并转成可读文本，是错误/通知类事件的常用入口。
 pub fn first_payload_display_message(payload: &JsonValue) -> Option<String> {
     first_payload_value(payload).and_then(value_to_display_message)
 }
 
+/// 生成 JSON 的截断预览，最多保留 `max_chars` 个字符，超出部分以 `...` 结尾。
+///
+/// 用于日志与状态展示，避免把整份响应刷屏或写入过长记录。
 pub fn json_preview(value: &JsonValue, max_chars: usize) -> String {
     let raw = value.to_string();
     let mut chars = raw.chars();
@@ -53,6 +61,7 @@ pub fn json_preview(value: &JsonValue, max_chars: usize) -> String {
     }
 }
 
+/// 用中文概括 JSON 的类型与结构（如对象字段名、数组长度），用于排查协议字段不符。
 pub fn json_shape(value: &JsonValue) -> String {
     match value {
         JsonValue::Null => "空值".to_string(),
@@ -71,6 +80,9 @@ pub fn json_shape(value: &JsonValue) -> String {
     }
 }
 
+/// 统一记录事件解析失败：warn 记录事件名与错误，debug 附上截断后的原始 payload。
+///
+/// 便于协议字段变化时快速定位是哪个事件、哪段数据对不上，且不泄露完整响应。
 pub fn log_event_parse_failure(state: &BridgeState, event: &str, error: &str, payload: &JsonValue) {
     tracing::warn!(
         target: "ica_native::protocol",
@@ -88,6 +100,11 @@ pub fn log_event_parse_failure(state: &BridgeState, event: &str, error: &str, pa
     );
 }
 
+/// 解析单条入群/加好友验证请求。
+///
+/// `fallback_flag` 在请求体自身缺少 `flag` 时兜底（快照以 `flag` 为键时用到）；
+/// 其余字符串字段统一去除首尾空白，避免 Bridge 端多余空格影响展示与去重。
+/// 反序列化失败时返回错误字符串。
 pub fn parse_join_request(
     value: &JsonValue,
     fallback_flag: Option<&str>,
@@ -109,6 +126,10 @@ pub fn parse_join_request(
     Ok(request)
 }
 
+/// 解析系统消息快照：数组形式逐项解析，对象形式以 `flag` 为键逐项解析并回填。
+///
+/// Bridge 在不同版本下可能返回数组或 `{flag: request}` 对象，这里都兼容；
+/// 其它类型直接报错。
 pub fn parse_join_requests_snapshot(value: &JsonValue) -> Result<Vec<JoinRequestRoom>, String> {
     match value {
         JsonValue::Array(values) => values

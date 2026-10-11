@@ -30,6 +30,10 @@ const HANDLERS: &[EventHandler] = &[
     misc::apply,
 ];
 
+/// 在 [`IcaApp`] 上以关联函数形式挂载 Bridge 事件到本地状态的映射入口。
+///
+/// 之所以作为 `IcaApp` 的关联函数而非自由函数，是为了与 `poll_socketio_events`
+/// 中的调用点保持一致命名空间，同时便于将来访问应用级上下文。
 impl IcaApp {
     /// 把某个 bridge 发来的事件应用到对应的本地状态上。
     ///
