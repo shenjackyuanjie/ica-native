@@ -4,10 +4,9 @@
 //! api_base_url / HTTP clients 六个参数，改成一个 Copy 的上下文之后，各命令函数的签名里
 //! 只保留它自己真正用到的字段。
 
+use crate::ica::event::BridgeEvent;
 use rust_socketio::asynchronous::Client;
 use tokio::sync::mpsc::UnboundedSender;
-
-use crate::ica::event::BridgeEvent;
 
 #[derive(Clone, Copy)]
 pub struct CommandContext<'a> {

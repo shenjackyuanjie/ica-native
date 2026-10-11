@@ -1,7 +1,8 @@
-use std::{collections::BTreeMap, fmt::Display, net::IpAddr, path::PathBuf};
-
-use hex;
-use serde::{Deserialize, Serialize};
+pub mod appearance;
+pub mod chat_groups;
+mod store;
+#[cfg(test)]
+mod tests;
 
 use crate::noticer::{
     HARD_MAX_BODY_SIZE, HARD_MAX_IDEMPOTENCY_ENTRIES, HARD_MAX_IDEMPOTENCY_TTL_SECONDS,
@@ -9,13 +10,11 @@ use crate::noticer::{
     HARD_MAX_QUEUED_IMAGE_BYTES, HARD_MAX_RETRY_ATTEMPTS, HARD_MAX_RETRY_DELAY_SECONDS,
     HARD_MAX_SEND_TIMEOUT_SECONDS, HARD_MAX_TOTAL_IMAGE_SIZE,
 };
-
-pub mod appearance;
-pub mod chat_groups;
-mod store;
-
 pub use appearance::ChatAppearanceSettings;
 pub use chat_groups::ChatGroups;
+use hex;
+use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, fmt::Display, net::IpAddr, path::PathBuf};
 pub use store::{ConfigPaths, ConfigStore};
 
 fn tokio_rt_work_thread_default() -> u32 {
@@ -720,60 +719,6 @@ pub const DEFAULT_CFG_PATH: &str = "ica_native.toml";
 
 /// 环境变量名称
 pub const CFG_ENV_VAR: &str = "ICA_NATIVE_CONFIG";
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn bridge(name: &str) -> IcaBridge {
-        IcaBridge {
-            name: name.to_string(),
-            url: "ws://127.0.0.1:9999".to_string(),
-            private_key: String::new(),
-            enable: true,
-            allow_protocol_mismatch: false,
-        }
-    }
-
-    #[test]
-    fn noticer_non_loopback_listener_requires_authentication() {
-        let mut noticer = NoticerConfig {
-            enabled: true,
-            host: "0.0.0.0".to_string(),
-            default_bridge: "main".to_string(),
-            ..NoticerConfig::default()
-        };
-        let bridges = [bridge("main")];
-        let error = noticer.validate(&bridges).unwrap_err();
-        assert!(error.to_string().contains("必须配置 auth_token"));
-
-        noticer.auth_token = "configured".to_string();
-        noticer.validate(&bridges).unwrap();
-    }
-
-    #[test]
-    fn noticer_routes_must_reference_an_enabled_bridge() {
-        let mut noticer = NoticerConfig {
-            enabled: true,
-            default_bridge: "main".to_string(),
-            ..NoticerConfig::default()
-        };
-        noticer.rooms.insert(
-            "warning".to_string(),
-            NoticerRoom {
-                bridge: "secondary".to_string(),
-                room_id: -456,
-                description: String::new(),
-            },
-        );
-        let error = noticer.validate(&[bridge("main")]).unwrap_err();
-        assert!(error.to_string().contains("未启用的 bridge"));
-
-        noticer
-            .validate(&[bridge("main"), bridge("secondary")])
-            .unwrap();
-    }
-}
 
 // 旧版的 CLI、环境变量和默认路径解析曾放在这里，现在统一由 ConfigStore 管理。
 /* The former global configuration API intentionally remains unavailable.

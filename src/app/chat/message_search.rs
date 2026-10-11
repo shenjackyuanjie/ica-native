@@ -1,7 +1,6 @@
+use super::message_card::MessageRenderOptions;
 use crate::app::media::{ImageAction, image_sources_for_messages};
 use crate::app::{IcaApp, MessageAction};
-
-use super::message_card::MessageRenderOptions;
 
 impl IcaApp {
     pub fn render_message_search_window(&mut self, ctx: &egui::Context) {

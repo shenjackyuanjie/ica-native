@@ -1,12 +1,10 @@
 //! 好友与群联系人列表相关的事件。
 
-use serde::Deserialize;
-use serde_json::Value as JsonValue;
-
+use super::payload;
 use crate::app::state::BridgeState;
 use crate::ica::types::contact::{FriendContact, GroupContact};
-
-use super::payload;
+use serde::Deserialize;
+use serde_json::Value as JsonValue;
 
 /// 处理本模块负责的事件；返回 false 表示事件不属于这里，交给下一个模块。
 pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> bool {

@@ -1,9 +1,7 @@
-use std::sync::atomic::Ordering;
-
+use super::{should_probe_gif_after_static_error, try_load_gif_texture};
 use crate::app::IcaApp;
 use crate::app::media::ImageAction;
-
-use super::{should_probe_gif_after_static_error, try_load_gif_texture};
+use std::sync::atomic::Ordering;
 
 impl IcaApp {
     pub fn render_image_viewer(&mut self, ctx: &egui::Context) {

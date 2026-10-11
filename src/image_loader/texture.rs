@@ -1,9 +1,3 @@
-use std::{
-    hash::{Hash, Hasher},
-    sync::Arc,
-    time::{Duration, Instant},
-};
-
 use egui::{
     Context, TextureHandle, TextureOptions,
     load::{
@@ -13,6 +7,11 @@ use egui::{
     mutex::Mutex,
 };
 use lru::LruCache;
+use std::{
+    hash::{Hash, Hasher},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 const ACTIVE_TEXTURE_GRACE: Duration = Duration::from_millis(750);
 

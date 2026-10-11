@@ -2,15 +2,13 @@
 //!
 //! 这些类型都由 UI 层产生、由主循环消费，放在一起便于对照。
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-
+use super::super::media::ImageAction;
 use crate::ica::types::{
     RoomId,
     message::{Message, ReplyMessage},
 };
-
-use super::super::media::ImageAction;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub enum ChatListScrollTarget {

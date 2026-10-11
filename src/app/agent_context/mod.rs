@@ -1,14 +1,15 @@
 //! GUI 是已打开会话及授权状态的唯一来源，不经 Bridge 获取任何消息。
+
+mod settings;
+#[cfg(test)]
+mod tests;
+
 use super::IcaApp;
 use crate::agent_context::server::{GuiRequest, Operation};
 use crate::agent_context::{
     self, AgentContextConfig, ApiError, Context, QueryResult, Snapshot, Target,
 };
 use std::{collections::HashSet, time::Duration};
-
-mod settings;
-#[cfg(test)]
-mod tests;
 
 pub struct PendingRead {
     pub request: GuiRequest,

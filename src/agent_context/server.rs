@@ -1,4 +1,9 @@
 //! 独立本机监听器。鉴权、容量和超时在进入 GUI 事件队列前执行。
+
+#[cfg(test)]
+#[path = "tests/server.rs"]
+mod tests;
+
 use super::{
     AgentContextConfig, ApiError, MAX_RESPONSE_BYTES, QueryResult, REQUEST_TIMEOUT_SECONDS,
     ReadRequest,
@@ -354,6 +359,3 @@ fn respond(id: u64, result: Result<QueryResult, ApiError>) -> Response {
     )
         .into_response()
 }
-
-#[cfg(test)]
-mod tests;

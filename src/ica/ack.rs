@@ -1,4 +1,9 @@
 //! Bridge ACK 的一次完成与截止时间。只统一传输，不替协议决定返回值含义。
+
+#[cfg(test)]
+#[path = "tests/ack.rs"]
+mod tests;
+
 use futures_util::FutureExt;
 use rust_socketio::{Payload, asynchronous::Client};
 use serde_json::{Value as JsonValue, json};
@@ -161,6 +166,3 @@ pub fn nonempty_string(payload: &Payload, event: &str) -> Result<String, AckErro
         .and_then(|value| value.as_str().filter(|s| !s.is_empty()).map(str::to_string))
         .ok_or_else(|| AckError::invalid(event, "响应必须是非空字符串"))
 }
-
-#[cfg(test)]
-mod tests;

@@ -1,9 +1,9 @@
 //! 通知栏回归只绘制内存中的应用，不读取真实配置、聊天或连接 Bridge。
-use egui::{Event, Modifiers, PointerButton, Pos2, Rect, Vec2};
 
-use super::actions::avatar_action_tests::test_app;
 use crate::app::IcaApp;
+use crate::app::test_support::test_app;
 use crate::ica::IcaCommand;
+use egui::{Event, Modifiers, PointerButton, Pos2, Rect, Vec2};
 
 struct PaintedText {
     text: String,

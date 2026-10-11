@@ -1,8 +1,6 @@
-use serde_json::Value as JsonValue;
-
-use crate::ica::IcaCommand;
-
 use crate::app::IcaApp;
+use crate::ica::IcaCommand;
+use serde_json::Value as JsonValue;
 
 pub struct SocketApiPreset {
     pub label: &'static str,

@@ -1,17 +1,3 @@
-use rust_socketio::asynchronous::Client;
-
-use serde_json::Value as JsonValue;
-use serde_json::json;
-
-use tokio::sync::mpsc::UnboundedSender;
-
-use crate::ica::event::BridgeEvent;
-
-use crate::ica::types::message::SendMessage;
-
-use super::client;
-use super::command::{IcaCommand, emit_ui_event};
-
 mod announcement;
 mod contacts;
 mod file_upload;
@@ -19,7 +5,6 @@ mod forward;
 mod history;
 mod http_send;
 mod message_payload;
-
 // 命令分发的具体实现按领域拆分，本文件只保留「命令 -> 处理函数」的映射。
 mod account_commands;
 mod audio_commands;
@@ -32,12 +17,19 @@ mod image_commands;
 mod message_commands;
 mod room_commands;
 
+use super::ack::{payload_first as ack_payload_first, payload_values as ack_payload_values};
+use super::client;
+use super::command::{IcaCommand, emit_ui_event};
+use crate::ica::event::BridgeEvent;
+use crate::ica::types::message::SendMessage;
 use context::CommandContext;
 use file_upload::upload_and_send_file;
 use http_send::{http_send_message, request_send_token};
 use message_payload::build_multi_image_message;
-
-use super::ack::{payload_first as ack_payload_first, payload_values as ack_payload_values};
+use rust_socketio::asynchronous::Client;
+use serde_json::Value as JsonValue;
+use serde_json::json;
+use tokio::sync::mpsc::UnboundedSender;
 
 fn normalize_ack_list(mut values: Vec<JsonValue>) -> JsonValue {
     if values.len() == 1 {

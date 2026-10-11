@@ -1,11 +1,15 @@
 //! 仅导出 GUI 已加载的聊天上下文，不连接 Bridge，也不暴露写入能力。
+
+pub mod server;
+#[cfg(test)]
+mod tests;
+
 use crate::ica::types::message::Message;
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub mod server;
 pub const MAX_MESSAGES: usize = 200;
 pub const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 pub const REQUEST_TIMEOUT_SECONDS: u64 = 120;
@@ -304,5 +308,3 @@ impl ApiError {
         )
     }
 }
-#[cfg(test)]
-mod tests;

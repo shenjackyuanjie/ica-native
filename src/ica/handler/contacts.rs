@@ -1,3 +1,12 @@
+#[cfg(test)]
+#[path = "tests/contacts.rs"]
+mod tests;
+
+use super::{ack_payload_values, normalize_ack_list};
+use crate::ica::{command::emit_ui_event, event::BridgeEvent};
+use futures_util::future::BoxFuture;
+use rust_socketio::{Payload, asynchronous::Client};
+use serde_json::json;
 use std::{
     sync::{
         Arc,
@@ -5,15 +14,7 @@ use std::{
     },
     time::Duration,
 };
-
-use futures_util::future::BoxFuture;
-use rust_socketio::{Payload, asynchronous::Client};
-use serde_json::json;
 use tokio::sync::mpsc::UnboundedSender;
-
-use crate::ica::{command::emit_ui_event, event::BridgeEvent};
-
-use super::{ack_payload_values, normalize_ack_list};
 
 const CONTACTS_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -118,30 +119,4 @@ pub async fn fetch_contacts(
         "getGroups",
     )
     .await;
-}
-
-#[cfg(test)]
-mod tests {
-    use rust_socketio::Payload;
-    use serde_json::json;
-
-    use super::contact_ack_items;
-
-    #[test]
-    fn nested_ack_list_is_unwrapped_for_contact_deserialization() {
-        let payload = Payload::Text(vec![json!([[{
-            "uin": "10001",
-            "nick": "Alice",
-            "remark": ""
-        }]])]);
-
-        assert_eq!(
-            contact_ack_items(&payload),
-            json!([{
-                "uin": "10001",
-                "nick": "Alice",
-                "remark": ""
-            }])
-        );
-    }
 }

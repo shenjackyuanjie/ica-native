@@ -2,15 +2,13 @@
 //! 覆盖 render_message_image 的两条真实回落：后缀/内容不符的 GIF↔静态图、GIF 帧元数据过期。
 #![cfg(test)]
 
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-
+use crate::app::chat::message_card::render_message_image;
+use crate::app::media::ImageSource;
 use egui::load::{
     LoadError, SizeHint, SizedTexture, TextureLoadResult, TextureLoader, TexturePoll,
 };
-
-use super::message_card::render_message_image;
-use crate::app::media::ImageSource;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 const PREVIEW_PREFIX: &str = "bytes://preview-regression";
 /// 假纹理的固定 id 与尺寸，用来在 tessellate 结果里分辨「真的画出了图片」。
@@ -150,7 +148,7 @@ fn assert_image_drawn(image_rect: Option<egui::Rect>, texts: &[String], why: &st
 }
 
 #[test]
-fn scroll_regression_png_url_with_gif_bytes_falls_back_to_gif_frame() {
+fn png_url_with_gif_bytes_falls_back_to_gif_frame() {
     // file_type 与后缀都是 PNG，字节却是 GIF：静态解码先报格式不支持，
     // message_card 的 GIF 回落必须重新探测并画出帧纹理，而不是停在错误槽。
     let ctx = context(PreviewMode::StaticFormatErrorThenGif);
@@ -170,7 +168,7 @@ fn scroll_regression_png_url_with_gif_bytes_falls_back_to_gif_frame() {
 }
 
 #[test]
-fn scroll_regression_gif_type_with_static_bytes_drops_stale_frame_metadata() {
+fn gif_type_with_static_bytes_drops_stale_frame_metadata() {
     // 旧帧时长元数据 + 已成静态图的字节：必须清掉过期元数据并落到静态 Ready，
     // 否则后续每一帧都会拿 "#0" 去探测一个不再存在的动画。
     let ctx = context(PreviewMode::StaticImageWithStaleFrame);
@@ -192,7 +190,7 @@ fn scroll_regression_gif_type_with_static_bytes_drops_stale_frame_metadata() {
 }
 
 #[test]
-fn scroll_regression_expired_link_error_slot_keeps_label_and_fixed_height() {
+fn expired_link_error_slot_keeps_label_and_fixed_height() {
     // 真实错误槽：过期链接必须给出可读文案，并且不得撑大或压缩父级的固定预览槽。
     let ctx = context(PreviewMode::ExpiredLink);
     let source = ImageSource::url(format!("{PREVIEW_PREFIX}-expired.png"));

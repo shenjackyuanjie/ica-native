@@ -1,8 +1,6 @@
-use serde_json::{Value as JsonValue, json};
-
-use crate::ica::IcaCommand;
-
 use crate::app::IcaApp;
+use crate::ica::IcaCommand;
+use serde_json::{Value as JsonValue, json};
 
 #[derive(Debug, Clone)]
 pub struct FileToolsState {

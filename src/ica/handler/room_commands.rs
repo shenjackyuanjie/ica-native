@@ -1,12 +1,10 @@
 //! 会话与聊天分组管理类命令。
 
-use serde_json::json;
-
+use super::context::CommandContext;
 use crate::ica::command::emit_ui_event;
 use crate::ica::types::RoomId;
 use crate::ica::types::room::Room;
-
-use super::context::CommandContext;
+use serde_json::json;
 
 pub async fn add_room(ctx: CommandContext<'_>, room: Room) {
     let CommandContext {

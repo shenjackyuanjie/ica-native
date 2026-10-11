@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "tests/file_upload.rs"]
+mod tests;
+
 use crate::ica::{
     ack::{self, AckError},
     client,
@@ -181,6 +185,3 @@ where
 fn sha256(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
-
-#[cfg(test)]
-mod tests;

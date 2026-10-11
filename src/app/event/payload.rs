@@ -3,11 +3,10 @@
 //! socket.io 的事件参数基本都是数组包装，且同一个字段在不同协议端下
 //! 可能是字符串、对象或缺失，这里集中处理，避免每个事件分支各抄一遍。
 
-use serde::Deserialize;
-use serde_json::Value as JsonValue;
-
 use crate::app::state::BridgeState;
 use crate::ica::types::room::JoinRequestRoom;
+use serde::Deserialize;
+use serde_json::Value as JsonValue;
 
 /// socket.io 的事件 payload 基本都是数组包装，真正的数据通常在第一个元素里。
 pub fn first_payload_value(payload: &JsonValue) -> Option<&JsonValue> {

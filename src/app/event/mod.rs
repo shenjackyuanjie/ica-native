@@ -1,7 +1,3 @@
-use crate::ica::BridgeEvent;
-
-use super::media::MediaEvent;
-
 mod announcement;
 mod connection;
 mod contacts;
@@ -14,6 +10,9 @@ mod payload;
 mod reducer;
 mod room;
 mod search;
+
+use super::media::MediaEvent;
+use crate::ica::BridgeEvent;
 
 #[derive(Debug)]
 pub enum AppEvent {

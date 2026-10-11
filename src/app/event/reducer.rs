@@ -4,15 +4,13 @@
 //! 返回 `false` 表示不认领，继续交给下一个模块。
 //! 这一层故意不做任何 UI 逻辑，只维护「事件 -> 状态」的映射。
 
-use serde_json::Value as JsonValue;
-
-use crate::app::IcaApp;
-use crate::app::state::BridgeState;
-use crate::ica::BridgeEventKind;
-
 use super::{
     announcement, connection, contacts, forward, group, login, message, misc, room, search,
 };
+use crate::app::IcaApp;
+use crate::app::state::BridgeState;
+use crate::ica::BridgeEventKind;
+use serde_json::Value as JsonValue;
 
 /// 领域事件处理器：认领并处理了事件时返回 true。
 type EventHandler = fn(&mut BridgeState, &str, &JsonValue) -> bool;

@@ -1,13 +1,17 @@
-// 自动生成的表情数据模块
-// 只内嵌表情 ID，APNG 文件按需从 assets/face 读取并做小型 LRU 缓存。
+/// (表情ID, 表情名称)
+#[path = "face_data/names.rs"]
+mod names;
 
+use names::FACE_NAMES;
+use std::sync::Arc;
 use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{Mutex, OnceLock},
 };
 
-use std::sync::Arc;
+// 自动生成的表情数据模块
+// 只内嵌表情 ID，APNG 文件按需从 assets/face 读取并做小型 LRU 缓存。
 
 const FACE_CACHE_LIMIT: usize = 96;
 
@@ -116,11 +120,6 @@ pub const FACE_COUNT: usize = FACE_IDS.len();
 
 // 表情名称映射（自动生成自 faceNames.js）
 // 共 306 个有名称的表情
-
-/// (表情ID, 表情名称)
-#[path = "face_data/names.rs"]
-mod names;
-use names::FACE_NAMES;
 
 /// 根据表情 ID 获取表情名称
 pub fn get_face_name(id: u16) -> Option<&'static str> {

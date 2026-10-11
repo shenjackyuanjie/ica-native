@@ -1,16 +1,17 @@
 //! 关系网的数据加载：重建图谱、分批拉取群成员、统计进度与自动降级。
 
-use std::time::Instant;
-
-use tokio::sync::mpsc::UnboundedSender;
-
-use crate::app::IcaApp;
-use crate::app::state::BridgeState;
-use crate::ica::IcaCommand;
+#[cfg(test)]
+#[path = "tests/loading.rs"]
+mod tests;
 
 use super::super::controller::RelationAction;
 use super::super::model::*;
 use super::super::state::RelationNetworkState;
+use crate::app::IcaApp;
+use crate::app::state::BridgeState;
+use crate::ica::IcaCommand;
+use std::time::Instant;
+use tokio::sync::mpsc::UnboundedSender;
 
 const RELATION_MEMBER_LOAD_CONCURRENCY: usize = 12;
 const RELATION_REBUILD_GROUP_STEP: usize = 12;
@@ -330,43 +331,4 @@ pub fn request_relation_network_members_with_tx(
 
 pub fn relation_login_user_id(state: &BridgeState) -> Option<i64> {
     (state.online_data.qqid > 0).then_some(state.online_data.qqid)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{RelationBridgeSnapshot, relation_member_load_progress};
-
-    #[test]
-    fn member_load_progress_uses_live_group_total_and_clamps_loaded_count() {
-        let snapshot = RelationBridgeSnapshot {
-            rooms_len: 12,
-            total_groups: 5,
-            loaded_groups: 8,
-            loading_groups: 0,
-            pending_groups: 0,
-        };
-
-        let progress = relation_member_load_progress(&snapshot);
-
-        assert_eq!(progress.loaded, 5);
-        assert_eq!(progress.total, 5);
-        assert_eq!(progress.ratio, 1.0);
-    }
-
-    #[test]
-    fn member_load_progress_keeps_empty_total_visible_without_dividing_by_zero() {
-        let snapshot = RelationBridgeSnapshot {
-            rooms_len: 0,
-            total_groups: 0,
-            loaded_groups: 0,
-            loading_groups: 0,
-            pending_groups: 0,
-        };
-
-        let progress = relation_member_load_progress(&snapshot);
-
-        assert_eq!(progress.loaded, 0);
-        assert_eq!(progress.total, 0);
-        assert_eq!(progress.ratio, 0.0);
-    }
 }

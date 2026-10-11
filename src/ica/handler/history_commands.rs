@@ -1,18 +1,15 @@
 //! 历史消息、群成员与消息检索类命令。
 
-use std::time::Duration;
-
+use super::context::CommandContext;
+use super::{ack_payload_values, history, normalize_ack_list};
+use crate::ica::command::emit_ui_event;
+use crate::ica::types::RoomId;
 use futures_util::future::BoxFuture;
 use rust_socketio::Payload;
 use rust_socketio::asynchronous::Client;
 use serde_json::Value as JsonValue;
 use serde_json::json;
-
-use crate::ica::command::emit_ui_event;
-use crate::ica::types::RoomId;
-
-use super::context::CommandContext;
-use super::{ack_payload_values, history, normalize_ack_list};
+use std::time::Duration;
 
 pub async fn fetch_messages(ctx: CommandContext<'_>, room_id: RoomId) {
     let CommandContext {

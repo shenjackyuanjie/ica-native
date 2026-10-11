@@ -1,8 +1,7 @@
-use std::sync::atomic::Ordering;
-
 use crate::app::IcaApp;
 use crate::app::online_mode::OnlineMode;
 use crate::config::ReEditDraftConflictMode;
+use std::sync::atomic::Ordering;
 
 impl IcaApp {
     fn apply_chat_appearance_viewport_changes(&mut self) {

@@ -19,6 +19,11 @@ icalingua but native
   - Claude Fable 5 (只用了一次)
   - Kimi K2 thinking
 
+## 开发与测试
+
+测试组织、全量与定向执行命令、系统字体环境要求见 [测试指南](docs/testing/README.md)。
+滚动与图片加载的覆盖范围和人工复查见 [专项说明](docs/testing/scroll-and-images.md)。
+
 ## 聊天交互（Socket.IO + oicq Bridge）
 
 - 双击群消息头像或私聊顶栏头像戳一戳；群头像右键可 `@TA`、私聊、查看头像、发言记录及成员管理。

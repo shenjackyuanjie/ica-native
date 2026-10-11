@@ -1,10 +1,9 @@
-use std::{mem::size_of, path::Path, sync::Arc};
-
 use egui::{
     Color32, ColorImage,
     load::{Bytes, LoadError},
 };
 use image::ImageFormat;
+use std::{mem::size_of, path::Path, sync::Arc};
 use tracing::warn;
 
 /// `egui` 会把动图 URI 包一层 `...#frame=...` 之类的内部表示；

@@ -1,3 +1,5 @@
+use super::util::format_bytes;
+use sha2::{Digest, Sha256};
 use std::{
     fs, io,
     path::PathBuf,
@@ -7,11 +9,7 @@ use std::{
     },
     time::{SystemTime, UNIX_EPOCH},
 };
-
-use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
-
-use super::util::format_bytes;
 
 /// 负责磁盘缓存的读写和落盘淘汰。
 ///

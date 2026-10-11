@@ -1,4 +1,9 @@
 //! 即时 viewport 复用现有聊天界面和连接，每次绘制仅切换窗口的 UI 上下文。
+
+#[cfg(test)]
+#[path = "tests/chat_windows.rs"]
+mod tests;
+
 use super::{ChatWindowUiState, IcaApp};
 
 pub struct ChatWindow {
@@ -139,105 +144,5 @@ impl IcaApp {
             open
         });
         self.chat_windows = windows;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::app::{
-        AppState, BridgeSession, BridgeState, runtime::AppRuntime, stickers::StickerStore,
-    };
-    use crate::config::{ChatGroups, ConfigStore, IcaCfg};
-    use crate::ica::{BridgeHandle, IcaCommand};
-    use tokio::sync::{mpsc, oneshot};
-
-    fn test_app() -> (IcaApp, Vec<mpsc::UnboundedReceiver<IcaCommand>>) {
-        let config: IcaCfg = toml::from_str("bridges = []").unwrap();
-        let store = ConfigStore::from_config(
-            config.clone(),
-            std::env::temp_dir().join("ica-chat-window-test.toml"),
-        );
-        let mut receivers = Vec::new();
-        let sessions = ["test-a", "test-b"]
-            .into_iter()
-            .map(|key| {
-                let (tx, rx) = mpsc::unbounded_channel();
-                receivers.push(rx);
-                let (stop, _) = oneshot::channel();
-                BridgeSession::new(
-                    BridgeHandle::new(key.into(), tx),
-                    BridgeState::new(key.into(), ChatGroups::default()),
-                    stop,
-                )
-            })
-            .collect();
-        let state = AppState::new(
-            &config,
-            &store,
-            sessions,
-            StickerStore::unavailable(
-                std::env::temp_dir().join("ica-chat-window-test-stickers"),
-                "test",
-            ),
-        );
-        (
-            IcaApp {
-                runtime: AppRuntime::new(&egui::Context::default(), &config),
-                config: store,
-                state,
-                chat_windows: Vec::new(),
-            },
-            receivers,
-        )
-    }
-
-    #[test]
-    fn opening_windows_deduplicates_per_bridge_and_preserves_main_selection() {
-        let (mut app, _receivers) = test_app();
-        app.bridge_states[0].selected_room_id = Some(-2);
-        let ctx = egui::Context::default();
-        app.open_chat_window(&ctx, 0, -1);
-        app.open_chat_window(&ctx, 0, -1);
-        assert_eq!(app.chat_windows.len(), 1);
-        app.open_chat_window(&ctx, 1, -1);
-        assert_eq!(app.chat_windows.len(), 2);
-        assert_eq!(app.active_bridge_idx, Some(0));
-        assert_eq!(app.bridge_states[0].selected_room_id, Some(-2));
-        assert_eq!(app.bridge_states[1].selected_room_id, None);
-    }
-
-    #[test]
-    fn detached_send_uses_its_own_bridge_and_room_and_restores_main_input() {
-        let (mut app, mut receivers) = test_app();
-        app.bridge_states[0].selected_room_id = Some(-2);
-        app.bridge_states[0].conversation_mut(-2).draft = "main draft".into();
-        app.bridge_states[1].selected_room_id = Some(-3);
-        app.bridge_states[1].conversation_mut(-1).draft = "child draft".into();
-        app.mention_search_query = "main search".into();
-        let mut window = ChatWindow {
-            bridge_key: "test-b".into(),
-            room_id: -1,
-            ui: ChatWindowUiState::default(),
-        };
-        app.with_chat_window(1, &mut window, |app| {
-            app.mention_search_query = "child search".into();
-            app.send_current_message();
-        });
-        assert!(receivers[0].try_recv().is_err());
-        let IcaCommand::SendMessage(message) = receivers[1].try_recv().unwrap() else {
-            panic!("expected send message")
-        };
-        assert_eq!(message.room_id, -1);
-        assert_eq!(message.content, "child draft");
-        assert_eq!(app.active_bridge_idx, Some(0));
-        assert_eq!(app.bridge_states[0].selected_room_id, Some(-2));
-        assert_eq!(app.bridge_states[1].selected_room_id, Some(-3));
-        assert_eq!(
-            app.bridge_states[0].conversation(-2).unwrap().draft,
-            "main draft"
-        );
-        assert_eq!(app.mention_search_query, "main search");
-        assert_eq!(window.ui.mention_search_query, "child search");
     }
 }

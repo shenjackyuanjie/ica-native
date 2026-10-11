@@ -1,16 +1,13 @@
 //! oicq 语音使用内嵌 media + 一次性 HTTP token，绝不走普通文件分块上传。
 
-use std::sync::Arc;
-
-use serde_json::json;
-
-use crate::ica::command::emit_ui_event;
-
 use super::{
     context::CommandContext,
     http_send::{http_send_message, request_send_token},
     message_payload::build_voice_message,
 };
+use crate::ica::command::emit_ui_event;
+use serde_json::json;
+use std::sync::Arc;
 
 pub async fn send_voice_message(
     ctx: CommandContext<'_>,

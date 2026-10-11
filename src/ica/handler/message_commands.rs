@@ -1,15 +1,17 @@
 //! 消息发送、撤回与可见性变更类命令。
 
-use serde_json::Value as JsonValue;
-use serde_json::json;
+#[cfg(test)]
+#[path = "tests/message_commands.rs"]
+mod tests;
 
+use super::context::CommandContext;
+use super::{build_multi_image_message, send_message, upload_and_send_file};
 use crate::ica::client;
 use crate::ica::command::emit_ui_event;
 use crate::ica::types::RoomId;
 use crate::ica::types::message::{DeleteMessage, Mention, ReplyMessage, SendMessage};
-
-use super::context::CommandContext;
-use super::{build_multi_image_message, send_message, upload_and_send_file};
+use serde_json::Value as JsonValue;
+use serde_json::json;
 
 /// 撤回必须发生在新消息收到 HTTP 202 之后，失败或结果不确定时不撤回、不重试。
 async fn submit_edit_then_recall<S, R, F>(submit: S, recall: F) -> Result<bool, String>
@@ -343,51 +345,5 @@ pub async fn send_file_message(
                 }),
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod edit_tests {
-    use super::submit_edit_then_recall;
-    use std::sync::{Arc, Mutex};
-
-    #[tokio::test]
-    async fn edit_recall_only_runs_after_confirmed_submission() {
-        let order = Arc::new(Mutex::new(Vec::new()));
-        for accepted in [false, true] {
-            order.lock().unwrap().clear();
-            let submit_order = order.clone();
-            let recall_order = order.clone();
-            let result = submit_edit_then_recall(
-                async move {
-                    submit_order.lock().unwrap().push("submit");
-                    if accepted {
-                        Ok(())
-                    } else {
-                        Err("超时".into())
-                    }
-                },
-                || async move {
-                    recall_order.lock().unwrap().push("recall");
-                    true
-                },
-            )
-            .await;
-            if accepted {
-                assert_eq!(result, Ok(true));
-                assert_eq!(*order.lock().unwrap(), ["submit", "recall"]);
-            } else {
-                assert!(result.is_err());
-                assert_eq!(*order.lock().unwrap(), ["submit"]);
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn recall_failure_does_not_turn_accepted_submission_into_retryable_failure() {
-        assert_eq!(
-            submit_edit_then_recall(async { Ok(()) }, || async { false }).await,
-            Ok(false)
-        );
     }
 }

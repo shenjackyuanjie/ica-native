@@ -1,17 +1,17 @@
-use std::collections::HashSet;
+#[cfg(test)]
+#[path = "tests/actions.rs"]
+mod tests;
 
-use serde_json::Value as JsonValue;
-
+use crate::app::online_mode::OnlineMode;
+use crate::app::{GroupMemberFilter, IcaApp, SelectedChatGroup};
+use crate::config::ChatGroups;
 use crate::ica::IcaCommand;
 use crate::ica::types::{
     RoomId,
     message::{Message, SendMessage},
 };
-
-use crate::config::ChatGroups;
-
-use crate::app::online_mode::OnlineMode;
-use crate::app::{GroupMemberFilter, IcaApp, SelectedChatGroup};
+use serde_json::Value as JsonValue;
+use std::collections::HashSet;
 
 impl IcaApp {
     fn extract_raw_chain(message: &Message) -> Option<JsonValue> {
@@ -577,126 +577,5 @@ impl IcaApp {
         {
             state.selected_chat_group = SelectedChatGroup::All;
         }
-    }
-}
-
-#[cfg(test)]
-pub mod avatar_action_tests {
-    use super::*;
-    use crate::app::{
-        AppState, BridgeSession, BridgeState, runtime::AppRuntime, stickers::StickerStore,
-    };
-    use crate::config::{ConfigStore, IcaCfg};
-    use crate::ica::BridgeHandle;
-    use tokio::sync::{mpsc, oneshot};
-
-    pub fn test_app() -> (IcaApp, mpsc::UnboundedReceiver<IcaCommand>) {
-        let mut config: IcaCfg = toml::from_str("bridges = []").unwrap();
-        config.tokio_rt_work_thread = 1;
-        let store = ConfigStore::from_config(
-            config.clone(),
-            std::env::temp_dir().join("ica-avatar-interaction-test.toml"),
-        );
-        let (tx, rx) = mpsc::unbounded_channel();
-        let (stop, _) = oneshot::channel();
-        let mut bridge = BridgeState::new("avatar-test".into(), ChatGroups::default());
-        bridge.selected_room_id = Some(-123);
-        bridge.conversation_mut(-123).requested_snapshot = true;
-        let state = AppState::new(
-            &config,
-            &store,
-            vec![BridgeSession::new(
-                BridgeHandle::new("avatar-test".into(), tx),
-                bridge,
-                stop,
-            )],
-            StickerStore::unavailable(
-                std::env::temp_dir().join("ica-avatar-test-stickers"),
-                "测试",
-            ),
-        );
-        (
-            IcaApp {
-                runtime: AppRuntime::new(&egui::Context::default(), &config),
-                config: store,
-                state,
-                chat_windows: Vec::new(),
-            },
-            rx,
-        )
-    }
-
-    #[test]
-    fn avatar_mention_replaces_unicode_selection_and_keeps_one_protocol_mention() {
-        let (mut app, _rx) = test_app();
-        let ctx = egui::Context::default();
-        let id = egui::Id::new(("message_composer", 0_usize, -123_i64));
-        app.bridge_states[0].conversation_mut(-123).draft = "甲待替换乙".into();
-        let mut edit = egui::widgets::text_edit::TextEditState::default();
-        edit.cursor
-            .set_char_range(Some(egui::text::CCursorRange::two(
-                egui::text::CCursor::new(1),
-                egui::text::CCursor::new(4),
-            )));
-        edit.store(&ctx, id);
-        app.mention_avatar_sender(&ctx, 0, -123, 456, "测试成员".into());
-        assert_eq!(
-            app.bridge_states[0].conversation(-123).unwrap().draft,
-            "甲@测试成员 乙"
-        );
-        app.mention_avatar_sender(&ctx, 0, -123, 456, "测试成员".into());
-        let conversation = app.bridge_states[0].conversation(-123).unwrap();
-        assert_eq!(conversation.draft, "甲@测试成员 @测试成员 乙");
-        assert_eq!(
-            conversation.mentions,
-            vec![crate::ica::types::message::Mention {
-                user_id: 456,
-                text: "@测试成员".into(),
-            }]
-        );
-        assert_eq!(ctx.memory(|memory| memory.focused()), Some(id));
-    }
-
-    #[test]
-    fn avatar_mention_sanitizes_controls_and_rejects_private_or_virtual_targets() {
-        let (mut app, _rx) = test_app();
-        let ctx = egui::Context::default();
-        app.mention_avatar_sender(&ctx, 0, -123, 456, "\n\u{202E}".into());
-        app.mention_avatar_sender(&ctx, 0, 123, 456, "不可提及".into());
-        app.mention_avatar_sender(&ctx, 0, -123, -1, "虚拟用户".into());
-        let conversation = app.bridge_states[0].conversation(-123).unwrap();
-        assert_eq!(conversation.draft, "@456 ");
-        assert_eq!(conversation.mentions.len(), 1);
-        assert_eq!(app.bridge_states[0].selected_room_id, Some(-123));
-        assert!(app.bridge_states[0].conversation(123).is_none());
-    }
-
-    #[test]
-    fn avatar_management_loads_the_target_group_without_sending_a_ban() {
-        let (mut app, mut rx) = test_app();
-        app.group_member_panel.filter = GroupMemberFilter::Muted;
-        app.group_member_panel.error = Some("旧错误".into());
-        app.open_avatar_member_management(0, -123, 456);
-        assert!(app.group_member_panel.open);
-        assert_eq!(app.group_member_panel.search_query, "456");
-        assert_eq!(app.group_member_panel.filter, GroupMemberFilter::All);
-        assert!(app.group_member_panel.error.is_none());
-        let mut requested_members = false;
-        while let Ok(command) = rx.try_recv() {
-            assert!(!matches!(command, IcaCommand::SetGroupBan { .. }));
-            if let IcaCommand::FetchGroupMembers { room_id } = command {
-                assert_eq!(room_id, -123);
-                requested_members = true;
-            }
-        }
-        assert!(requested_members);
-    }
-
-    #[test]
-    fn invalid_avatar_poke_is_not_queued() {
-        let (mut app, mut rx) = test_app();
-        app.send_group_poke(i64::MIN, 456);
-        assert!(rx.try_recv().is_err());
-        assert!(app.bridge_states[0].last_error.is_some());
     }
 }

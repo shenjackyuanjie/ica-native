@@ -1,7 +1,6 @@
-use serde_json::Value as JsonValue;
-
 use crate::app::state::BridgeState;
 use crate::ica::types::announcement::parse_announcement_list;
+use serde_json::Value as JsonValue;
 
 fn request_id(payload: &JsonValue) -> u64 {
     payload

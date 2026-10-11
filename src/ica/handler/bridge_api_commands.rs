@@ -1,18 +1,15 @@
 //! 直接透传给 Bridge 的原始 Socket.IO / 文件管理调用。
 
-use std::time::Duration;
-
+use super::ack_payload_values;
+use super::context::CommandContext;
+use crate::ica::command::emit_ui_event;
+use crate::ica::file_manager::call_file_manager;
 use futures_util::future::BoxFuture;
 use rust_socketio::Payload;
 use rust_socketio::asynchronous::Client;
 use serde_json::Value as JsonValue;
 use serde_json::json;
-
-use crate::ica::command::emit_ui_event;
-use crate::ica::file_manager::call_file_manager;
-
-use super::ack_payload_values;
-use super::context::CommandContext;
+use std::time::Duration;
 
 pub async fn socket_api_call(
     ctx: CommandContext<'_>,

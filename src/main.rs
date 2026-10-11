@@ -1,8 +1,3 @@
-use eframe::egui;
-use egui::IconData;
-
-use crate::config::{RendererBackend, WgpuBackend};
-
 pub mod agent_context;
 pub mod app;
 pub mod assets;
@@ -12,6 +7,10 @@ pub mod ica;
 pub mod image_loader;
 pub mod memory_probe;
 pub mod noticer;
+
+use crate::config::{RendererBackend, WgpuBackend};
+use eframe::egui;
+use egui::IconData;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GITHUB_LINK: &str = "https://github.com/shenjackyuanjie/ica-native";

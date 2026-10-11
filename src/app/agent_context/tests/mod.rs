@@ -1,13 +1,9 @@
 use super::*;
 use crate::{
     agent_context::{ReadMode, ReadRequest, server::Lease},
-    app::{
-        runtime::AppRuntime,
-        state::{AppState, BridgeSession, BridgeState},
-        stickers::StickerStore,
-    },
-    config::{ChatGroups, ConfigStore, IcaCfg},
-    ica::{BridgeHandle, IcaCommand, types::message::Message},
+    app::{BridgeState, test_support::app_with_bridges},
+    config::{ChatGroups, IcaCfg},
+    ica::{IcaCommand, types::message::Message},
 };
 use std::{
     sync::{
@@ -28,26 +24,18 @@ fn message(id: &str, content: &str) -> Message {
     serde_json::from_value(serde_json::json!({"_id": id, "content": content, "senderId": 1, "username": "测试者", "time": 1_700_000_000_000_i64})).unwrap()
 }
 fn app(allowlist: Vec<Target>) -> (IcaApp, Vec<mpsc::UnboundedReceiver<IcaCommand>>) {
-    // 运行时保持关闭，只有测试状态开启权限规则；不监听真实服务端口。
-    let runtime_config = IcaCfg::default();
-    let mut config = runtime_config.clone();
-    config.agent_context = AgentContextConfig {
-        enabled: true,
-        auth_token: "fixture-token".into(),
-        allowlist,
+    let config = IcaCfg {
+        agent_context: AgentContextConfig {
+            enabled: true,
+            auth_token: "fixture-token".into(),
+            allowlist,
+            ..Default::default()
+        },
         ..Default::default()
     };
-    let store = ConfigStore::from_config(
-        config.clone(),
-        std::env::temp_dir().join("ica-agent-context-unused.toml"),
-    );
-    let mut receivers = Vec::new();
-    let sessions = ["a", "b"]
+    let bridges = ["a", "b"]
         .into_iter()
         .map(|key| {
-            let (tx, rx) = mpsc::unbounded_channel();
-            receivers.push(rx);
-            let (stop, _) = oneshot::channel();
             let mut state = BridgeState::new(key.into(), ChatGroups::default());
             state.conversation_mut(-10).messages = vec![
                 message("first", &format!("{key} 的第一条")),
@@ -61,27 +49,10 @@ fn app(allowlist: Vec<Target>) -> (IcaApp, Vec<mpsc::UnboundedReceiver<IcaComman
             } else {
                 state.detached_room_ids.insert(-10);
             }
-            BridgeSession::new(BridgeHandle::new(key.into(), tx), state, stop)
+            state
         })
         .collect();
-    let state = AppState::new(
-        &config,
-        &store,
-        sessions,
-        StickerStore::unavailable(
-            std::env::temp_dir().join("ica-agent-context-unused-stickers"),
-            "fixture",
-        ),
-    );
-    (
-        IcaApp {
-            runtime: AppRuntime::new(&egui::Context::default(), &runtime_config),
-            config: store,
-            state,
-            chat_windows: Vec::new(),
-        },
-        receivers,
-    )
+    app_with_bridges(config, bridges)
 }
 fn request(
     app: &IcaApp,

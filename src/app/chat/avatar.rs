@@ -1,5 +1,12 @@
 //! 头像的共用交互：只产生已有消费者能够执行的操作，不负责下载或成员权限判断。
 
+#[cfg(test)]
+#[path = "tests/avatar_interaction.rs"]
+mod interaction_tests;
+#[cfg(test)]
+#[path = "tests/avatar.rs"]
+mod tests;
+
 use crate::app::MessageAction;
 use crate::app::media::{ImageAction, ImageSource};
 use crate::ica::client::poke_target;
@@ -131,80 +138,4 @@ pub fn handle_avatar_response(
         }
     });
     action
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn avatar_actions_use_full_size_qq_image_but_preserve_custom_sources() {
-        let target = AvatarTarget {
-            room_id: -123,
-            user_id: 456,
-            name: "测试成员",
-            image_url: "https://q1.qlogo.cn/g?b=qq&nk=456&s=140",
-            is_qq_user: true,
-        };
-        assert_eq!(
-            full_size_avatar_url(&target),
-            "https://q1.qlogo.cn/g?b=qq&nk=456&s=0"
-        );
-        let custom_url = "https://example.invalid/avatar.png?size=140";
-        assert_eq!(
-            full_size_avatar_url(&AvatarTarget {
-                image_url: custom_url,
-                ..target
-            }),
-            custom_url,
-        );
-    }
-}
-
-#[cfg(test)]
-mod interaction_tests {
-    use super::*;
-
-    #[test]
-    fn private_header_avatar_double_click_targets_the_peer() {
-        let ctx = egui::Context::default();
-        let mut action = None;
-        let mut rect = egui::Rect::NOTHING;
-        for step in 0..6 {
-            let pos = rect.center();
-            let events = if step < 2 {
-                Vec::new()
-            } else {
-                vec![
-                    egui::Event::PointerMoved(pos),
-                    egui::Event::PointerButton {
-                        pos,
-                        button: egui::PointerButton::Primary,
-                        pressed: step % 2 == 0,
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ]
-            };
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    time: Some(step as f64 * 0.05),
-                    events,
-                    ..Default::default()
-                },
-                |ui| {
-                    let rendered = ui.scope(|ui| render_private_header_avatar(ui, 456, "私聊对象"));
-                    rect = rendered.response.rect;
-                    action = rendered.inner;
-                },
-            );
-            output.textures_delta.clear();
-        }
-        assert!(matches!(
-            action,
-            Some(MessageAction::Poke {
-                room_id: 456,
-                target_id: 456
-            })
-        ));
-    }
 }

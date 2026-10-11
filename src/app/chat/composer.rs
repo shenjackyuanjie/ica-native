@@ -1,8 +1,3 @@
-use crate::app::media::MediaTask;
-use crate::app::stickers::{StickerEntry, StickerPickerTab};
-use crate::app::{IcaApp, PendingImage};
-use egui::{Button, Image, Label, RichText};
-
 use super::{
     composer_helpers::{
         ReplyDirection, composer_keyboard_active, consume_composer_send_key,
@@ -11,6 +6,10 @@ use super::{
     format_pending_size, insert_mention_at_saved_cursor, insert_text_at_saved_cursor,
     saved_cursor_preceded_by,
 };
+use crate::app::media::MediaTask;
+use crate::app::stickers::{StickerEntry, StickerPickerTab};
+use crate::app::{IcaApp, PendingImage};
+use egui::{Button, Image, Label, RichText};
 
 pub struct ComposerParams {
     pub active_bridge_idx: usize,

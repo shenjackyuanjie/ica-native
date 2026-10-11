@@ -1,9 +1,11 @@
-use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
-
-use crate::config::RelationNetworkSetting;
+#[cfg(test)]
+#[path = "tests/layout.rs"]
+mod tests;
 
 use super::model::*;
+use crate::config::RelationNetworkSetting;
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum RelationViewMode {

@@ -1,7 +1,6 @@
-use serde_json::json;
-
 use crate::app::IcaApp;
 use crate::ica::IcaCommand;
+use serde_json::json;
 
 impl IcaApp {
     /// 常用群文件入口。保留 fileMgr 协议能力，同时免去手工填写群号。

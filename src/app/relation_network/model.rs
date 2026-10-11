@@ -1,8 +1,10 @@
-use std::collections::{HashMap, HashSet};
-
-use crate::ica::types::{RoomId, room::Room};
+#[cfg(test)]
+#[path = "tests/model.rs"]
+mod tests;
 
 use super::super::state::GroupMember;
+use crate::ica::types::{RoomId, room::Room};
+use std::collections::{HashMap, HashSet};
 
 /// 关系网中节点的分类。
 ///

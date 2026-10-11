@@ -1,17 +1,13 @@
-use std::ops::{Deref, DerefMut};
-
-use tokio::sync::{mpsc::UnboundedSender, oneshot};
-
+use super::{AuthState, BridgeState, SocketState, VisibleRoomIndicesCache};
+use crate::app::SelectedChatGroup;
 use crate::config::ChatGroups;
 use crate::ica::types::{
     online_data::OnlineData,
     room::{JoinRequestRoom, Room},
 };
 use crate::ica::{BridgeHandle, IcaCommand};
-
-use crate::app::SelectedChatGroup;
-
-use super::{AuthState, BridgeState, SocketState, VisibleRoomIndicesCache};
+use std::ops::{Deref, DerefMut};
+use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 const STATUS_HISTORY_LIMIT: usize = 100;
 

@@ -1,11 +1,9 @@
 //! 账号、验证消息与联系人类命令。
 
-use serde_json::json;
-
-use crate::ica::command::emit_ui_event;
-
 use super::context::CommandContext;
 use super::{contacts, history};
+use crate::ica::command::emit_ui_event;
+use serde_json::json;
 
 pub async fn get_system_msg(ctx: CommandContext<'_>) {
     let CommandContext {

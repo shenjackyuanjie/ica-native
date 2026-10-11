@@ -1,7 +1,6 @@
+use egui::mutex::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-
-use egui::mutex::Mutex;
 
 #[derive(Clone)]
 pub struct RawImageCache(Arc<Mutex<RawImageCacheState>>);

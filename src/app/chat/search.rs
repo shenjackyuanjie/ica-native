@@ -1,7 +1,6 @@
+use crate::app::IcaApp;
 use crate::ica::IcaCommand;
 use crate::ica::types::RoomId;
-
-use crate::app::IcaApp;
 
 impl IcaApp {
     pub fn open_message_search(&mut self, bridge_idx: usize, room_id: RoomId, room_name: String) {

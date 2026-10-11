@@ -1,8 +1,7 @@
 //! 合并转发查看器状态。
 
-use crate::ica::types::message::Message;
-
 use super::super::media::{ImageAction, ImageSource};
+use crate::ica::types::message::Message;
 
 #[derive(Debug, Clone, Default)]
 pub struct ForwardViewerState {

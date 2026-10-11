@@ -1,20 +1,21 @@
-use ed25519_dalek::{Signature, Signer, SigningKey};
-use futures_util::future::BoxFuture;
-use hex;
-use serde_json::Value as JsonValue;
-use serde_json::json;
-use tokio::sync::mpsc::UnboundedSender;
-use tracing::{Level, event};
+#[cfg(test)]
+#[path = "tests/client.rs"]
+mod tests;
 
-use rust_socketio::Payload;
-use rust_socketio::asynchronous::Client;
-
+use super::command::{ConnectionSignal, emit_ui_event};
 /// 一些类型别名从 types 模块引入
 use crate::ica::types::message::{DeleteMessage, SendMessage};
 use crate::ica::types::{RoomId, UserId};
 use crate::ica::{BridgeEvent, ICA_PROTOCOL_VERSION};
-
-use super::command::{ConnectionSignal, emit_ui_event};
+use ed25519_dalek::{Signature, Signer, SigningKey};
+use futures_util::future::BoxFuture;
+use hex;
+use rust_socketio::Payload;
+use rust_socketio::asynchronous::Client;
+use serde_json::Value as JsonValue;
+use serde_json::json;
+use tokio::sync::mpsc::UnboundedSender;
+use tracing::{Level, event};
 
 /// 使用指定私钥对服务端的 requireAuth payload 进行签名并发送 auth 事件
 async fn sign_with_key(
@@ -274,29 +275,6 @@ pub async fn send_poke(client: &Client, room_id: RoomId, target: UserId) -> bool
         Err(e) => {
             event!(Level::ERROR, "send_poke 失败: {:?}", e);
             false
-        }
-    }
-}
-
-#[cfg(test)]
-mod poke_tests {
-    use super::poke_target;
-
-    #[test]
-    fn group_poke_uses_positive_group_id_without_changing_the_member() {
-        assert_eq!(poke_target(-123, 456), Some((123, 456)));
-    }
-
-    #[test]
-    fn private_poke_uses_the_peer_for_both_oicq_arguments() {
-        assert_eq!(poke_target(123, 123), Some((123, 123)));
-        assert_eq!(poke_target(123, 456), Some((123, 123)));
-    }
-
-    #[test]
-    fn invalid_poke_targets_are_rejected_without_overflow() {
-        for (room_id, target_id) in [(0, 123), (i64::MIN, 123), (-123, 0), (-123, -1)] {
-            assert_eq!(poke_target(room_id, target_id), None);
         }
     }
 }

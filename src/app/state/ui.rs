@@ -1,7 +1,3 @@
-use std::sync::{Arc, Mutex, atomic::AtomicBool};
-
-use crate::config::{ChatAppearanceSettings, ConfigStore, ReEditDraftConflictMode};
-
 use super::super::{
     auto_sign::AutoSignState,
     chat_groups::ChatGroupEditor,
@@ -15,6 +11,8 @@ use super::super::{
     },
 };
 use super::{BridgeSession, ChatListScrollTarget, ImageViewerState};
+use crate::config::{ChatAppearanceSettings, ConfigStore, ReEditDraftConflictMode};
+use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GroupMemberFilter {

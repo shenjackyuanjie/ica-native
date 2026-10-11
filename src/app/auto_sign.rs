@@ -1,11 +1,8 @@
-use std::time::{Duration, Instant};
-
-use rand::RngExt;
-
+use super::IcaApp;
 use crate::ica::IcaCommand;
 use crate::ica::types::{RoomId, room::Room};
-
-use super::IcaApp;
+use rand::RngExt;
+use std::time::{Duration, Instant};
 
 const HOT_DEFAULT_HOURS: u32 = 12;
 const WARM_PRESET_HOURS: u32 = 7 * 24;

@@ -1,15 +1,12 @@
+use super::stickers::{StickerEntry, StickerStore, detect_image};
+use super::{IcaApp, ImageViewerState};
+use crate::app::PendingImage;
+use crate::ica::types::RoomId;
+use anyhow::{Context, Result};
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-
-use anyhow::{Context, Result};
-
-use crate::app::PendingImage;
-use crate::ica::types::RoomId;
-
-use super::stickers::{StickerEntry, StickerStore, detect_image};
-use super::{IcaApp, ImageViewerState};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageSource {

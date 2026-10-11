@@ -1,6 +1,5 @@
-use serde_json::{Value as JsonValue, json};
-
 use crate::app::IcaApp;
+use serde_json::{Value as JsonValue, json};
 
 #[derive(Debug, Clone)]
 pub struct MessageToolsState {

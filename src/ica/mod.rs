@@ -1,16 +1,3 @@
-use rust_socketio::asynchronous::{Client, ClientBuilder};
-use rust_socketio::{Event, Payload, TransportType};
-
-use crate::StopGetter;
-use crate::config::IcaBridge;
-
-use futures_util::future::BoxFuture;
-
-use serde_json::Value as JsonValue;
-use serde_json::json;
-
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-
 pub mod ack;
 pub mod client;
 mod command;
@@ -18,6 +5,10 @@ pub mod event;
 mod file_manager;
 mod handler;
 pub mod http;
+pub mod types;
+
+use crate::StopGetter;
+use crate::config::IcaBridge;
 pub use command::{
     BridgeHandle, GROUP_BAN_MAX_DURATION, ICA_PROTOCOL_VERSION, IcaCommand, NoticerImage,
     NoticerSendPayload,
@@ -27,7 +18,12 @@ use command::{
     reconnect_delay,
 };
 pub use event::{BridgeEvent, BridgeEventKind};
-pub mod types;
+use futures_util::future::BoxFuture;
+use rust_socketio::asynchronous::{Client, ClientBuilder};
+use rust_socketio::{Event, Payload, TransportType};
+use serde_json::Value as JsonValue;
+use serde_json::json;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 /// 主 socket 连接已注册专用回调的事件名；`on_any` 兜底里命中这些名字的事件视为已处理，
 /// 不再打日志。新增 `.on(...)` 注册时记得同步维护这份清单。

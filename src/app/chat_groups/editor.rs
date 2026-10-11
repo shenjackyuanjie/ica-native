@@ -1,9 +1,7 @@
-use egui::TextEdit;
-
+use super::{ChatGroup, ChatGroups};
 use crate::ica::types::RoomId;
 use crate::ica::types::room::Room;
-
-use super::{ChatGroup, ChatGroups};
+use egui::TextEdit;
 
 #[derive(Default)]
 pub struct ChatGroupEditor {

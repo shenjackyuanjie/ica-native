@@ -1,11 +1,9 @@
 //! 合并转发的查看与发送类命令。
 
-use serde_json::Value as JsonValue;
-
-use crate::ica::types::RoomId;
-
 use super::context::CommandContext;
 use super::forward;
+use crate::ica::types::RoomId;
+use serde_json::Value as JsonValue;
 
 pub async fn fetch_forward_messages(
     ctx: CommandContext<'_>,

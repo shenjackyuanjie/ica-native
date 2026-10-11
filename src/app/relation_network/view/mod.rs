@@ -1,5 +1,26 @@
+mod canvas;
+mod detail;
+mod interaction;
+mod loading;
+mod overlay;
+mod sidebar;
+mod toolbar;
+
+use super::super::IcaApp;
+use super::controller::RelationAction;
+use super::layout::*;
+use super::model::*;
+use super::state::RelationNetworkState;
+use super::theme::RelationTheme;
+use canvas::render_relation_network_canvas;
+use detail::{render_relation_node_detail, render_relation_size_legend};
+use interaction::*;
+use loading::RelationBridgeSnapshot;
+use overlay::*;
+use sidebar::render_relation_network_sidebar;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use toolbar::render_relation_network_header;
 
 /// 返回关系网独立窗口的固定视口 ID。
 ///
@@ -8,22 +29,6 @@ use std::time::Instant;
 pub fn relation_network_viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("relation_network")
 }
-
-use super::super::IcaApp;
-use super::controller::RelationAction;
-use super::layout::*;
-use super::model::*;
-use super::state::RelationNetworkState;
-use super::theme::RelationTheme;
-
-mod canvas;
-mod detail;
-mod sidebar;
-mod toolbar;
-use canvas::render_relation_network_canvas;
-use detail::{render_relation_node_detail, render_relation_size_legend};
-use sidebar::render_relation_network_sidebar;
-use toolbar::render_relation_network_header;
 
 impl IcaApp {
     /// 渲染关系网独立窗口（deferred 子视口）。
@@ -142,17 +147,6 @@ impl IcaApp {
         }
     }
 }
-
-mod interaction;
-mod loading;
-mod overlay;
-
-#[cfg(test)]
-mod tests;
-
-use interaction::*;
-use loading::RelationBridgeSnapshot;
-use overlay::*;
 
 fn render_relation_network_ui(
     ui: &mut egui::Ui,

@@ -1,4 +1,5 @@
 //! 图片 URL 恢复只等待注册 ACK，避免阻塞其他聊天命令。
+
 use super::context::CommandContext;
 use crate::ica::ack;
 use serde_json::json;

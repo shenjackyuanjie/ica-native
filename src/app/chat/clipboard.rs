@@ -1,6 +1,5 @@
-use std::path::Path;
-
 use crate::app::{IcaApp, PendingFile, PendingImage};
+use std::path::Path;
 
 impl IcaApp {
     fn image_mime_type(path: &Path) -> Option<&'static str> {

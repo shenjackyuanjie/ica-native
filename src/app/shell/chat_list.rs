@@ -1,7 +1,10 @@
-use crate::app::{ChatListScrollTarget, IcaApp};
-use crate::ica::types::room::Room;
+#[cfg(test)]
+#[path = "tests/chat_list.rs"]
+mod tests;
 
 use crate::app::chat::format_message_content;
+use crate::app::{ChatListScrollTarget, IcaApp};
+use crate::ica::types::room::Room;
 
 fn visible_row_range(
     viewport_top: f32,
@@ -490,20 +493,5 @@ impl IcaApp {
             );
             preview_painter.galley(egui::pos2(preview_x, preview_y), galley, muted_color);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::visible_row_range;
-
-    #[test]
-    fn visible_range_is_empty_when_stale_scroll_offset_exceeds_shortened_list() {
-        assert_eq!(visible_row_range(2_500.0, 3_000.0, 54.0, 17), 17..17);
-    }
-
-    #[test]
-    fn visible_range_keeps_overscan_inside_list_bounds() {
-        assert_eq!(visible_row_range(108.0, 324.0, 54.0, 20), 0..8);
     }
 }

@@ -1,8 +1,7 @@
-use serde_json::{Value as JsonValue, json};
-
 use crate::app::IcaApp;
 use crate::app::state::GroupBanConfirmation;
 use crate::ica::GROUP_BAN_MAX_DURATION;
+use serde_json::{Value as JsonValue, json};
 
 #[derive(Debug, Clone)]
 pub struct GroupToolsState {

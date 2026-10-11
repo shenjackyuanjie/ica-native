@@ -1,14 +1,13 @@
 //! 无窗口滚动回归：只使用内存消息和假纹理，不连接 Bridge、不读取用户配置。
-use std::sync::{Arc, Mutex};
 
+use crate::app::chat::message_card::render_message_image;
+use crate::app::test_support::test_app;
+use crate::app::{IcaApp, media::ImageSource};
+use crate::ica::types::message::Message;
 use egui::load::{
     LoadError, SizeHint, SizedTexture, TextureLoadResult, TextureLoader, TexturePoll,
 };
-
-use super::actions::avatar_action_tests::test_app;
-use super::message_card::render_message_image;
-use crate::app::{IcaApp, media::ImageSource};
-use crate::ica::types::message::Message;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 enum PreviewState {
@@ -483,13 +482,14 @@ fn ready_gif_does_not_reload_released_source_and_can_reprobe_a_changed_format() 
     textures.set(PreviewState::Ready(egui::vec2(200.0, 100.0)));
     // 故意不提供源 bytes：已就绪动画应直接请求帧，不能因源被释放而回到 Pending/Error。
     assert!(matches!(
-        super::try_load_gif_texture(&ctx, uri, Default::default(), Default::default()),
+        crate::app::chat::try_load_gif_texture(&ctx, uri, Default::default(), Default::default()),
         Some(Ok(TexturePoll::Ready { .. }))
     ));
     textures.set(PreviewState::ChangedToStatic);
     ctx.include_bytes(uri, &b"not a gif anymore"[..]);
     assert!(
-        super::try_load_gif_texture(&ctx, uri, Default::default(), Default::default()).is_none()
+        crate::app::chat::try_load_gif_texture(&ctx, uri, Default::default(), Default::default())
+            .is_none()
     );
     assert!(
         ctx.data(|data| data.get_temp::<egui::FrameDurations>(egui::Id::new(uri)))

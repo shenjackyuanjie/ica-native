@@ -1,7 +1,10 @@
-use serde::{Deserialize, Serialize};
+#[cfg(test)]
+#[path = "tests/chat_groups.rs"]
+mod tests;
 
 use crate::ica::types::RoomId;
 use crate::ica::types::room::Room;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatGroups {
@@ -111,37 +114,5 @@ impl ChatGroup {
 
     pub fn name(&self) -> String {
         self.name.clone()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::ChatGroup;
-
-    #[test]
-    fn deserializes_protocol_include_all_personal() {
-        let group: ChatGroup = serde_json::from_value(json!({
-            "name": "全部私聊",
-            "index": 0,
-            "rooms": [],
-            "includeAllPersonal": true,
-        }))
-        .expect("协议聊天分组应当可以反序列化");
-
-        assert!(group.include_all_personal);
-    }
-
-    #[test]
-    fn deserializes_legacy_snake_case_include_all_personal() {
-        let group: ChatGroup = serde_json::from_value(json!({
-            "name": "全部私聊",
-            "rooms": [],
-            "include_all_personal": true,
-        }))
-        .expect("旧版本地聊天分组应当可以反序列化");
-
-        assert!(group.include_all_personal);
     }
 }

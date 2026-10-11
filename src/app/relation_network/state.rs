@@ -1,11 +1,9 @@
-use std::ops::{Deref, DerefMut};
-use std::time::Instant;
-
-use crate::config::RelationNetworkSetting;
-
 use super::controller::RelationAction;
 use super::layout::{RELATION_LAYOUT_SCALE, RelationLayoutCache, RelationLayoutModel};
 use super::model::RelationGraph;
+use crate::config::RelationNetworkSetting;
+use std::ops::{Deref, DerefMut};
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub struct RelationNetworkState {
