@@ -4,6 +4,13 @@
 //! 图片/文件附件与回复引用。它本身不做布局缓存——行高估算与可见行裁剪由
 //! `central_panel` 统一处理（`message_row_heights` / `message_row_layouts` 缓存 +
 //! `show_viewport` 只渲染可见行），所以本文件在长列表里即使逐条执行也很轻量。
+//!
+//! 渲染流程分两段：先把正文解析成 `ContentSegment` 序列（文本/链接/表情/@/占位），
+//! 再按序列绘制。解析与绘制分离的好处是同一份内容既可用于"是否真的有可见内容"
+//! 判断（`has_visible_rich_content`），也可用于实际绘制，两者不会漂移。
+//!
+//! 交互上只返回 `MessageAction`，不自己发命令或改状态；因此本文件可以在 `&self`
+//! 下运行，调用方（消息列表、搜索窗口、转发查看器）复用同一套右键菜单。
 
 // 专属头像模块在本文件注册，避免与其他代理修改 chat/mod.rs 冲突。
 #[path = "avatar.rs"]
@@ -36,17 +43,30 @@ const AT_CLOSE_TAG: &str = "</IcaAt>";
 const FACE_OPEN_TAG: &str = "[Face: ";
 const FORWARD_OPEN_TAG: &str = "[Forward: ";
 const NESTED_FORWARD_OPEN_TAG: &str = "[NestedForward: ";
+/// 消息头像边长（像素），同时用于圆形头像的圆角半径。
 const MESSAGE_AVATAR_SIZE: f32 = 32.0;
+/// 头像在行内占用的横向宽度：头像本身加 8 像素间距。
 const MESSAGE_AVATAR_ROW_WIDTH: f32 = MESSAGE_AVATAR_SIZE + 8.0;
 
+/// 正文里可识别的内联标记种类。
+///
+/// 解析时用"取最靠前的一个标记"的方式推进，因此需要这个枚举在多个候选里比较位置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContentMarker {
+    /// `[Face: id]` QQ 表情。
     Face,
+    /// `<IcaAt qq=..>` 或旧版 `<IcalinguaAt qq=..>` 的 @ 提及。
     Mention,
+    /// `[Forward: res_id]` 合并转发占位。
     Forward,
+    /// `[NestedForward: res_id]` 嵌套合并转发占位。
     NestedForward,
 }
 
+/// 把协议里的角色字段翻译成中文群头衔。
+///
+/// 空串、`member`、`unknown` 都视为普通成员，返回 `None` 表示不显示头衔；未识别的
+/// 取值原样返回，避免新角色类型显示成空白。
 fn sender_role_label(role: &str) -> Option<Cow<'_, str>> {
     let role = role.trim();
     match role.to_ascii_lowercase().as_str() {
@@ -57,6 +77,10 @@ fn sender_role_label(role: &str) -> Option<Cow<'_, str>> {
     }
 }
 
+/// 判断是否需要显示群身份信息（头衔、群名片）。
+///
+/// 仅群聊显示；来自 Telegram 桥（`mirai.eqq.type == "tg"`）的消息没有 QQ 式的群主/
+/// 管理员/头衔概念，显示出来只会造成误解。
 fn should_show_group_identity(room_id: RoomId, mirai: &serde_json::Value) -> bool {
     room_id < 0
         && mirai
@@ -66,6 +90,9 @@ fn should_show_group_identity(room_id: RoomId, mirai: &serde_json::Value) -> boo
 }
 
 /// 与 ICA 一致地按消息距离当前日期的远近显示时间。
+///
+/// 当天的消息只显示时刻（协议已给出的 `time_text`），同年显示月日，跨年才带年份，
+/// 这样既不会过早出现"1970/01/01"式的冗余，也不会把旧消息显示成今天。
 fn display_timestamp(message: &crate::ica::types::message::Message) -> String {
     let local_time = message.time.with_timezone(&chrono::Local);
     let now = chrono::Local::now();
@@ -79,6 +106,9 @@ fn display_timestamp(message: &crate::ica::types::message::Message) -> String {
 }
 
 /// 按 Icalingua++ 的优先级选择聊天消息头像：Mirai 明示头像优先，否则使用 QQ 头像服务。
+///
+/// 依次尝试 `avatarMd5`（拼 qpic 地址）、`avatarUrl`（直接给出的地址），最后退回
+/// 按 QQ 号拼 QQ 头像服务；`sender_id` 非正（系统或虚拟发送者）时不给头像。
 fn message_avatar_url(sender_id: i64, mirai: &serde_json::Value) -> Option<String> {
     if let Some(md5) = mirai
         .pointer("/eqq/avatarMd5")
@@ -100,15 +130,28 @@ fn message_avatar_url(sender_id: i64, mirai: &serde_json::Value) -> Option<Strin
     (sender_id > 0).then(|| format!("https://q1.qlogo.cn/g?b=qq&nk={sender_id}&s=140"))
 }
 
+/// 解析后的一段正文内容。
+///
+/// `Text` 与 `Link` 借用原字符串；`Mention` 的显示名可能是 XML 实体解码后的新串，
+/// 因此用 `Cow`。
 #[derive(Debug, PartialEq, Eq)]
 enum ContentSegment<'a> {
+    /// 普通文本。
     Text(&'a str),
+    /// 超链接：`text` 为显示文本，`target` 为规范化后的地址。
     Link { text: &'a str, target: Cow<'a, str> },
+    /// QQ 表情，值为表情 id。
     Face(u16),
+    /// @ 提及：`user_id == 1` 表示全体成员。
     Mention { user_id: i64, text: Cow<'a, str> },
+    /// 合并转发占位，本身不绘制任何内容，只用于标记"这条消息有正文之外的实体"。
     Control,
 }
 
+/// 规范化链接地址：缺少协议时补 `https://`。
+///
+/// `linkify` 在 `url_must_have_scheme(false)` 下会把 `example.com` 也识别为链接，
+/// 直接交给 `Hyperlink` 会被当成相对路径，因此这里统一补协议。
 fn normalize_link_target(link: &str) -> Cow<'_, str> {
     if link.contains("://") {
         Cow::Borrowed(link)
@@ -117,6 +160,12 @@ fn normalize_link_target(link: &str) -> Cow<'_, str> {
     }
 }
 
+/// 把一段纯文本按链接切成若干 `Text`/`Link` 段。
+///
+/// - `segments`：输出数组，追加写入。
+///
+/// 逐段扫描 ASCII 连续区间再交给 `linkify`：中文与 URL 混排时，`linkify` 容易把
+/// 中文前后缀吞进链接里，按 ASCII 边界切可以让识别结果与肉眼判断一致。
 fn push_text_segments<'a>(segments: &mut Vec<ContentSegment<'a>>, text: &'a str) {
     let mut finder = LinkFinder::new();
     finder.kinds(&[LinkKind::Url]);
@@ -160,6 +209,11 @@ fn push_text_segments<'a>(segments: &mut Vec<ContentSegment<'a>>, text: &'a str)
     }
 }
 
+/// 把消息正文解析成内容段序列。
+///
+/// 每轮从剩余文本里找出最靠前的内联标记，把它之前的部分当普通文本（含链接识别），
+/// 再按标记类型处理。任何解析不完整的情况（缺 `>`、缺 `]`、id 非法）都把剩余部分
+/// 原样当文本，保证用户内容不丢失。
 fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
     let mut segments = Vec::new();
     let mut remaining = content;
@@ -212,6 +266,8 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
                 && !encoded_text.is_empty()
             {
                 let text = if xml_escaped {
+                    // 新版 <IcaAt> 的显示名按 XML 实体编码，旧版按 URL 编码，
+                    // 两种都要解，否则 @ 后面跟着一串 %E4%B8%AD。
                     super::decode_xml_entities(encoded_text)
                 } else {
                     urlencoding::decode(encoded_text).unwrap_or(Cow::Borrowed(encoded_text))
@@ -259,6 +315,7 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
         {
             segments.push(ContentSegment::Face(id));
         } else {
+            // 本地没有这个表情的数据时退回纯文本：总比显示一个破损图片框好。
             push_text_segments(&mut segments, &remaining[..full_len]);
         }
         remaining = &remaining[full_len..];
@@ -267,6 +324,10 @@ fn parse_content_segments(content: &str) -> Vec<ContentSegment<'_>> {
     segments
 }
 
+/// 判断一段正文里是否有"用户看得见"的内容。
+///
+/// 纯合并转发占位（`ContentSegment::Control`）不算可见：那种消息在列表里要显示成
+/// "查看合并转发"按钮加预览，而不是一段空文本。转发查看器据此决定要不要补预览行。
 pub fn has_visible_rich_content(content: &str) -> bool {
     parse_content_segments(content)
         .iter()
@@ -278,11 +339,22 @@ pub fn has_visible_rich_content(content: &str) -> bool {
         })
 }
 
+/// 富文本绘制结果。
+///
+/// `response` 覆盖整块区域（含图片），`text_response` 只覆盖可选择的文本部分。
+/// 两者分开是因为文本的点击会被 egui 的选词逻辑优先接管，需要单独合并到消息的
+/// 右键菜单上。
 struct RichContentRender {
+    /// 整块富文本区域的响应。
     response: egui::Response,
+    /// 仅文本部分的响应，可能为 `None`（例如整条都是图片）。
     text_response: Option<egui::Response>,
 }
 
+/// 把一个响应合并进"文本响应"累加器。
+///
+/// 用 `|=` 而不是替换：多个 Label 的悬停/点击状态需要合并成一个整体响应，
+/// 否则只有最后一段文本能触发交互。
 fn merge_text_response(combined: &mut Option<egui::Response>, response: egui::Response) {
     if let Some(combined) = combined {
         *combined |= response;
@@ -291,6 +363,14 @@ fn merge_text_response(combined: &mut Option<egui::Response>, response: egui::Re
     }
 }
 
+/// 绘制富文本正文，可在前面加一个前缀（用于"回复 xxx: "）。
+///
+/// - `prefix`：可选前缀，随正文同一行排列；
+/// - `content`：消息正文；
+/// - `high_contrast`：高对比度模式，暗色下把正文提亮。
+///
+/// 没有前缀且整条都是普通文本时走单个 `Label` 快路：这条路径在长列表里占绝大多数，
+/// 避免为每条消息都建一层 `horizontal_wrapped`。
 fn render_rich_content_with_prefix(
     ui: &mut egui::Ui,
     prefix: Option<egui::RichText>,
@@ -318,6 +398,8 @@ fn render_rich_content_with_prefix(
     let face_size = 24.0;
     let rendered = ui.horizontal_wrapped(|ui| {
         let mut text_response = None;
+        // 段间距清零：文本、表情、@ 之间不能出现 egui 默认的 item_spacing，
+        // 否则一句话被拆得稀碎。
         ui.spacing_mut().item_spacing.x = 0.0;
         if let Some(prefix) = prefix {
             ui.add(Label::new(prefix).wrap());
@@ -340,6 +422,8 @@ fn render_rich_content_with_prefix(
                 }
                 ContentSegment::Face(id) => {
                     if let Some(bytes) = crate::face_data::get_face(*id) {
+                        // 用 bytes:// 伪协议把内置表情喂给 egui 的图片加载器，
+                        // 走统一的纹理缓存，重复出现同一表情不会重复解码。
                         let uri = format!("bytes://face_{id}");
                         let img = Image::from_bytes(uri, bytes)
                             .fit_to_exact_size(egui::vec2(face_size, face_size));
@@ -377,6 +461,8 @@ fn render_rich_content_with_prefix(
 }
 
 /// 渲染消息正文中的 QQ 表情和 @ 成员标记。
+///
+/// 返回整块区域的响应，调用方可基于它挂右键菜单或处理点击。
 pub fn render_rich_content(
     ui: &mut egui::Ui,
     content: &str,
@@ -385,6 +471,10 @@ pub fn render_rich_content(
     render_rich_content_with_prefix(ui, None, content, high_contrast).response
 }
 
+/// 从被回复消息里找出第一张图片附件。
+///
+/// 旧协议用单个 `file` 字段，新协议用 `files` 数组，这里把两者串起来统一查找，
+/// 调用方不需要分辨版本。
 fn reply_image_file(reply: &ReplyMessage) -> Option<&MessageFile> {
     reply
         .file
@@ -394,6 +484,13 @@ fn reply_image_file(reply: &ReplyMessage) -> Option<&MessageFile> {
 }
 
 /// 渲染消息中的图片缩略图并返回统一图片动作。
+///
+/// - `source`：图片地址与归属（会话/消息），用于"在聊天中定位"；
+/// - `file_type`：协议给出的文件类型，参与 GIF 判定；
+/// - `max_width` / `max_height`：预览槽尺寸。
+///
+/// 返回用户选择的 `ImageAction`（打开、复制、保存等），未交互时返回 `None`。
+/// 预览槽尺寸固定，加载中/失败都不改变它，因此消息行高不会随加载状态抖动。
 pub fn render_message_image(
     ui: &mut egui::Ui,
     source: &ImageSource,
@@ -406,6 +503,8 @@ pub fn render_message_image(
     let gif = should_try_gif_preview(&source.url, file_type)
         .then(|| try_load_gif_texture(ui.ctx(), &source.url, options, hint))
         .flatten();
+    // 先按扩展名/MIME 猜是不是 GIF，猜不中再由静态加载器的报错反推：很多 CDN
+    // 把 GIF 的 Content-Type 写成 image/jpeg，只有真的解不动了才发现。
     let poll = gif.unwrap_or_else(|| {
         let result = ui.ctx().try_load_texture(&source.url, options, hint);
         if result
@@ -432,6 +531,7 @@ pub fn render_message_image(
         Ok(egui::load::TexturePoll::Ready { texture }) => {
             let scale = (slot.width() / texture.size.x.max(1.0))
                 .min(slot.height() / texture.size.y.max(1.0))
+                // 只缩小不放大：原图小于预览槽时保持原尺寸，避免糊图。
                 .min(1.0);
             let image_size = texture.size * scale;
             let image_rect = egui::Align2([ui.layout().horizontal_align(), egui::Align::Min])
@@ -459,6 +559,10 @@ pub fn render_message_image(
     }
 }
 
+/// 判断是否应该主动按 GIF 预览加载。
+///
+/// 文件类型里含 `gif`，或 URL 路径以 `.gif` 结尾（含 `.gif/` 这类带路径后缀的 CDN
+/// 地址）时返回 `true`。
 fn should_try_gif_preview(url: &str, file_type: &str) -> bool {
     let file_type = file_type.to_ascii_lowercase();
     if file_type.contains("gif") {
@@ -468,6 +572,10 @@ fn should_try_gif_preview(url: &str, file_type: &str) -> bool {
     image_url_looks_like_gif(url)
 }
 
+/// 给图片响应挂上统一的悬停光标与右键菜单，返回用户选择的动作。
+///
+/// 菜单项（复制图片、添加为表情、复制 URL、用查看器打开、保存、另存为）在所有出现
+/// 图片的地方保持一致，因此收在这里供消息图片、回复图片等复用。
 fn image_response_action(response: egui::Response, source: &ImageSource) -> Option<ImageAction> {
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     let mut action = response
@@ -502,6 +610,10 @@ fn image_response_action(response: egui::Response, source: &ImageSource) -> Opti
     action
 }
 
+/// 在预览槽内绘制图片加载失败提示。
+///
+/// "链接已过期"单独一种文案：这是 QQ 图片最常见的失败原因，提示用户"需要重新获取
+/// 该图片 URL"比一串网络错误更有指导意义。详情放悬停，避免长错误文本把槽撑开。
 fn show_image_load_error(ui: &mut egui::Ui, err: &egui::load::LoadError) {
     let err_text = err.to_string();
     let (label, details) = if err_text.contains("图片链接已过期") {
@@ -513,14 +625,34 @@ fn show_image_load_error(ui: &mut egui::Ui, err: &egui::load::LoadError) {
         .on_hover_text(details);
 }
 
+/// 消息卡片的渲染选项。
+///
+/// 由调用方根据所处场景填写：消息列表、搜索结果、转发查看器对同一条消息的显示
+/// 取舍不同，因此不做全局配置而是逐次传入。
 pub struct MessageRenderOptions {
+    /// 是否显示发送者名称（纯文本模式下同一人连续发送时可省略）。
     pub show_sender_name: bool,
+    /// 是否在卡片前插入分隔线（纯文本模式下区分不同发送者）。
     pub show_separator_before: bool,
+    /// 是否处于转发多选模式（显示勾选框）。
     pub forward_mode_active: bool,
+    /// 本条是否已被选中。
     pub forward_selected: bool,
 }
 
 impl IcaApp {
+    /// 绘制一条聊天消息卡片。
+    ///
+    /// - `room_id`：消息所属会话，决定群/私聊差异与头像是否显示；
+    /// - `self_id`：当前登录账号，用于判断是否自己的消息（右侧对齐、可撤回）；
+    /// - `message`：消息本体；
+    /// - `options`：渲染选项。
+    ///
+    /// 返回用户在本条上选择的动作；没有任何交互时返回 `None`。系统消息提前返回，
+    /// 不进入普通消息的头像/气泡/右键逻辑。双击气泡视为"回复"，与 Icalingua++ 一致。
+    ///
+    /// 本方法只读 `&self`：所有状态修改都通过返回的 `MessageAction` 由调用方完成，
+    /// 因此可以在遍历消息时安全地反复调用。
     pub fn render_message_card(
         &self,
         ui: &mut egui::Ui,
@@ -560,6 +692,8 @@ impl IcaApp {
                     } else {
                         egui::Color32::from_rgb(0x50, 0x5a, 0x62) // #505a62
                     };
+                    // 系统消息不参与右键菜单与头像，因此单独一个 Frame 就够了，
+                    // 不需要走下面普通消息的那套 scope_builder。
                     egui::Frame::NONE
                         .fill(sys_bg)
                         .corner_radius(4.0)
@@ -615,6 +749,7 @@ impl IcaApp {
         } else {
             egui::Align::Min
         };
+        // 纯文本模式用分隔线代替头像区分发送者；有头像时不再需要分隔线。
 
         if pure_text_mode && options.show_separator_before {
             ui.separator();
@@ -622,6 +757,7 @@ impl IcaApp {
         }
 
         // 父区域先注册点击，再绘制子控件，egui 会把文本选词、图片和链接交给子控件。
+        // 顺序反了的话子控件会抢走父级的点击，整条消息就点不出来了。
         let row_response = ui
             .scope_builder(
                 egui::UiBuilder::new()
@@ -645,6 +781,7 @@ impl IcaApp {
 
                             if sender_avatar_url.is_some() {
                                 // 为头像预留横向空间；图片本身在气泡画完之后按底部对齐放置。
+                                // 先占位再画气泡，才能保证气泡宽度不受头像加载影响。
                                 ui.add_space(MESSAGE_AVATAR_ROW_WIDTH);
                             }
 
@@ -733,6 +870,8 @@ impl IcaApp {
                                                     && !message.deleted
                                                     && ui.small_button("撤回").clicked()
                                                 {
+                                                    // 只能撤回自己的消息；别人的消息
+                                                    // 协议层也不允许撤。
                                                     action = Some(MessageAction::Delete {
                                                         room_id,
                                                         message_id: message.msg_id.clone(),
@@ -759,6 +898,9 @@ impl IcaApp {
                                                     ))
                                                     .color(ui.visuals().weak_text_color());
                                                     let content = if reply_image.is_some() {
+                                                        // 纯文本模式不画引用里的小图，
+                                                        // 用 [图片] 占位，否则引用区会把
+                                                        // 消息卡片撑得很高。
                                                         Cow::Owned(
                                                             if reply.content.trim().is_empty() {
                                                                 "[图片]".to_string()
@@ -872,6 +1014,8 @@ impl IcaApp {
                                                         is_image_file_type(&file.file_type);
 
                                                     if self.render_chat_voice(ui, room_id, &message.msg_id, attachment_index, file) {
+                                                        // 语音有专门的渲染路径（波形+播放），
+                                                        // 命中后不再按普通附件处理。
                                                         continue;
                                                     }
                                                     if is_image && self.custom_chat.hide_chat_img {
@@ -908,6 +1052,8 @@ impl IcaApp {
                                                             .unwrap_or_else(|| {
                                                                 file.file_type.clone()
                                                             });
+                                                        // 没有 URL 的附件只是纯标签（尚未上传成功
+                                                        // 或已过期），有 URL 时做成可点链接。
                                                         if file.url.is_empty() {
                                                             ui.label(label);
                                                         } else {
@@ -927,6 +1073,8 @@ impl IcaApp {
                                             if let Some(reference) = &forward_reference {
                                                 has_body = true;
                                                 if !has_visible_content {
+                                                    // 纯转发消息没有正文，用预览行占位，
+                                                    // 否则整条消息只有一个孤零零的按钮。
                                                     super::forward::render_forward_preview(
                                                         ui, reference,
                                                     );
@@ -988,6 +1136,8 @@ impl IcaApp {
 
                                         response.context_menu(|ui| {
                                             if message_is_hidden {
+                                                // 已撤回/已隐藏的消息只给一个"显示"入口，
+                                                // 其余操作对它都没有意义。
                                                 if ui.button("显示").clicked() {
                                                     action = Some(MessageAction::SetReveal {
                                                         room_id,
@@ -1074,6 +1224,8 @@ impl IcaApp {
                                                 .is_some()
                                                 && ui.button("戳一戳").clicked()
                                             {
+                                                // 与头像菜单一致：先问协议层这个目标
+                                                // 能不能戳，再决定是否显示入口。
                                                 action = Some(MessageAction::Poke {
                                                     room_id,
                                                     target_id: message.sender_id,
@@ -1130,6 +1282,7 @@ impl IcaApp {
                                     },
                                 );
                             // 与 Icalingua++ 的 flex-end 一致：头像底边与消息气泡底边对齐。
+                            // 头像在气泡之后才 put，因此这里能直接读到气泡的最终矩形。
                             if let Some(avatar_url) = &sender_avatar_url {
                                 let bubble_rect = bubble_inner.response.rect;
                                 let avatar_rect = egui::Rect::from_min_size(
@@ -1177,6 +1330,7 @@ impl IcaApp {
             && !message.hide
             && !message.flash
         {
+            // 双击回复：多选模式下双击要保留给"勾选"，闪照不允许回复。
             action = Some(MessageAction::Reply {
                 room_id,
                 reply: message.as_reply(),
