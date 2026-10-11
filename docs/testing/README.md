@@ -69,6 +69,7 @@ cargo test --release --locked app::chat::composer::
 
 # 滚动、图片预览、通知栏和图片加载器分别执行
 cargo test --release --locked app::chat::tests::scroll:: -- --test-threads=1
+# 首次加载占位与无障碍标记、就绪过渡、格式回落与错误槽
 cargo test --release --locked app::chat::tests::image_preview:: -- --test-threads=1
 cargo test --release --locked app::chat::tests::notices:: -- --test-threads=1
 # GIF 连续显示、纹理与像素缓存联动

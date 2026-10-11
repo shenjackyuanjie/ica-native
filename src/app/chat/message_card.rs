@@ -35,6 +35,7 @@ use chrono::Datelike;
 use egui::{Hyperlink, Image, Label};
 use linkify::{LinkFinder, LinkKind};
 use std::borrow::Cow;
+use std::time::Duration;
 
 const LEGACY_AT_OPEN_TAG: &str = "<IcalinguaAt qq=";
 const LEGACY_AT_CLOSE_TAG: &str = "</IcalinguaAt>";
@@ -546,10 +547,7 @@ pub fn render_message_image(
             image_response_action(response, source)
         }
         Ok(egui::load::TexturePoll::Pending { .. }) => {
-            preview.place(
-                egui::Rect::from_center_size(slot.center(), egui::vec2(20.0, 20.0)),
-                egui::Spinner::new(),
-            );
+            paint_image_loading(&mut preview, slot);
             None
         }
         Err(err) => {
@@ -557,6 +555,32 @@ pub fn render_message_image(
             None
         }
     }
+}
+
+/// 以恒定弧长显示加载状态，避免默认 Spinner 的扫角周期收缩到零。
+///
+/// 只为可见占位安排重绘；下载或解码完成时，加载器仍可立即唤醒界面。
+fn paint_image_loading(ui: &mut egui::Ui, slot: egui::Rect) {
+    let rect = egui::Rect::from_center_size(slot.center(), egui::Vec2::splat(20.0));
+    // 在独立预览子 UI 中保留原 Spinner 的无障碍语义，不推进父级布局。
+    ui.allocate_rect(rect, egui::Sense::hover())
+        .widget_info(|| egui::WidgetInfo::new(egui::WidgetType::ProgressIndicator));
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    ui.ctx().request_repaint_after(Duration::from_millis(33));
+    let start = ui.input(|input| input.time.rem_euclid(1.0)) as f32 * std::f32::consts::TAU;
+    let sweep = std::f32::consts::TAU * (2.0 / 3.0);
+    let points = (0..=32)
+        .map(|step| {
+            let angle = start + sweep * step as f32 / 32.0;
+            rect.center() + egui::vec2(angle.cos(), angle.sin()) * 8.0
+        })
+        .collect();
+    ui.painter().add(egui::Shape::line(
+        points,
+        egui::Stroke::new(3.0, ui.visuals().strong_text_color()),
+    ));
 }
 
 /// 判断是否应该主动按 GIF 预览加载。
