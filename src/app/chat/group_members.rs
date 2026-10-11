@@ -1,8 +1,17 @@
+//! 群成员面板与群管理：成员列表/搜索/筛选、禁言（预设与自定义时长）、
+//! 解除禁言、成员发言记录窗口。
+//!
+//! 管理操作遵循"先确认后发送"：面板只把意图写入
+//! `group_member_panel.confirmation`，由 `render_group_ban_confirmation`
+//! 弹出居中确认窗，确认后才发 `SetGroupBan`。权限不足的成员由
+//! `GroupMember::moderation_denial_reason` 判定，控件置灰并给出原因。
+
 use crate::app::IcaApp;
 use crate::app::state::{GroupBanConfirmation, GroupMember, GroupMemberFilter};
 use crate::ica::{GROUP_BAN_MAX_DURATION, IcaCommand};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// 禁言时长预设（标签, 秒数）；最后一项与 Bridge 的 30 天上限一致。
 const BAN_PRESETS: [(&str, u64); 5] = [
     ("10 分钟", 10 * 60),
     ("1 小时", 60 * 60),
@@ -11,6 +20,7 @@ const BAN_PRESETS: [(&str, u64); 5] = [
     ("30 天", GROUP_BAN_MAX_DURATION),
 ];
 
+/// 当前 Unix 时间戳（秒）；取不到系统时间时返回 0。
 fn current_unix_timestamp() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -19,6 +29,7 @@ fn current_unix_timestamp() -> i64 {
         .unwrap_or(0)
 }
 
+/// 把秒数格式化为"X 天 X 小时/X 小时 X 分钟/X 分钟 X 秒"的可读文本。
 fn format_duration(seconds: u64) -> String {
     let days = seconds / 86_400;
     let hours = seconds % 86_400 / 3_600;
@@ -35,6 +46,7 @@ fn format_duration(seconds: u64) -> String {
     }
 }
 
+/// 把一次禁言/解除禁言意图写入待确认状态，等待确认窗处理。
 fn queue_confirmation(
     pending: &mut Option<GroupBanConfirmation>,
     room_id: i64,
@@ -50,6 +62,10 @@ fn queue_confirmation(
 }
 
 impl IcaApp {
+    /// 渲染右侧群成员面板：搜索、全部/禁言中筛选、头像与禁言剩余时间。
+    ///
+    /// 禁言与解除禁言只入队确认；查看发言记录在面板渲染结束后打开，
+    /// 避免在借用期内修改其他状态。仅群聊可用，非群聊自动关闭。
     pub fn render_group_members_panel(&mut self, ui: &mut egui::Ui) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             self.group_member_panel.open = false;
@@ -292,6 +308,10 @@ impl IcaApp {
         }
     }
 
+    /// 打开成员发言记录窗口并请求第一页。
+    ///
+    /// 递增 request_id 使旧响应作废；记录 snapshot_time，之后分页都按该
+    /// 快照时间点拉取，避免新消息插入导致重复或遗漏。
     pub fn open_member_history(
         &mut self,
         bridge_idx: usize,
@@ -329,6 +349,9 @@ impl IcaApp {
         }
     }
 
+    /// 渲染"成员发言记录"窗口：消息列表与"加载更早记录"分页。
+    ///
+    /// 分页用当前已加载条数作为 offset，沿用打开时的 snapshot_time。
     pub fn render_member_history_window(&mut self, ctx: &egui::Context) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
@@ -410,6 +433,9 @@ impl IcaApp {
         }
     }
 
+    /// 渲染居中的群禁言/解除禁言确认窗；确认后发送 `SetGroupBan`。
+    ///
+    /// duration 为 0 表示解除禁言；发送失败记 `last_error`。
     pub fn render_group_ban_confirmation(&mut self, ctx: &egui::Context) {
         let Some(confirmation) = self.group_member_panel.confirmation.clone() else {
             return;

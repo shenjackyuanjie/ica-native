@@ -2,6 +2,9 @@
 
 use crate::app::IcaApp;
 
+/// 绘制一条提示行：错误用红色文本，普通提示用弱化文本，末尾带“清除”按钮。
+///
+/// 返回 `true` 表示用户点击了清除，调用方负责把对应来源的提示置空。
 fn render_notice_row(
     ui: &mut egui::Ui,
     id_salt: impl egui::AsIdSalt,
@@ -23,6 +26,10 @@ fn render_notice_row(
 }
 
 impl IcaApp {
+    /// 在聊天顶部绘制当前所有提示：应用来源与当前 Bridge 来源的错误/提示。
+    ///
+    /// 优先级为应用错误 > 应用提示 > 当前 Bridge 错误 > 当前 Bridge 提示，
+    /// 同一时刻每种来源只显示一条；点击“清除”只清对应来源，互不影响。
     pub fn render_chat_notices(&mut self, ui: &mut egui::Ui) {
         // 保留应用错误优先于普通提示的语义，关闭错误后再显示待处理提示。
         if let Some(error) = self.media_error.as_deref() {

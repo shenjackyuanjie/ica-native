@@ -1,20 +1,35 @@
+//! 聊天分组编辑器：分组增删改排序与分组成员的添加/移除。
+//!
+//! 编辑器自行持有编辑中的瞬态（新分组名、重命名中的下标与名称、错误提示、
+//! 每个分组的搜索文本），数据修改全部通过 `ChatGroups` 的 API 完成；`ui`
+//! 返回本帧是否发生变更，由调用方决定何时持久化。
+
 use super::{ChatGroup, ChatGroups};
 use crate::ica::types::RoomId;
 use crate::ica::types::room::Room;
 use egui::TextEdit;
 
+/// 分组编辑器的界面瞬态；持久数据全部来自 `ChatGroups`。
 #[derive(Default)]
 pub struct ChatGroupEditor {
+    /// 新建分组输入框的内容。
     new_group_name: String,
+    /// 正在重命名的分组下标；`None` 表示没有正在编辑的名称。
     editing_index: Option<usize>,
+    /// 重命名输入框的内容。
     editing_name: String,
+    /// 当前错误提示（重名、超长、内置保留名等），显示在编辑器顶部。
     error_msg: Option<String>,
     /// 每个分组的搜索文本
     search_texts: Vec<String>,
 }
 
 impl ChatGroupEditor {
-    /// 返回 true 表示数据已修改，需要保存
+    /// 绘制分组管理界面，返回 true 表示数据已修改、需要保存。
+    ///
+    /// 覆盖新建（重名/超长/内置名校验）、重命名、上移下移、删除、“包含所有
+    /// 私聊”开关与分组成员管理；删除与移动在整轮渲染结束后统一应用，避免
+    /// 在遍历分组列表的过程中修改它。
     pub fn ui(&mut self, ui: &mut egui::Ui, chat_groups: &mut ChatGroups, rooms: &[Room]) -> bool {
         let mut dirty = false;
 
@@ -172,6 +187,7 @@ impl ChatGroupEditor {
         dirty
     }
 
+    /// 渲染一个分组已加入的会话列表，支持逐个移除；`group_idx` 为目标分组下标。
     fn render_room_list(
         &mut self,
         ui: &mut egui::Ui,
@@ -220,6 +236,7 @@ impl ChatGroupEditor {
         dirty
     }
 
+    /// 渲染“添加会话”折叠面板：按搜索词过滤尚未加入本分组的会话，点击加入。
     fn render_add_room_panel(
         &mut self,
         ui: &mut egui::Ui,

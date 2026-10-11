@@ -12,10 +12,16 @@ use crate::app::media::{ImageAction, ImageSource};
 use crate::ica::client::poke_target;
 use crate::ica::types::RoomId;
 
+/// 头像交互的目标描述：界面只把这些信息翻译成 `MessageAction`，
+/// 不自行判断权限或发起网络请求。
 pub struct AvatarTarget<'a> {
+    /// 头像所属房间；群为负群号，私聊为对方 QQ（正值）。
     pub room_id: RoomId,
+    /// 头像对应的 QQ 用户 id。
     pub user_id: i64,
+    /// 展示用昵称，用于 @ 提及与菜单标题。
     pub name: &'a str,
+    /// 消息里给出的头像地址；为空时不展示查看/保存等图片操作。
     pub image_url: &'a str,
     /// 转接消息的虚拟发送者不能作为 QQ 用户执行提及、私聊或管理操作。
     pub is_qq_user: bool,
@@ -49,6 +55,10 @@ pub fn render_private_header_avatar(
     )
 }
 
+/// 取出头像原图地址。
+///
+/// 消息里的地址通常是 140 像素缩略图；恰好等于缩略图地址时换用 `s=0`
+/// 的原图参数，否则原样返回（群头像可能是自定义地址）。
 fn full_size_avatar_url(target: &AvatarTarget<'_>) -> String {
     let thumbnail = format!("https://q1.qlogo.cn/g?b=qq&nk={}&s=140", target.user_id);
     if target.image_url == thumbnail {
@@ -81,6 +91,7 @@ pub fn handle_avatar_response(
     }
     response.context_menu(|ui| {
         if user_actions {
+            // room_id 为负表示群聊：只有群内成员才能 @TA。
             if target.room_id < 0 && ui.button("@TA").clicked() {
                 action = Some(MessageAction::MentionSender {
                     room_id: target.room_id,
@@ -120,6 +131,7 @@ pub fn handle_avatar_response(
         }
         if user_actions && target.room_id < 0 {
             ui.separator();
+            // 查看发言记录与群成员管理仅群聊头像可用。
             if ui.button("查看发言记录").clicked() {
                 action = Some(MessageAction::MemberHistory {
                     room_id: target.room_id,

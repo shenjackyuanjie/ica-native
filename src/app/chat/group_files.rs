@@ -1,3 +1,9 @@
+//! 群文件窗口：目录浏览、下载链接获取、新建文件夹与文件上传。
+//!
+//! 列表/下载/建目录统一走 `send_file_manager_event`（fileMgr 短连接命令），
+//! 上传走 `UploadGroupFile` 命令；响应区展示最近一次 Socket API 原始响应。
+//! 仅在选中群聊且 bridge 可用时打开，否则自动关闭窗口。
+
 use crate::app::IcaApp;
 use crate::ica::IcaCommand;
 use serde_json::json;

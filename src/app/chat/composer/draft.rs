@@ -27,10 +27,16 @@ fn message_can_be_reedited(message: &Message, self_id: i64) -> bool {
         })
 }
 
+/// 把消息正文里的 @ 标记还原成“可见文本 + Mention 列表”。
+///
+/// 兼容 `<IcaAt qq=..>` 与 `<IcalinguaAt qq=..>` 两种历史标记写法：能解析出
+/// 正数 user_id 时替换为 @ 的可见文本并收集一条 Mention，解析失败则原样保留
+/// 标记文本；剩余内容整体拼到末尾。
 fn restore_edit_mentions(content: &str) -> (String, Vec<Mention>) {
     let mut remaining = content;
     let mut text = String::with_capacity(content.len());
     let mut mentions = Vec::new();
+    // 两种历史 @ 标记都可能出现，每轮取剩余内容中位置最靠前的一个处理。
     while let Some((start, open, close)) = [
         ("<IcaAt qq=", "</IcaAt>"),
         ("<IcalinguaAt qq=", "</IcalinguaAt>"),
@@ -71,6 +77,10 @@ fn restore_edit_mentions(content: &str) -> (String, Vec<Mention>) {
     (text, mentions)
 }
 
+/// 把“上一条可重发的自有消息”恢复进输入区，返回是否成功进入编辑状态。
+///
+/// 依次恢复正文草稿、@ 提及、回复关系与待发送的远端图片，并记录
+/// `editing_message_id`；提交成功后再由调用方请求撤回原消息。
 pub fn edit_last_own_message(conversation: &mut ConversationState, self_id: i64) -> bool {
     if !conversation.can_edit_last_message() {
         return false;

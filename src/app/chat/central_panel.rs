@@ -1,3 +1,11 @@
+//! 聊天中央面板：顶栏（房间信息与操作）、虚拟消息列表与底部输入区的布局编排。
+//!
+//! 本模块只负责"布局与滚动"这类横切逻辑：按可用高度在消息列表与输入区之间
+//! 分配空间，用估算行高实现虚拟列表（可见范围 + 上下 spacer），并在帧末把
+//! 实测行高统一提交、补偿阅读锚点。消息卡片本身的渲染在 `message_card`，
+//! 输入区在 `composer`；这里通过 `MessageAction` 把交互结果分发回 `IcaApp`
+//! 的各动作方法。
+
 #[cfg(test)]
 #[path = "tests/central_panel.rs"]
 mod tests;
@@ -12,12 +20,15 @@ use crate::app::{
 };
 use std::collections::HashSet;
 
+/// 日期分隔条的行高估算值（像素），与 `render_date_separator` 的实际占位保持一致。
 const DATE_SEPARATOR_ESTIMATED_HEIGHT: f32 = 42.0;
 
+/// 判断当前消息前是否要画日期分隔条：仅当与上一条消息日期不同且上一条存在。
 fn should_show_date_separator(previous_date: Option<&str>, current_date: &str) -> bool {
     previous_date.is_some_and(|previous_date| previous_date != current_date)
 }
 
+/// 绘制居中的日期分隔条（圆角底色 + 小号加粗文字），上下各留间距。
 fn render_date_separator(ui: &mut egui::Ui, date: &str) {
     ui.add_space(6.0);
     ui.allocate_ui_with_layout(
@@ -51,6 +62,10 @@ fn render_date_separator(ui: &mut egui::Ui, date: &str) {
     ui.add_space(4.0);
 }
 
+/// 在可用高度内拆分消息列表与输入区的高度。
+///
+/// 输入区期望高度被钳制到不超出内容区；返回 `(消息列表高度, 输入区高度)`。
+/// 输入区被压缩时调用方改用可滚动布局（`show_constrained_composer`）。
 fn fit_chat_body_heights(
     available_height: f32,
     desired_composer_height: f32,
@@ -63,6 +78,10 @@ fn fit_chat_body_heights(
     (content_height - composer_height, composer_height)
 }
 
+/// 以固定高度展示可滚动的输入区。
+///
+/// 空间不足时输入区内部滚动而不是继续挤压消息列表；`stick_to_bottom`
+/// 保证视图跟随输入内容。
 fn show_constrained_composer<R>(
     ui: &mut egui::Ui,
     id: egui::Id,
@@ -79,6 +98,13 @@ fn show_constrained_composer<R>(
 }
 
 impl IcaApp {
+    /// 渲染聊天中央面板：数据库升级进度、房间顶栏、通知栏、Bridge 诊断、
+    /// 虚拟消息列表与输入区。
+    ///
+    /// 单帧内的关键顺序：估算/复用行布局 -> 计算初始滚动偏移（底部吸附、
+    /// 阅读锚点、历史前插补偿依次优先）-> 按可见范围绘制 -> 帧末统一提交实测
+    /// 行高并补偿锚点 -> 分发本帧收集的 `MessageAction`。没有活跃 bridge 或
+    /// 未选中房间时展示对应空状态。
     pub fn render_central_panel(&mut self, ui: &mut egui::Ui) {
         let compact_layout = self.uses_compact_chat_layout(ui.ctx());
         egui::CentralPanel::default().show(ui, |ui| {

@@ -1,3 +1,14 @@
+//! 聊天区的用户操作动作。
+//!
+//! 全部方法挂在 `impl IcaApp` 上，供界面层调用：消息 +1、转发（逐条/合并）、
+//! 复制到编辑区，转发目标会话的选择与提交，群分组（chat group）的增删改与
+//! 向 Bridge 同步，会话置顶/移除/忽略，在线状态切换，群签到与戳一戳，以及
+//! 头像 @ 提及与成员管理入口。
+//!
+//! 约定：所有命令统一封装为 `IcaCommand` 经 session channel 发给 IO 线程，
+//! GUI 线程不直接接触 socket；发送失败时记录 `last_error` 提示，部分命令
+//! 先本地乐观更新再按结果回滚（如置顶）。
+
 #[cfg(test)]
 #[path = "tests/actions.rs"]
 mod tests;
@@ -14,6 +25,10 @@ use serde_json::Value as JsonValue;
 use std::collections::HashSet;
 
 impl IcaApp {
+    /// 从消息中提取可原样发送的原始消息链（raw chain）。
+    ///
+    /// 兼容 Bridge 的两种 `raw_msg` 形态：非空数组直接取用；带 `type` 的单个
+    /// 对象包装为一员数组。都取不到时返回 `None`，调用方退化为文本重建发送。
     fn extract_raw_chain(message: &Message) -> Option<JsonValue> {
         let raw_msg = message.raw_msg.as_deref()?;
         match raw_msg {
@@ -27,6 +42,10 @@ impl IcaApp {
         }
     }
 
+    /// 把原始消息链作为 `SendRawMessage` 命令发给指定房间，返回是否发送成功。
+    ///
+    /// 没有活跃 bridge、channel 发送失败时返回 `false` 并记录错误；发送成功后
+    /// 按设置标记该会话"发送后滚动到底部"。
     fn send_raw_chain(&mut self, room_id: RoomId, chain: JsonValue) -> bool {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return false;
@@ -53,6 +72,9 @@ impl IcaApp {
         true
     }
 
+    /// 从当前活跃 bridge 的会话缓存中按消息 id 克隆一条消息。
+    ///
+    /// 找不到 bridge 或消息时返回 `None`；克隆避免调用方持有会话缓存的引用。
     fn clone_message_from_active_bridge(
         &self,
         room_id: RoomId,
@@ -65,6 +87,9 @@ impl IcaApp {
             .cloned()
     }
 
+    /// 取出指定 bridge/房间下被选为转发的消息，按缓存中的时间顺序返回。
+    ///
+    /// 房间与当前转发来源不一致时返回空列表；选中 id 收集为 `HashSet` 判定。
     pub fn selected_forward_messages(&self, bridge_idx: usize, room_id: RoomId) -> Vec<Message> {
         let Some(state) = self.bridge_states.get(bridge_idx) else {
             return Vec::new();
@@ -89,6 +114,11 @@ impl IcaApp {
             .collect()
     }
 
+    /// 把一条已有消息克隆发送到目标房间，返回是否发送成功。
+    ///
+    /// 优先原样发送原始消息链；取不到 raw chain 时退化为按文本重建（保留
+    /// 引用），附件会被丢弃并提示"已退化为纯文本发送"。空文本且无原始节点
+    /// 时直接失败。
     fn send_message_clone_to_room(&mut self, target_room_id: RoomId, message: &Message) -> bool {
         if let Some(chain) = Self::extract_raw_chain(message) {
             return self.send_raw_chain(target_room_id, chain);
@@ -135,6 +165,9 @@ impl IcaApp {
         true
     }
 
+    /// 把一条消息的内容与引用复制到当前会话的编辑区（草稿）。
+    ///
+    /// 附件不恢复并给出提示；正在"编辑重发提交中"时忽略，避免覆盖待撤回的草稿。
     pub fn copy_message_to_draft(&mut self, room_id: RoomId, message_id: String) {
         let Some(message) = self.clone_message_from_active_bridge(room_id, &message_id) else {
             return;
@@ -158,6 +191,9 @@ impl IcaApp {
         }
     }
 
+    /// 对一条消息执行 +1（原样再发一遍到所在会话）。
+    ///
+    /// 取不到消息时静默返回；发送失败的错误由 `send_message_clone_to_room` 记录。
     pub fn plus_one_message(&mut self, room_id: RoomId, message_id: String) {
         let Some(message) = self.clone_message_from_active_bridge(room_id, &message_id) else {
             return;
@@ -165,6 +201,9 @@ impl IcaApp {
         let _ = self.send_message_clone_to_room(room_id, &message);
     }
 
+    /// 开始一条消息的转发选择，并可选直接打开目标会话选择器。
+    ///
+    /// 替换（不是追加）当前转发选择；打开选择器时清空搜索词与已选目标。
     pub fn begin_forward_selection(
         &mut self,
         room_id: RoomId,
@@ -182,12 +221,14 @@ impl IcaApp {
         }
     }
 
+    /// 切换一条消息在转发选择中的选中状态。
     pub fn toggle_forward_message_selection(&mut self, room_id: RoomId, message_id: String) {
         if let Some(state) = self.active_bridge_state_mut() {
             state.toggle_forward_selection(room_id, message_id);
         }
     }
 
+    /// 把转发选择中的消息逐条 +1 到当前会话；部分失败时提示条数。
     pub fn plus_one_forward_selection(&mut self, room_id: RoomId) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
@@ -211,10 +252,14 @@ impl IcaApp {
         }
     }
 
+    /// 打开转发目标选择器（逐条转发模式）。
     pub fn open_forward_target_picker(&mut self, room_id: RoomId) {
         self.open_forward_target_picker_with_mode(room_id, false);
     }
 
+    /// 打开转发目标选择器并指定合并/逐条模式；仅在转发选择进行中有效。
+    ///
+    /// 打开时清空搜索词与已选目标，避免沿用上次会话的选择。
     pub fn open_forward_target_picker_with_mode(&mut self, room_id: RoomId, merged: bool) {
         if let Some(state) = self.active_bridge_state_mut()
             && state.is_forward_selection_active(room_id)
@@ -226,12 +271,18 @@ impl IcaApp {
         }
     }
 
+    /// 清空当前转发选择与目标选择状态。
     pub fn clear_forward_selection(&mut self) {
         if let Some(state) = self.active_bridge_state_mut() {
             state.clear_forward_selection();
         }
     }
 
+    /// 把当前选中的消息转发到一批目标会话。
+    ///
+    /// 目标列表先去重；合并转发模式下逐目标提交一条合并消息，全部成功才清空
+    /// 选择；逐条模式下按"目标 × 消息"两层循环发送，任一目标有成功即清空
+    /// 选择并提示汇总，失败数记入 `last_error`。
     pub fn forward_selected_messages_to_rooms(&mut self, target_room_ids: Vec<RoomId>) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
@@ -301,6 +352,7 @@ impl IcaApp {
         }
     }
 
+    /// 通知 Bridge 新增一个群分组；`include_all_personal` 表示自动包含全部私聊。
     pub fn send_add_chat_group(
         &self,
         bridge_idx: usize,
@@ -317,6 +369,7 @@ impl IcaApp {
         }
     }
 
+    /// 通知 Bridge 删除指定名称的群分组。
     pub fn send_remove_chat_group(&self, bridge_idx: usize, name: &str) {
         if let Some(session) = self.bridge_states.get(bridge_idx) {
             let _ = session.send(IcaCommand::RemoveChatGroup {
@@ -325,6 +378,7 @@ impl IcaApp {
         }
     }
 
+    /// 通知 Bridge 更新指定群分组的房间与私聊包含范围。
     pub fn send_update_chat_group(
         &self,
         bridge_idx: usize,
@@ -341,6 +395,10 @@ impl IcaApp {
         }
     }
 
+    /// 把 bridge 侧的群分组与旧配置对比，向 IO 线程发送增/删/改命令。
+    ///
+    /// 按名称匹配：同名但房间或"包含全部私聊"变化的发更新，旧有新无的删除，
+    /// 新有旧无的新增；只发命令，不等待回执。
     pub fn sync_chat_groups_to_bridge(&self, bridge_idx: usize, old: &ChatGroups) {
         let Some(new) = self
             .bridge_states
@@ -379,6 +437,9 @@ impl IcaApp {
         }
     }
 
+    /// 设置/取消会话置顶；先本地乐观更新房间排序，命令失败时回滚。
+    ///
+    /// 回滚按发送前记下的 `index` 恢复，并刷新房间 revision 让列表重排。
     pub fn set_room_pinned(&mut self, bridge_idx: usize, room_id: RoomId, pin: bool) {
         let Some(state) = self.bridge_states.get_mut(bridge_idx) else {
             return;
@@ -411,6 +472,7 @@ impl IcaApp {
         }
     }
 
+    /// 从本地房间列表移除会话并通知 Bridge；被移除的恰好是当前会话时清空选中。
     pub fn remove_chat(&mut self, bridge_idx: usize, room_id: RoomId) {
         let Some(state) = self.bridge_states.get_mut(bridge_idx) else {
             return;
@@ -425,6 +487,7 @@ impl IcaApp {
         }
     }
 
+    /// 把会话加入忽略列表（Bridge 侧不再推送该会话的新消息）。
     pub fn ignore_chat(&mut self, bridge_idx: usize, room_id: RoomId, room_name: String) {
         if let Err(e) =
             self.bridge_states[bridge_idx].send(IcaCommand::IgnoreChat { room_id, room_name })
@@ -433,6 +496,10 @@ impl IcaApp {
         }
     }
 
+    /// 把当前在线状态模式换算为 Bridge 的状态码并发送。
+    ///
+    /// 在线/离开/隐身/忙碌/求戳/请勿打扰分别映射到固定数值；成功发 Notice，
+    /// 失败记 `last_error`。
     pub fn apply_online_status(&mut self) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
@@ -457,6 +524,7 @@ impl IcaApp {
         }
     }
 
+    /// 对当前群发起签到命令。
     pub fn send_group_sign(&mut self, room_id: RoomId) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
@@ -469,6 +537,7 @@ impl IcaApp {
         }
     }
 
+    /// 对群成员发起戳一戳；目标 id 非法时直接提示，不发命令。
     pub fn send_group_poke(&mut self, room_id: RoomId, target_id: i64) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
@@ -570,6 +639,9 @@ impl IcaApp {
         self.request_group_members(bridge_idx, room_id, true);
     }
 
+    /// 校验当前选中的自定义分组下标仍然有效，越界时回退为"所有聊天"。
+    ///
+    /// 分组被删除后、界面刷新前调用，防止筛选条件指向不存在的分组。
     pub fn ensure_selected_chat_group_valid(&mut self) {
         if let Some(state) = self.active_bridge_state_mut()
             && let SelectedChatGroup::Custom(idx) = &state.selected_chat_group

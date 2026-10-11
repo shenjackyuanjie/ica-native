@@ -1,3 +1,9 @@
+//! 群公告窗口：列表展示、正文折叠、发布/编辑表单与删除确认。
+//!
+//! 窗口内容在与主窗口共享的 `GroupAnnouncementViewerState` 上渲染；命令
+//! （拉取/发布/删除）统一由主循环消费状态里的"意图标志"后代发，子视口只
+//! 负责收集输入，避免在渲染闭包里直接发送命令。
+
 #[cfg(test)]
 #[path = "tests/group_announcements.rs"]
 mod tests;
@@ -43,6 +49,7 @@ fn collapse_text(text: &str) -> (String, bool) {
     (head.join("\n"), truncated)
 }
 
+/// 公告标题；标题为空时用正文首行兜底，全空则显示占位文本。
 fn announcement_headline(announcement: &GroupAnnouncement) -> String {
     let title = announcement.title.trim();
     if !title.is_empty() {
@@ -66,6 +73,10 @@ enum MenuAction {
     RequestDelete(String),
 }
 
+/// 渲染单条公告卡片：标记、标题、发布时间、折叠正文与配图。
+///
+/// 展开状态、待查看图片与菜单动作都通过出参回写，由调用方在借用结束后
+/// 统一应用到 viewer；复制/编辑/删除入口放在右键菜单，正文区域保持干净。
 fn render_announcement(
     ui: &mut egui::Ui,
     announcement: &GroupAnnouncement,
@@ -220,6 +231,10 @@ fn render_editor(ui: &mut egui::Ui, viewer: &mut GroupAnnouncementViewerState) {
     });
 }
 
+/// 渲染公告查看器主体：刷新/新建/复制响应、删除确认与公告列表。
+///
+/// 借用期内先收集交互结果（展开切换、图片、菜单动作），滚动区结束后统一
+/// 写回 viewer，避免与 `&mut` 借用冲突。
 fn render_viewer(ui: &mut egui::Ui, viewer: &mut GroupAnnouncementViewerState) {
     ui.horizontal_wrapped(|ui| {
         ui.heading(if viewer.room_name.is_empty() {
@@ -345,6 +360,7 @@ impl IcaApp {
         self.send_group_announcements_request(bridge_idx, room_id, request_id);
     }
 
+    /// 发送拉取群公告命令；bkn 优先用 onlineData，发送失败时把同一 request 标记失败。
     fn send_group_announcements_request(
         &mut self,
         bridge_idx: usize,
@@ -368,6 +384,10 @@ impl IcaApp {
         }
     }
 
+    /// 渲染"群公告"独立窗口。
+    ///
+    /// 每帧先在主窗口消费查看器意图（配图预览、刷新、发布、删除），再以
+    /// deferred viewport 绘制查看器；子视口里的操作经共享状态回传主循环代发。
     pub fn render_group_announcements_window(&mut self, ctx: &egui::Context) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;

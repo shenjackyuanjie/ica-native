@@ -1,4 +1,9 @@
 //! 聊天输入框视图及其输入、回复、草稿、提及和拖放子模块。
+//!
+//! `render_composer` 是唯一入口：渲染过程中只把用户意图记入局部标志，整帧
+//! 绘制结束后再统一应用，避免在 egui 闭包内直接修改跨模块状态造成借用冲突。
+//! 输入规则、回复导航、草稿恢复、提及浮层与拖放分别由 `input`、`reply`、
+//! `draft`、`mentions`、`drop` 子模块实现，本文件负责组装视图与意图分发。
 
 mod draft;
 mod drop;
@@ -20,23 +25,43 @@ use egui::{Button, Image, Label, RichText};
 use input::{composer_keyboard_active, consume_composer_send_key, consume_composer_shortcut};
 use reply::{ReplyDirection, move_reply_selection, reply_preview_text};
 
+/// `render_composer` 的帧输入：当前会话标识、待发送附件与布局约束。
 pub struct ComposerParams {
+    /// 当前活跃 bridge 在 `bridge_states` 中的下标。
     pub active_bridge_idx: usize,
+    /// 当前会话房间号；负数为群聊，正数为私聊。
     pub room_id: i64,
+    /// 输入框的 egui Id，用于焦点判定与记忆寻址。
     pub composer_id: egui::Id,
+    /// 是否处于转发多选模式；为真时输入区上方显示转发操作条。
     pub forward_mode_active: bool,
+    /// 转发多选已选中的消息数。
     pub forward_selected_count: usize,
+    /// 本地新增的待发送图片数据，按缩略图逐张渲染。
     pub pending_images: Vec<PendingImage>,
+    /// 待发送图片总数（含从重发消息恢复的远端图片），用于预览行计数。
     pub pending_image_count: usize,
+    /// 是否存在待发送图片（决定是否显示图片预览行）。
     pub has_pending_image: bool,
+    /// 是否存在待发送的普通文件。
     pub has_pending_file: bool,
+    /// 图片预览行的预留高度。
     pub composer_reserved_height: f32,
+    /// 工具按钮行高；输入框与各按钮按此对齐。
     pub control_height: f32,
+    /// 输入框目标行数，随内容高度在设置范围内调整。
     pub composer_rows: usize,
+    /// 本帧是否请求把焦点移入输入框（浮层关闭后回焦等场景）。
     pub request_composer_focus: bool,
 }
 
 impl IcaApp {
+    /// 绘制聊天输入区：图片预览、转发操作条、@提及、表情/贴纸与发送按钮。
+    ///
+    /// 本函数是输入框的唯一入口，遵循“先记录意图、闭包结束后统一提交”的约定：
+    /// 渲染中的点击与快捷键只置起局部标志（`should_send`、`clear_reply` 等），
+    /// 整帧结束后在函数尾部统一应用；编辑提交等待期间只显示 spinner 并保留
+    /// 草稿，不渲染可操作的输入区。
     #[allow(clippy::too_many_lines)]
     pub fn render_composer(&mut self, ui: &mut egui::Ui, params: ComposerParams) {
         let ComposerParams {

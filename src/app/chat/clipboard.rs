@@ -1,7 +1,16 @@
+//! 输入区附件的来源：系统剪贴板图片与本地文件。
+//!
+//! 剪贴板读取在 Windows 上直连 Win32（优先取 PNG 原始字节，其次 DIB 解码），
+//! 其他平台使用 `arboard`；两种来源最终都统一编码为 PNG 的 `PendingImage`。
+//! 本地文件按扩展名推断 MIME，分别构造 `PendingImage` 与 `PendingFile`。
+//! 另提供 Ctrl+V 系统快捷键探测：egui-winit 在文本粘贴失败时会吞掉该事件，
+//! 需要直接查询键盘状态补获"粘贴图片"意图。
+
 use crate::app::{IcaApp, PendingFile, PendingImage};
 use std::path::Path;
 
 impl IcaApp {
+    /// 按扩展名推断图片 MIME；只识别常见图片格式，其他返回 `None`。
     fn image_mime_type(path: &Path) -> Option<&'static str> {
         let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
         match ext.as_str() {
@@ -15,6 +24,10 @@ impl IcaApp {
         }
     }
 
+    /// 从系统剪贴板读取图片并转为待发送的 `PendingImage`。
+    ///
+    /// Windows 上先尝试直连剪贴板取原始字节（保真、免重编码），失败或非
+    /// Windows 平台回退到 `arboard` 的 RGBA 数据并重编码为 PNG。
     pub fn load_clipboard_image() -> anyhow::Result<PendingImage> {
         #[cfg(windows)]
         if let Ok(image) = Self::load_clipboard_image_windows() {
@@ -33,6 +46,7 @@ impl IcaApp {
         Self::rgba_clipboard_image_to_pending(img.width, img.height, img.bytes.into_owned())
     }
 
+    /// 把 RGBA 字节包装为图片缓冲；尺寸与数据长度不符时报错。
     fn rgba_clipboard_image_to_pending(
         width: usize,
         height: usize,
@@ -43,6 +57,7 @@ impl IcaApp {
         Self::encode_rgba_image_to_pending(buf)
     }
 
+    /// 把 RGBA 图片编码为 PNG 字节，统一以 `clipboard.png` 之名作为待发送图片。
     fn encode_rgba_image_to_pending(buf: image::RgbaImage) -> anyhow::Result<PendingImage> {
         let mut png_data = Vec::new();
         let encoder = image::codecs::png::PngEncoder::new(std::io::Cursor::new(&mut png_data));
@@ -61,6 +76,10 @@ impl IcaApp {
         ))
     }
 
+    /// Windows 专用：直连 Win32 剪贴板读取图片。
+    ///
+    /// 优先取注册的 `PNG` 格式原始字节；否则依次尝试 `CF_DIBV5`/`CF_DIB`
+    /// 位图并解码。打开剪贴板后用 `ClipboardGuard` 确保关闭。
     #[cfg(windows)]
     fn load_clipboard_image_windows() -> anyhow::Result<PendingImage> {
         use windows_sys::Win32::System::{
@@ -107,6 +126,10 @@ impl IcaApp {
         Err(anyhow::anyhow!("剪贴板里没有可支持的图片格式"))
     }
 
+    /// Windows 专用：按剪贴板格式号读取全局内存中的原始字节。
+    ///
+    /// 格式不可用返回 `Ok(None)`；句柄为空、数据为空、锁定失败分别报错。
+    /// 调用方需已打开剪贴板。
     #[cfg(windows)]
     unsafe fn read_windows_clipboard_format(format: u32) -> anyhow::Result<Option<Vec<u8>>> {
         use windows_sys::Win32::System::{
@@ -140,6 +163,7 @@ impl IcaApp {
         Ok(Some(data))
     }
 
+    /// Windows 专用：把无文件头的 DIB 字节解码为 RGBA，再编码为 PNG。
     #[cfg(windows)]
     fn dib_clipboard_image_to_pending(data: &[u8]) -> anyhow::Result<PendingImage> {
         let decoder =
@@ -148,10 +172,16 @@ impl IcaApp {
         Self::encode_rgba_image_to_pending(rgba)
     }
 
+    /// 查询系统级 Ctrl+V 是否刚按下（Windows 为真实探测，其他平台恒为 false）。
+    ///
+    /// 用于在 egui 文本粘贴失败后仍能捕获"粘贴图片"意图。
     pub fn system_paste_shortcut_pressed() -> bool {
         system_paste_shortcut_pressed()
     }
 
+    /// 从本地路径读取图片文件作为待发送图片；不支持的格式报错。
+    ///
+    /// 文件名取路径末段，缺失时退化为 `image`。
     pub fn load_pending_image(path: &Path) -> anyhow::Result<PendingImage> {
         let mime_type = Self::image_mime_type(path)
             .ok_or_else(|| anyhow::anyhow!("不支持的图片格式: {}", path.display()))?;
@@ -164,6 +194,9 @@ impl IcaApp {
         Ok(PendingImage::new(name, mime_type.to_string(), data))
     }
 
+    /// 按扩展名推断任意文件的 MIME；未知类型回退为 `application/octet-stream`。
+    ///
+    /// 覆盖图片、音频、视频与常见文档/压缩格式，供附件上传声明类型。
     pub fn guess_mime_type(path: &Path) -> String {
         let ext = path
             .extension()
@@ -189,6 +222,7 @@ impl IcaApp {
         .to_string()
     }
 
+    /// 从本地路径读取任意文件作为待发送附件，MIME 由 `guess_mime_type` 推断。
     pub fn load_pending_file(path: &Path) -> anyhow::Result<PendingFile> {
         let data = std::fs::read(path)?;
         let name = path
@@ -201,6 +235,10 @@ impl IcaApp {
     }
 }
 
+/// Windows 实现：用 `GetAsyncKeyState` 识别 Ctrl 按住且 V 键刚按下。
+///
+/// egui-winit 在文本粘贴失败时会吞掉 Ctrl+V 的 RawInput，只能直接查询键盘
+/// 状态；按最低位判断"本次刚按下"，避免每一帧重复触发。
 #[cfg(windows)]
 fn system_paste_shortcut_pressed() -> bool {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_V};
@@ -214,6 +252,7 @@ fn system_paste_shortcut_pressed() -> bool {
     }
 }
 
+/// 非 Windows 平台没有对应的系统快捷键探测，恒为 false。
 #[cfg(not(windows))]
 fn system_paste_shortcut_pressed() -> bool {
     false

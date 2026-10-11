@@ -1,6 +1,14 @@
+//! 输入区的文件拖放处理。
+//!
+//! 悬停时铺一层全屏蒙层提示“拖放文件到此处”；松手后按扩展名把文件分流为
+//! 待发送图片与至多一份普通文件：多份非图片文件被拒绝，读取失败与空文件
+//! 汇总成一条错误提示，不阻断已成功入队的图片。
+
 use crate::app::{IcaApp, PendingFile, PendingImage};
 
 impl IcaApp {
+    /// 处理拖到输入区的文件：图片追加到当前会话的待发送队列，首份非图片文件
+    /// 设为待发送文件；读取失败、空文件与多份非图片文件汇总为一条错误提示。
     pub fn handle_composer_drop(
         &mut self,
         ui: &mut egui::Ui,
@@ -59,6 +67,7 @@ impl IcaApp {
                 let ext = file_name.rsplit('.').next().unwrap_or("").to_lowercase();
                 let image_exts = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
                 if image_exts.contains(&ext.as_str()) {
+                    // 仅按文件名（扩展名）猜测 MIME，不读取文件内容。
                     let mime = IcaApp::guess_mime_type(std::path::Path::new(&file_name));
                     dropped_images.push(PendingImage::new(file_name, mime, data));
                 } else if dropped_file.is_none() {

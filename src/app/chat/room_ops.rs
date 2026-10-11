@@ -1,3 +1,9 @@
+//! 会话（房间）维度的操作：切换会话、拉取历史与群成员、可见会话缓存及相关设置。
+//!
+//! 这里集中了“选中一个房间时发生了什么”：本地未读即时清除、漫游历史与缓存
+//! 快照的请求顺序、自动已读上报，以及按需失效的可见会话索引缓存。所有请求
+//! 都转成 `IcaCommand` 交给 IO 线程，本模块只维护 GUI 侧状态。
+
 #[cfg(test)]
 #[path = "tests/room_ops.rs"]
 mod tests;
@@ -38,6 +44,10 @@ fn clear_room_unread(rooms: &mut [Room], room_id: RoomId) -> bool {
 }
 
 impl IcaApp {
+    /// 请求指定群（`room_id < 0`）的成员列表。
+    ///
+    /// 已在加载中或已加载过时跳过（`force` 可强制刷新）；发送失败时复位加载
+    /// 标志并置错误提示，避免界面永久停在“加载中”。
     pub fn request_group_members(&mut self, bridge_idx: usize, room_id: RoomId, force: bool) {
         if room_id >= 0 {
             return;
@@ -61,6 +71,9 @@ impl IcaApp {
         }
     }
 
+    /// 请求指定会话的完整消息快照；`scroll_to_bottom` 决定快照到达后是否滚到底部。
+    ///
+    /// 发送失败时撤销 `requested_snapshot` 占位并清滚动意图，让用户能重试。
     pub fn request_room_messages(
         &mut self,
         bridge_idx: usize,
@@ -98,6 +111,8 @@ impl IcaApp {
         }
     }
 
+    /// 请求协议端漫游历史（fetchLatestHistory），`current_loaded_messages` 供
+    /// Bridge 判断本地缺口、避免重复下发。
     fn request_latest_room_history(
         &mut self,
         bridge_idx: usize,
@@ -118,6 +133,8 @@ impl IcaApp {
         }
     }
 
+    /// 向上分页加载更早的消息（fetchOlderMessages），以当前最旧消息的时间与
+    /// msg_id 为游标；已在加载或没有更多历史时跳过。
     pub fn request_older_messages(&mut self, bridge_idx: usize, room_id: RoomId) {
         let Some(command_tx) = self
             .bridge_states
@@ -153,6 +170,7 @@ impl IcaApp {
         }
     }
 
+    /// 请求当前 bridge 的系统消息（验证消息等）。
     pub fn request_system_messages(&self, bridge_idx: usize) {
         let Some(session) = self.bridge_states.get(bridge_idx) else {
             return;
@@ -163,6 +181,9 @@ impl IcaApp {
         }
     }
 
+    /// 返回当前 bridge 经搜索词、选中分组与分组开关筛选排序后的会话索引。
+    ///
+    /// 结果按 `rooms_revision`、搜索词、分组选择与分组开关缓存，任一变化才重算。
     pub fn visible_room_indices(&mut self, bridge_idx: usize) -> Vec<usize> {
         let disable_chat_group = self.custom_chat.disable_chat_group;
         let Some(current_state) = self.bridge_states.get(bridge_idx) else {
@@ -203,6 +224,7 @@ impl IcaApp {
             .unwrap_or_default()
     }
 
+    /// 设置“选中会话时清空搜索词”，写入配置并使可见会话缓存失效。
     pub fn set_clear_search_on_room_select(&mut self, enabled: bool) {
         self.clear_search_on_room_select = enabled;
         self.update_config(|cfg| {
@@ -213,6 +235,7 @@ impl IcaApp {
         }
     }
 
+    /// 设置“发送后滚动到底部”，写入配置。
     pub fn set_scroll_to_bottom_after_send(&mut self, enabled: bool) {
         self.scroll_to_bottom_after_send = enabled;
         self.update_config(|cfg| {
@@ -220,6 +243,7 @@ impl IcaApp {
         });
     }
 
+    /// 设置“切换会话时自动拉取漫游历史”，写入配置。
     pub fn set_auto_fetch_history_on_room_select(&mut self, enabled: bool) {
         self.auto_fetch_history_on_room_select = enabled;
         self.update_config(|cfg| {
@@ -227,6 +251,7 @@ impl IcaApp {
         });
     }
 
+    /// 设置“编辑重发时与现有草稿冲突的处理方式”，写入配置。
     pub fn set_reedit_draft_conflict_mode(&mut self, mode: ReEditDraftConflictMode) {
         self.reedit_draft_conflict_mode = mode;
         self.update_config(|cfg| {
@@ -234,6 +259,7 @@ impl IcaApp {
         });
     }
 
+    /// 选中指定会话，沿用“选中时清空搜索”的当前设置。
     pub fn select_active_room(&mut self, room_id: RoomId) {
         self.select_active_room_with_search_policy(room_id, self.clear_search_on_room_select);
     }
@@ -243,6 +269,11 @@ impl IcaApp {
         self.select_active_room_with_search_policy(room_id, false);
     }
 
+    /// 选中指定会话的核心流程；`clear_search_on_room_select` 区分鼠标选房与快捷键选房。
+    ///
+    /// 依次处理：切换会话时重置提及/成员面板等瞬态、按需清除本地未读并上报
+    /// 远端已读、裁剪消息缓存、按快照请求规则决定是否拉取完整消息（开启自动
+    /// 历史时先请求漫游历史再读缓存），最后按需刷新群成员。
     fn select_active_room_with_search_policy(
         &mut self,
         room_id: RoomId,

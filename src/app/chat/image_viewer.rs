@@ -1,9 +1,20 @@
+//! 独立系统窗口的图片查看器：工具栏导航、缩放/平移、复制/保存/定位。
+//!
+//! 查看器状态放在 `Arc<Mutex<..>>` 中由主窗口与图片视口共享：工具栏与
+//! 键盘只改状态，复制/保存等动作走 `pending_action` 回到主循环执行
+//! （需要文件对话框或 bridge 上下文）。纹理加载复用聊天区的 GIF 探测链。
+
 use super::{should_probe_gif_after_static_error, try_load_gif_texture};
 use crate::app::IcaApp;
 use crate::app::media::ImageAction;
 use std::sync::atomic::Ordering;
 
 impl IcaApp {
+    /// 渲染图片查看器：每帧在主窗口处理关闭信号与待办动作，再以 deferred
+    /// viewport 绘制独立预览窗口。
+    ///
+    /// 窗口内支持 ←/→ 与工具栏翻页、Esc/关闭按钮、适应窗口与 1:1、滚轮与
+    /// 双指缩放（以指针为锚点）、拖动平移；Ctrl+↑/↓ 键盘缩放。
     pub fn render_image_viewer(&mut self, ctx: &egui::Context) {
         // 图片查看器关闭信号检测
         if let Some(ref viewer) = self.image_viewer
@@ -328,6 +339,7 @@ impl IcaApp {
     }
 }
 
+/// 加载查看器纹理：静态加载失败且值得重探时，按 GIF 链路再试一次。
 fn load_viewer_texture(ctx: &egui::Context, url: &str) -> egui::load::TextureLoadResult {
     match ctx.try_load_texture(
         url,

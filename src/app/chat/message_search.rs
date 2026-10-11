@@ -1,8 +1,19 @@
+//! 会话内消息搜索窗口：关键词输入、结果列表与"加载更多"分页。
+//!
+//! 结果直接复用 `render_message_card` 渲染，因此卡片上的交互（回复、撤回、
+//! 转发、图片查看等）同样可用；需要切换会话才能执行的动作先
+//! `select_active_room` 再分发，其余按 `MessageAction` 直接处理。
+
 use super::message_card::MessageRenderOptions;
 use crate::app::media::{ImageAction, image_sources_for_messages};
 use crate::app::{IcaApp, MessageAction};
 
 impl IcaApp {
+    /// 渲染"搜索聊天记录"窗口。
+    ///
+    /// 每帧先从 bridge 状态快照出搜索参数与结果再绘制，交互结果（新搜索/
+    /// 加载更多/卡片动作）在窗口回调外统一应用，避免借用冲突；Enter 与
+    /// "搜索"按钮等效，加载中禁用。
     pub fn render_message_search_window(&mut self, ctx: &egui::Context) {
         let Some(active_bridge_idx) = self.active_bridge_idx else {
             return;
@@ -160,6 +171,10 @@ impl IcaApp {
         }
     }
 
+    /// 分发搜索结果里消息卡片产生的交互动作。
+    ///
+    /// 与主聊天区的差别：需要目标会话上下文的动作先切回该会话；带 room_id
+    /// 的图片查看以当前搜索结果为图片来源列表。
     fn handle_message_search_action(
         &mut self,
         ctx: &egui::Context,

@@ -20,6 +20,11 @@ pub fn composer_keyboard_active(
         && ctx.memory(|memory| memory.has_focus(composer_id) && memory.top_modal_layer().is_none())
 }
 
+/// 按发送键设置消费 Enter 事件，返回本帧是否应触发发送。
+///
+/// 仅在 `composer_keyboard_active` 为真时处理：命中发送组合的 Enter 会从事件
+/// 队列消费掉（长按 repeat 不重复发送）；未命中的组合清掉修饰键后留给多行
+/// 编辑器，保留其撤销与选区行为。
 pub fn consume_composer_send_key(
     ui: &egui::Ui,
     composer_id: egui::Id,
@@ -65,6 +70,10 @@ pub fn consume_composer_send_key(
     })
 }
 
+/// 消费指定的 Ctrl 组合键事件，返回本帧是否按下过该组合。
+///
+/// 供提及浮层等次级界面使用：命中后从事件队列移除，避免同一按键既操作浮层
+/// 又触发主界面；带 Shift/Alt/Cmd 的组合不视为命中。
 pub fn consume_composer_shortcut(ui: &egui::Ui, key: egui::Key, ctrl: bool) -> bool {
     ui.input_mut(|input| {
         let mut consumed = false;

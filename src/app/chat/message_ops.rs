@@ -1,3 +1,9 @@
+//! 消息操作：发送当前输入区内容、回复/重发/撤回/显隐、加群验证处理与附件挑选。
+//!
+//! 发送按内容形态拆成多条命令（文件、远程图片、本地单图/多图、纯文本），
+//! 任一条发送失败即整体回滚草稿与附件；编辑重发是单命令原子提交，提交期间
+//! 锁定输入区。远程图片（已存在于服务器的图片）以 URL 形式附加，不重新上传。
+
 #[cfg(test)]
 #[path = "tests/message_ops.rs"]
 mod tests;
@@ -12,6 +18,11 @@ use crate::ica::types::{
 };
 
 impl IcaApp {
+    /// 发送当前会话输入区的内容（编辑重发/新消息两条路径）。
+    ///
+    /// 新消息按"文件 → 远程图片 → 本地图片/纯文本"拆成多条命令，正文只
+    /// 挂在第一条上；任一条发送失败时完整还原草稿、回复、提及与附件。
+    /// 编辑重发要求 bridge 就绪且不带普通文件，单命令提交并锁定输入区。
     pub fn send_current_message(&mut self) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
@@ -192,6 +203,9 @@ impl IcaApp {
         }
     }
 
+    /// 把一条消息设为当前回复对象，并高亮被回复的消息。
+    ///
+    /// 编辑重发提交期间忽略，避免覆盖待撤回的草稿状态。
     pub fn queue_reply(&mut self, room_id: RoomId, reply: ReplyMessage) {
         if let Some(state) = self.active_bridge_state_mut() {
             let conversation = state.conversation_mut(room_id);
@@ -203,6 +217,7 @@ impl IcaApp {
         }
     }
 
+    /// 请求 Bridge 重发（刷新）一条消息，用于图片/文件加载失败后重试。
     pub fn send_renew_message(&mut self, room_id: RoomId, message_id: String) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
@@ -215,6 +230,7 @@ impl IcaApp {
         }
     }
 
+    /// 撤回一条消息；发送失败记 `last_error`。
     pub fn send_delete_message(&mut self, room_id: RoomId, message_id: String) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
@@ -229,6 +245,9 @@ impl IcaApp {
         }
     }
 
+    /// 显示或隐藏一条消息（对所有人可见或仅自己可见）。
+    ///
+    /// 命令发送成功后本地立即标记，失败则提示且不改本地状态。
     pub fn set_message_reveal(&mut self, room_id: RoomId, message_id: String, reveal: bool) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
@@ -263,6 +282,10 @@ impl IcaApp {
         }
     }
 
+    /// 把已撤回/删除的消息内容恢复到编辑区草稿。
+    ///
+    /// 按 `reedit_draft_conflict_mode` 处理草稿冲突：覆盖、追加或仅在草稿
+    /// 为空时写入；编辑重发提交期间忽略。
     pub fn restore_deleted_message_to_draft(&mut self, room_id: RoomId, content: String) {
         let mode = self.reedit_draft_conflict_mode;
         if let Some(state) = self.active_bridge_state_mut() {
@@ -296,6 +319,9 @@ impl IcaApp {
         }
     }
 
+    /// 处理一条加群/好友验证消息（同意或拒绝）。
+    ///
+    /// 成功后从待处理列表移除；失败保留并提示。
     pub fn handle_join_request(&mut self, request_type: String, flag: String, accept: bool) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
@@ -318,6 +344,7 @@ impl IcaApp {
         }
     }
 
+    /// 向当前会话追加待发送图片；编辑重发提交期间忽略。
     pub fn append_pending_images(
         &mut self,
         bridge_idx: usize,
@@ -336,6 +363,7 @@ impl IcaApp {
         entry.extend(images);
     }
 
+    /// 按下标移除一张待发送图片；越界下标忽略。
     pub fn remove_pending_image_at(&mut self, bridge_idx: usize, room_id: RoomId, index: usize) {
         let images = &mut self.bridge_states[bridge_idx]
             .conversation_mut(room_id)
@@ -345,6 +373,9 @@ impl IcaApp {
         }
     }
 
+    /// 打开文件对话框为当前会话挑选图片（可多选）。
+    ///
+    /// 单个文件读取失败不阻塞其他图片，错误汇总后一次性提示。
     pub fn pick_image_for_current_room(&mut self) {
         let Some(active_bridge_idx) = self.active_bridge_idx else {
             return;
@@ -380,6 +411,7 @@ impl IcaApp {
         }
     }
 
+    /// 打开文件对话框为当前会话挑选一个普通附件文件。
     pub fn pick_file_for_current_room(&mut self) {
         let Some(active_bridge_idx) = self.active_bridge_idx else {
             return;

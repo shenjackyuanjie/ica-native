@@ -1,3 +1,9 @@
+//! 输入区 @ 提及浮层：群成员搜索、键盘导航与选择回传。
+//!
+//! 浮层以独立 `Area` 绘制在输入框上方，位置与宽度随锚点和视口边界收拢；候选
+//! 来自当前会话已加载的群成员，首项固定为“全体成员”。浮层本身不修改状态，
+//! 只产出 `MentionPickerAction`（选中/刷新/关闭/回焦），由调用方应用意图。
+
 #[cfg(test)]
 #[path = "tests/mentions.rs"]
 mod tests;
@@ -5,17 +11,29 @@ mod tests;
 use super::input::{composer_keyboard_active, consume_composer_shortcut};
 use crate::app::IcaApp;
 
+/// 成员列表的最大像素高度，超出后在浮层内部滚动。
 const MENTION_RESULTS_MAX_HEIGHT: f32 = 260.0;
 
+/// 提及浮层在一帧内产生的全部意图，由调用方逐项应用。
 #[derive(Default)]
 pub struct MentionPickerAction {
+    /// 用户确认选中的成员：`(user_id, 展示名)`；`user_id` 为 1 表示全体成员。
     pub selected: Option<(i64, String)>,
+    /// 用户请求刷新群成员列表。
     pub refresh: bool,
+    /// 用户请求关闭浮层（Esc、关闭按钮或点击浮层外）。
     pub close: bool,
+    /// 关闭浮层后是否把焦点还给输入框。
     pub focus_composer: bool,
 }
 
 impl IcaApp {
+    /// 绘制 @ 提及浮层，返回本帧产生的全部意图。
+    ///
+    /// - `anchor_rect` 是输入框区域，浮层弹出在其上方，随视口边界收拢位置与宽度；
+    /// - `opened_this_frame` 为真时本帧不响应“点击浮层外关闭”，避免打开时的
+    ///   同一次点击立刻把浮层关掉；
+    /// - 键盘导航（↑/↓/Enter/Esc）复用输入框的焦点判定，IME  composing 期间不抢占按键。
     pub fn render_mention_picker_overlay(
         &mut self,
         ctx: &egui::Context,
@@ -127,6 +145,7 @@ impl IcaApp {
                     );
                 }
                 if !query.is_empty() {
+                    // 输入 "all" 的前缀时也要能筛出全体成员项。
                     entries.retain(|(user_id, name)| {
                         *user_id != 1
                             || name.to_lowercase().contains(&query)
@@ -239,6 +258,10 @@ impl IcaApp {
     }
 }
 
+/// 把群成员展示名清洗成可安全插入输入框的文本。
+///
+/// 剔除 Unicode 双向控制字符（防止用伪装方向字符仿冒他人）、折叠连续空白并
+/// 截断到 48 个字符；清洗后为空时退回“未命名成员”。
 fn safe_mention_text(text: &str) -> String {
     const MAX_CHARS: usize = 48;
 

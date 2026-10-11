@@ -1,3 +1,10 @@
+//! 合并转发的解析、预览与查看窗口。
+//!
+//! 覆盖三条链路：把消息里的 `code`（JSON 或 XML）解析出资源 id/文件名与预览
+//! 文本（`forward_reference`）；把选中的消息重建成合并转发节点
+//! （`fake_forward_node`，无 raw chain 时按文本/表情/图片降级）；以及独立
+//! viewport 的转发内容查看窗口（支持嵌套转发与图片查看）。
+
 #[cfg(test)]
 #[path = "tests/forward.rs"]
 mod tests;
@@ -8,14 +15,21 @@ use crate::ica::{IcaCommand, types::message::Message};
 use serde_json::{Value as JsonValue, json};
 
 #[derive(Debug, Clone)]
+/// 一条合并转发的引用信息：定位资源所需的 id、可选文件名与预览行。
 pub struct ForwardReference {
+    /// 合并转发的资源 id（Bridge 侧 `resid`）。
     pub res_id: String,
+    /// 资源文件名；嵌套转发定位可能需要。
     pub file_name: Option<String>,
+    /// 主 id 取不到时的备用资源 id。
     pub fallback_res_id: Option<String>,
+    /// 消息行内直接携带的转发内容，命中时无需再向 Bridge 请求。
     pub inline_messages: Option<Vec<Message>>,
+    /// 预览文本行（来源、标题等），最多展示前几条。
     pub preview: Vec<String>,
 }
 
+/// 从消息正文中提取 `[Marker: 值]` 形式标记里的值；空值或标记不闭合返回 `None`。
 fn marker_value(content: &str, marker: &str) -> Option<String> {
     let start = content.find(marker)? + marker.len();
     let end = content[start..].find(']')? + start;
@@ -23,6 +37,7 @@ fn marker_value(content: &str, marker: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+/// 把 `code` 字段规范为 JSON：字符串先尝试解析，其余原样返回；`null` 为 None。
 fn code_as_json(code: &JsonValue) -> Option<JsonValue> {
     match code {
         JsonValue::Null => None,
@@ -31,6 +46,7 @@ fn code_as_json(code: &JsonValue) -> Option<JsonValue> {
     }
 }
 
+/// 从 JSON 形态的 `code` 中取 `/meta/detail/resid`。
 fn code_res_id(code: &JsonValue) -> Option<String> {
     code_as_json(code)?
         .pointer("/meta/detail/resid")?
@@ -38,6 +54,7 @@ fn code_res_id(code: &JsonValue) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// 从 JSON 形态的 `code` 中取 `/meta/detail/uniseq` 作为文件名。
 fn code_file_name(code: &JsonValue) -> Option<String> {
     code_as_json(code)?
         .pointer("/meta/detail/uniseq")
@@ -46,6 +63,9 @@ fn code_file_name(code: &JsonValue) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// 从 XML 形态的 `code` 中找带 `m_resid`/`m_fileName` 属性的节点并取值。
+///
+/// 解析失败或找不到节点时返回 `(None, None)`。
 fn xml_forward_resource(code: &JsonValue) -> (Option<String>, Option<String>) {
     let Some(xml) = code
         .as_str()
@@ -74,6 +94,7 @@ fn xml_forward_resource(code: &JsonValue) -> (Option<String>, Option<String>) {
     )
 }
 
+/// 依次尝试 JSON 与 XML 两种形态提取转发资源 id 与文件名。
 fn forward_resource(code: &JsonValue) -> (Option<String>, Option<String>) {
     let res_id = code_res_id(code);
     let file_name = code_file_name(code);
@@ -83,6 +104,7 @@ fn forward_resource(code: &JsonValue) -> (Option<String>, Option<String>) {
     xml_forward_resource(code)
 }
 
+/// 向预览行末尾追加一行；忽略空行并与末行去重。
 fn push_preview_line(lines: &mut Vec<String>, value: &str) {
     let value = value.trim();
     if !value.is_empty() && lines.last().is_none_or(|line| line != value) {
@@ -90,6 +112,7 @@ fn push_preview_line(lines: &mut Vec<String>, value: &str) {
     }
 }
 
+/// 从 JSON 形态提取预览行：`source` 与 `news[].text`。
 fn json_forward_preview(code: &JsonValue) -> Vec<String> {
     let Some(value) = code_as_json(code) else {
         return Vec::new();
@@ -111,7 +134,11 @@ fn json_forward_preview(code: &JsonValue) -> Vec<String> {
     lines
 }
 
+/// 从 XML 形态提取预览行：收集所有 `<title>` 文本。
+///
+/// 直接解析失败时尝试包一层 `<item>` 再解析，兼容缺少根节点的片段。
 fn xml_forward_preview(xml: &str) -> Vec<String> {
+    /// 收集文档内所有 `<title>` 文本作为预览行。
     fn title_lines(document: &roxmltree::Document<'_>) -> Vec<String> {
         let mut lines = Vec::new();
         for title in document
@@ -134,6 +161,7 @@ fn xml_forward_preview(xml: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 汇总预览行：优先 JSON，取不到再按 XML 解析。
 fn forward_preview(code: &JsonValue) -> Vec<String> {
     let json_preview = json_forward_preview(code);
     if !json_preview.is_empty() {
@@ -142,6 +170,7 @@ fn forward_preview(code: &JsonValue) -> Vec<String> {
     code.as_str().map(xml_forward_preview).unwrap_or_default()
 }
 
+/// 渲染转发预览：最多展示 4 行，超出部分以省略号收尾。
 pub fn render_forward_preview(ui: &mut egui::Ui, reference: &ForwardReference) {
     const MAX_VISIBLE_LINES: usize = 4;
 
@@ -153,6 +182,7 @@ pub fn render_forward_preview(ui: &mut egui::Ui, reference: &ForwardReference) {
     }
 }
 
+/// 收集一批消息里的图片附件作为图片查看器的来源列表。
 fn forward_image_sources(messages: &[Message]) -> Vec<ImageSource> {
     messages
         .iter()
@@ -162,6 +192,7 @@ fn forward_image_sources(messages: &[Message]) -> Vec<ImageSource> {
         .collect()
 }
 
+/// 尝试把 `code` 里的数组直接解析为内联消息列表；非数组或全部解析失败为 None。
 fn inline_forward_messages(code: &JsonValue) -> Option<Vec<Message>> {
     let value = code_as_json(code)?;
     let JsonValue::Array(items) = value else {
@@ -174,6 +205,10 @@ fn inline_forward_messages(code: &JsonValue) -> Option<Vec<Message>> {
     (!messages.is_empty()).then_some(messages)
 }
 
+/// 从一条消息解析出合并转发引用；没有转发标记时返回 `None`。
+///
+/// `[Forward: res_id]` 标记直接定位资源；`[NestedForward: 文件名]` 为嵌套
+/// 转发，需要外层 `parent_res_id` 定位，并把 code 里的 res_id 作为备用。
 pub fn forward_reference(
     message: &Message,
     parent_res_id: Option<&str>,
@@ -208,6 +243,7 @@ pub fn forward_reference(
     })
 }
 
+/// 取消息的原始 raw chain（非空数组或带 `type` 的单对象），用于原样重建节点。
 fn raw_message_elements(message: &Message) -> Option<Vec<JsonValue>> {
     match message.raw_msg.as_deref()? {
         JsonValue::Array(values) if !values.is_empty() => Some(values.clone()),
@@ -218,6 +254,9 @@ fn raw_message_elements(message: &Message) -> Option<Vec<JsonValue>> {
     }
 }
 
+/// 把正文（含 `[Face: id]` 表情标记）拆成 text/face 元素序列。
+///
+/// 先做 @ 提及格式化；表情 id 解析失败时按原文本保留，不丢内容。
 fn push_text_and_faces(elements: &mut Vec<JsonValue>, content: &str) {
     let formatted = super::format_message_content(content);
     let mut remaining = formatted.as_ref();
@@ -245,6 +284,10 @@ fn push_text_and_faces(elements: &mut Vec<JsonValue>, content: &str) {
     }
 }
 
+/// 无 raw chain 时按文本/表情/引用/附件降级重建消息元素。
+///
+/// 图片用 URL、语音用 fid（并附文字提示可能无法合并转发）、其他附件只留
+/// 名称提示；全部为空时补一条 `[空消息]`，保证节点非空。
 fn fallback_message_elements(message: &Message) -> Vec<JsonValue> {
     let mut elements = Vec::new();
     if let Some(reply) = &message.reply {
@@ -291,6 +334,9 @@ fn fallback_message_elements(message: &Message) -> Vec<JsonValue> {
     elements
 }
 
+/// 把一条消息重建成合并转发的发送节点（合并转发协议结构）。
+///
+/// 优先原样使用 raw chain，缺失时走降级重建。
 pub fn fake_forward_node(message: &Message) -> JsonValue {
     json!({
         "user_id": message.sender_id,
@@ -305,6 +351,7 @@ pub fn fake_forward_node(message: &Message) -> JsonValue {
 }
 
 impl IcaApp {
+    /// 打开一个合并转发引用：有内联消息直接展示，否则向 Bridge 请求。
     pub fn open_forward_reference(
         &mut self,
         res_id: String,
@@ -326,6 +373,10 @@ impl IcaApp {
         self.request_forward_messages(bridge_idx, res_id, file_name, fallback_res_id);
     }
 
+    /// 向 Bridge 请求合并转发内容，并经 forward_viewer 记录请求状态。
+    ///
+    /// res_id 为空直接报错；命令发送失败时把同一 request 标记为失败，
+    /// 迟到响应不会串到其他请求。
     fn request_forward_messages(
         &mut self,
         bridge_idx: usize,
@@ -367,6 +418,9 @@ impl IcaApp {
         }
     }
 
+    /// 把当前选中的消息作为一条合并转发发到目标会话，返回是否提交成功。
+    ///
+    /// 目标为私聊时置 `direct_message`；群聊带上来源群号（取正）供 Bridge 标注。
     pub fn send_selected_messages_as_merged_forward(&mut self, target_room_id: i64) -> bool {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return false;
@@ -406,6 +460,11 @@ impl IcaApp {
         true
     }
 
+    /// 渲染"合并转发消息"独立查看窗口。
+    ///
+    /// 每帧先在主窗口消费查看器的待办动作（重载/图片/打开内层），再以
+    /// deferred viewport 绘制内容；嵌套转发点击后转为新的 pending_action，
+    /// 由主窗口接力打开，bridge 响应也经主窗口唤醒刷新。
     pub fn render_forward_viewer_window(&mut self, ctx: &egui::Context) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;

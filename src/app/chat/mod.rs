@@ -1,3 +1,17 @@
+//! 聊天界面模块。
+//!
+//! 按职责聚合聊天区的子模块：`actions`（发送与消息操作）、`central_panel`
+//! （中央消息区）、`clipboard`（剪贴板）、`composer`（输入区）、`forward`
+//! （转发多选）、`group_announcements`/`group_files`/`group_members`（群公告、
+//! 群文件与群成员）、`image_viewer`（图片查看器）、`message_card`（消息卡片）、
+//! `message_ops`/`message_search`（消息操作与消息内搜索）、`notices`（顶部
+//! 通知栏）、`room_ops`（房间操作）与 `search`（会话搜索）。
+//!
+//! 本文件同时提供跨子模块共用的无状态工具：消息正文的 @ 提及解码与格式化、
+//! GIF 纹理探测与帧选择、输入区文本与光标编辑，以及虚拟消息列表的行高估算
+//! 与可见范围计算。渲染相关常量（overscan、气泡宽度等）与 `message_card`
+//! 的实际渲染保持同一套数值，改动时需两边同步。
+
 mod actions;
 mod central_panel;
 mod clipboard;
@@ -21,10 +35,17 @@ use std::borrow::Cow;
 use std::ops::Range;
 use std::time::Duration;
 
+/// 把 egui 的字符下标转换为普通 `usize`，便于与 `String` 的字符计数比较。
 fn char_index_to_usize(index: egui::text::CharIndex) -> usize {
     index.into()
 }
 
+/// 把消息正文里的 @ 提及标记替换为可读昵称，供消息卡片与输入框共用。
+///
+/// 同时兼容旧版 `<IcalinguaAt qq=..>`（URL 编码昵称）与新版 `<IcaAt qq=..>`
+/// （XML 实体编码昵称）：每次取剩余文本中位置最靠前的开放标签，解码其中的
+/// 昵称后拼接结果；标签不完整（缺少 `>` 或闭合标签）时按原样输出剩余文本，
+/// 不猜测、不补全。不含任何提及标记时返回借用切片，避免分配。
 pub fn format_message_content(content: &str) -> Cow<'_, str> {
     if !content.contains("<IcalinguaAt qq=") && !content.contains("<IcaAt qq=") {
         return Cow::Borrowed(content);
@@ -75,6 +96,10 @@ pub fn format_message_content(content: &str) -> Cow<'_, str> {
     Cow::Owned(result)
 }
 
+/// 判断附件类型是否为图片。
+///
+/// 兼容两种写法：Bridge 可能给出裸 `image` 或完整 MIME `image/...`；
+/// 比较忽略大小写。
 pub fn is_image_file_type(file_type: &str) -> bool {
     file_type.eq_ignore_ascii_case("image")
         || file_type
@@ -128,12 +153,19 @@ pub fn decode_xml_entities(value: &str) -> Cow<'_, str> {
     Cow::Owned(decoded)
 }
 
+/// 判断附件类型是否为视频。
+///
+/// 只识别 `video/...` MIME，不像图片那样兼容裸 `video`。
 pub fn is_video_file_type(file_type: &str) -> bool {
     file_type
         .get(..6)
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("video/"))
 }
 
+/// 按 URL 路径（忽略 query 与 fragment）猜测是否为 GIF。
+///
+/// 兼容 `.gif` 后缀与 `.gif/` 形式的路径段；仅用于静态加载失败后的格式
+/// 重探测，不作为展示依据。
 pub fn image_url_looks_like_gif(url: &str) -> bool {
     let url = url.to_ascii_lowercase();
     url.split(['?', '#'])
@@ -141,6 +173,10 @@ pub fn image_url_looks_like_gif(url: &str) -> bool {
         .is_some_and(|path| path.ends_with(".gif") || path.contains(".gif/"))
 }
 
+/// 判断静态图片加载失败后是否值得再按 GIF 探测一次。
+///
+/// 只有"没有匹配的加载器"与"格式不支持"两类错误说明格式判断可能出错；
+/// 网络类错误重试同样没有结果，直接放过。
 pub fn should_probe_gif_after_static_error(err: &egui::load::LoadError) -> bool {
     matches!(
         err,
@@ -149,6 +185,12 @@ pub fn should_probe_gif_after_static_error(err: &egui::load::LoadError) -> bool 
     )
 }
 
+/// 尝试把 `url` 作为 GIF 加载，返回纹理加载结果；不是 GIF 时返回 `None`，
+/// 让调用方回退到普通静态图片加载。
+///
+/// 优先复用 egui 已记录的帧时长元数据：命中时直接加载当前帧 URI，避免重复
+/// 下载源字节；同 URI 被替换为静态图导致格式探测失败时，先清理过期元数据
+/// 再重试。字节就绪后按 MIME 与 GIF 魔数双重判定，任一通过才交给帧加载。
 pub fn try_load_gif_texture(
     ctx: &egui::Context,
     url: &str,
@@ -194,6 +236,9 @@ pub fn try_load_gif_texture(
     }
 }
 
+/// 计算当前应显示的帧 URI：按帧时长元数据推算帧序，拼成 `url#序号`。
+///
+/// 没有元数据时返回第 0 帧对应的 URI。
 fn gif_frame_uri(ctx: &egui::Context, url: &str) -> String {
     let frame_index = ctx
         .data(|data| data.get_temp::<egui::FrameDurations>(egui::Id::new(url)))
@@ -202,6 +247,9 @@ fn gif_frame_uri(ctx: &egui::Context, url: &str) -> String {
     format!("{url}#{frame_index}")
 }
 
+/// 按当前时间在帧时长序列中的位置计算帧序，并请求在下一帧前重绘。
+///
+/// 总时长为 0 时退化为第 0 帧，避免除零与空转。
 fn gif_frame_index(ctx: &egui::Context, durations: &egui::FrameDurations) -> usize {
     let now = ctx.input(|input| Duration::from_secs_f64(input.time));
     let total: Duration = durations.all().sum();
@@ -220,6 +268,10 @@ fn gif_frame_index(ctx: &egui::Context, durations: &egui::FrameDurations) -> usi
     0
 }
 
+/// 按字符区间替换文本内容，返回替换后光标应处的字符下标。
+///
+/// 区间按字符计数钳制到合法范围，内部换算为字节区间后替换；替换文本可能
+/// 改变总字符数，返回值供调用方更新光标。
 pub fn replace_text_char_range(text: &mut String, range: Range<usize>, replacement: &str) -> usize {
     let char_count = text.chars().count();
     let start = range.start.min(char_count);
@@ -236,6 +288,9 @@ pub fn replace_text_char_range(text: &mut String, range: Range<usize>, replaceme
     start + replacement.chars().count()
 }
 
+/// 在指定输入框保存的光标/选区处插入文本，并写回更新后的光标状态。
+///
+/// 读不到输入框状态时退化为追加到正文末尾；有选区时先替换整个选区。
 pub fn insert_text_at_saved_cursor(
     ctx: &egui::Context,
     id: egui::Id,
@@ -265,6 +320,9 @@ pub fn insert_text_at_saved_cursor(
     }
 }
 
+/// 判断指定输入框的光标前一个字符是否为 `expected`。
+///
+/// 读不到输入框状态或光标在开头时返回 `false`；用于 @ 触发等场景判断。
 pub fn saved_cursor_preceded_by(
     ctx: &egui::Context,
     id: egui::Id,
@@ -280,6 +338,10 @@ pub fn saved_cursor_preceded_by(
     cursor > 0 && text.chars().nth(cursor - 1) == Some(expected)
 }
 
+/// 在保存的光标处插入 @ 提及文本。
+///
+/// `replace_at_trigger` 为真且光标紧跟在 `@` 之后时，把触发字符一并替换，
+/// 避免提及选择后残留一个孤立的 `@`。
 pub fn insert_mention_at_saved_cursor(
     ctx: &egui::Context,
     id: egui::Id,
@@ -321,6 +383,10 @@ pub fn insert_mention_at_saved_cursor(
     }
 }
 
+/// 估算输入框文本占用的行数，结果钳制在 1 到 6 行。
+///
+/// 非 ASCII 字符按 2 列权重计算，按 `input_width` 折算每行字符数；结果只
+/// 用于输入框高度预估，不与实际渲染逐像素对齐。
 pub fn estimate_composer_rows(text: &str, input_width: f32) -> usize {
     const MIN_ROWS: usize = 1;
     const MAX_ROWS: usize = 6;
@@ -342,6 +408,7 @@ pub fn estimate_composer_rows(text: &str, input_width: f32) -> usize {
         .clamp(MIN_ROWS, MAX_ROWS)
 }
 
+/// 把待发送附件的字节数格式化为 KB/MB 文本，供输入区附件列表展示。
 pub fn format_pending_size(bytes: usize) -> String {
     let size = bytes as f64;
     if size >= 1024.0 * 1024.0 {
@@ -351,14 +418,21 @@ pub fn format_pending_size(bytes: usize) -> String {
     }
 }
 
+/// 消息列表可视范围计算时在视口上下各额外保留的像素数。
+///
+/// 预留滚动 overscan，减少快速滚动时出现空白与抖动。
 const MESSAGE_LIST_OVERSCAN: f32 = 720.0;
 
+/// 计算文本的加权长度：ASCII 计 1，其余字符计 2。
+///
+/// 与 `estimate_composer_rows` 使用同一套权重，保证行高与行数估算一致。
 fn weighted_text_len(text: &str) -> usize {
     text.chars()
         .map(|ch| if ch.is_ascii() { 1 } else { 2 })
         .sum()
 }
 
+/// 按宽度与行高估算多行文本的渲染高度；纯空白文本返回 0。
 fn estimate_text_height(text: &str, width: f32, line_height: f32) -> f32 {
     if text.trim().is_empty() {
         return 0.0;
@@ -376,13 +450,23 @@ fn estimate_text_height(text: &str, width: f32, line_height: f32) -> f32 {
 /// 估算消息行高度所需的布局参数。
 #[derive(Debug, Clone, Copy)]
 pub struct MessageRowEstimateOptions {
+    /// 是否处于纯文本模式（不用气泡背景，宽度折算不同）。
     pub pure_text_mode: bool,
+    /// 是否显示消息头像（占用固定宽度）。
     pub show_message_avatar: bool,
+    /// 转发多选模式是否激活（左侧预留勾选框宽度）。
     pub forward_mode_active: bool,
+    /// 是否显示发送者名称。
     pub show_sender_name: bool,
+    /// 上方是否有日期/分组分隔线（占一行高度）。
     pub show_separator_before: bool,
 }
 
+/// 估算一条消息在虚拟列表中占据的行高（像素）。
+///
+/// 与 `message_card` 的实际渲染保持同一套常量：系统消息、已删除/隐藏消息、
+/// 引用、正文、图片附件各有固定或按文本折算的增量，气泡宽度按模式钳制。
+/// 估算值与实测值的偏差由虚拟列表的冷行校准补偿，这里只求稳定可比。
 pub fn estimate_message_row_height(
     message: &crate::ica::types::message::Message,
     row_width: f32,
@@ -472,6 +556,9 @@ pub fn estimate_message_row_height(
     height.max(56.0)
 }
 
+/// 按视口范围（含上下 overscan）计算消息列表的可见行区间 `[start, end)`。
+///
+/// 行数据已按 `top` 排序，用两次二分查找定位边界；`end` 钳制到行数。
 pub fn message_visible_range(
     rows: &[MessageRowLayout],
     viewport_top: f32,
