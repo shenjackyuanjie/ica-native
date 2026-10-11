@@ -8,6 +8,11 @@
 //! 1. **状态统一**：pending / ready / error / 统计值 全部由同一个状态机维护；
 //! 2. **generation 防回写**：`forget/forget_all` 后，旧后台任务的结果不会再“复活”；
 //! 3. **错误缓存有界**：不会再因为坏 URL / 过期 URL 无限堆积失败条目。
+//!
+//! 该模块位于 crate 根（`crate::image_loader`），由 main 安装到 `egui::Context`，
+//! 与多个子模块协作：`decode` 负责格式判定与解码、`state` 是内存态状态机、
+//! `disk` 是磁盘缓存、`worker` 是固定线程池、`gif`/`texture` 分别处理动图与 GPU 纹理、
+//! `raw` 保留原始字节、`nt_image` 处理 QQ NT 图片的 rkey 刷新恢复。
 
 mod decode;
 mod disk;
@@ -37,14 +42,20 @@ use tracing::{debug, info, warn};
 use util::{decode_worker_count, format_bytes};
 use worker::{DecodeWorkerPool, ScheduleError};
 
+/// 图片缓存的配置：磁盘目录与内存/磁盘各自的字节上限。
 #[derive(Debug, Clone)]
 pub struct ImageCacheSettings {
+    /// 磁盘缓存根目录。
     pub directory: PathBuf,
+    /// 内存中已解码像素的字节上限；`0` 表示不限制。
     pub memory_max_bytes: u64,
+    /// 磁盘缓存的字节上限；`0` 表示不限制。
     pub disk_max_bytes: u64,
 }
 
+/// `ImageCacheSettings` 的构造助手。
 impl ImageCacheSettings {
+    /// 从应用配置派生缓存设置：目录取图片缓存路径，上限分别取内存/磁盘阈值。
     pub fn from_config(config: &crate::config::IcaCfg) -> Self {
         Self {
             directory: config.get_image_cache_path(),
@@ -55,14 +66,22 @@ impl ImageCacheSettings {
 }
 
 /// 带内存统计的图片加载器。
+///
+/// 实现 egui 的 `ImageLoader`：把静态位图的解码搬到后台线程池，并用 `state`
+/// 状态机统一维护 pending/ready/error 与字节统计；磁盘缓存与原始字节缓存作为可选优化。
 #[derive(Clone)]
 pub struct TrackingImageLoader {
+    /// 内存态状态机（唯一真相来源）。
     state: Arc<Mutex<LoaderState>>,
+    /// 磁盘缓存；创建失败时为 `None`，表示禁用磁盘缓存。
     disk_cache: Option<Arc<DiskCache>>,
+    /// 固定大小的解码线程池。
     workers: Arc<DecodeWorkerPool>,
+    /// 原始编码字节缓存，供上层取回未解码内容。
     raw_cache: raw::RawImageCache,
 }
 
+/// `TrackingImageLoader` 的构造与解码调度。
 impl TrackingImageLoader {
     /// 图片加载器在 `egui` 中的唯一 ID。
     pub const ID: &'static str = egui::generate_loader_id!(TrackingImageLoader);
@@ -224,11 +243,18 @@ impl TrackingImageLoader {
     }
 }
 
+/// 为 `TrackingImageLoader` 实现 egui `ImageLoader`。
 impl ImageLoader for TrackingImageLoader {
+    /// 返回本 loader 在 egui 中的唯一 ID。
     fn id(&self) -> &str {
         Self::ID
     }
 
+    /// egui 请求加载一张图片时的入口。
+    ///
+    /// 依次尝试：内存命中直接返回、动图 URI 让给动图 loader、磁盘缓存命中走解码、
+    /// 否则交给底层 bytes loader 取字节再调度解码。任何“不处理”的情况都返回
+    /// `NotSupported` 让其它 loader 接手。
     fn load(&self, ctx: &Context, uri: &str, _: SizeHint) -> ImageLoadResult {
         // 帧 URI 必须交给动画加载器；归一化后接管静态图会掩盖 GIF 格式变化，
         // 使上层继续按过期帧时长重复解码/上传同一张静态图。
@@ -315,6 +341,7 @@ impl ImageLoader for TrackingImageLoader {
         }
     }
 
+    /// 忘记某 URI 的内存态缓存；磁盘缓存保留作跨会话优化。
     fn forget(&self, uri: &str) {
         let uri = normalize_uri(uri);
         // 这里只清理内存态；磁盘缓存保留为跨会话优化。
@@ -322,22 +349,28 @@ impl ImageLoader for TrackingImageLoader {
         debug!("移除图片缓存: uri={}", uri);
     }
 
+    /// 清空内存态缓存；同样不动磁盘缓存。
     fn forget_all(&self) {
         // 同上：forget_all 只清内存态，不主动清空磁盘缓存。
         self.state.lock().forget_all();
         debug!("图片缓存已清空");
     }
 
+    /// 返回当前内存态缓存的近似字节数（已解码像素 + 错误字符串）。
     fn byte_size(&self) -> usize {
         self.state.lock().byte_size()
     }
 
+    /// 是否还有 pending（等待字节或解码中）的请求。
     fn has_pending(&self) -> bool {
         self.state.lock().has_pending()
     }
 }
 
 /// 在 `egui::Context` 上安装该图片加载器（若尚未安装）。
+///
+/// 同时装配协作的 `raw`（原始字节）、`gif`（动图）与 `texture`（GPU 纹理）loader，
+/// 各司其职、互不重叠。
 pub fn install_tracking_image_loader(ctx: &Context, settings: ImageCacheSettings) {
     if ctx.is_loader_installed(TrackingImageLoader::ID) {
         return;

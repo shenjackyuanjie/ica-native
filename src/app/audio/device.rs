@@ -1,4 +1,15 @@
 //! 音频设备只由一个惰性工作线程拥有，GUI 不等待麦克风、下载或解码。
+//!
+//! 该模块位于 `crate::app::audio` 之下，是音频子系统真正触达硬件/网络的底层：
+//! - 用 `cpal` 打开默认麦克风采集采样，用 `rodio` 打开默认输出设备播放；
+//! - 语音 URL 的下载在独立的 tokio 当前线程任务里进行，解码与播放都在本工作线程；
+//! - 所有与 GUI 的交互都通过 `WorkerCommand` 通道收、通过共享 `AudioState` 与
+//!   `ctx.request_repaint()` 反馈，GUI 线程从不阻塞等待设备或网络。
+//!
+//! 设计要点：
+//! - 线程惰性创建、收到 `Shutdown` 或通道断开即退出，设备随线程析构而释放；
+//! - 下载/输出失败通过 `generation` 编号回传，保证只处理“仍然是当前这一代”的结果；
+//! - 采样/解码/下载都设有上限，防止坏数据或超长音频把内存撑爆。
 
 #[cfg(test)]
 #[path = "tests/device.rs"]
@@ -20,39 +31,70 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// 语音下载的字节上限（16 MiB），超出即拒绝，避免异常响应撑爆内存。
 const MAX_DOWNLOAD_BYTES: usize = 16 * 1024 * 1024;
+/// 解码后采样数上限（与下载上限同数量级），用于约束播放前的峰值内存。
 const MAX_DECODED_SAMPLES: usize = 16 * 1024 * 1024;
+/// 允许播放的最长秒数（10 分钟），超出即拒绝解码。
 const MAX_PLAY_SECONDS: usize = 600;
 
+/// 播放的音频来源：内存中的音频字节，或需要下载的远端 URL。
 pub enum AudioSource {
+    /// 已在内存中的音频字节（如刚录制的预览）。
     Memory(Arc<[u8]>),
+    /// 需要先下载的远端地址。
     Remote(String),
 }
 
+/// GUI 线程发给音频工作线程的命令，以及工作线程内部回传的完成/失败通知。
 pub enum WorkerCommand {
+    /// 开始录音，参数为草稿 ID。
     StartRecording(u64),
+    /// 停止录音并生成预览，参数为草稿 ID。
     StopRecording(u64),
+    /// 取消录音，参数为草稿 ID。
     CancelRecording(u64),
+    /// 播放指定来源的音频。
     Play {
+        /// 播放键，用于把进度匹配回 UI。
         key: PlaybackKey,
+        /// 音频来源。
         source: AudioSource,
     },
+    /// 跳转到指定播放位置。
     Seek {
+        /// 目标播放键。
         key: PlaybackKey,
+        /// 目标位置。
         position: Duration,
     },
+    /// 下载任务完成回传（由下载线程发回本工作线程）。
     Downloaded {
+        /// 发起下载时的 generation，用于丢弃过期结果。
         generation: u64,
+        /// 对应播放键。
         key: PlaybackKey,
+        /// 下载结果：音频字节或错误。
         result: Result<Arc<[u8]>, String>,
     },
+    /// 输出设备报错回传（如设备被拔出）。
     OutputFailed {
+        /// 对应 generation。
         generation: u64,
+        /// 错误描述。
         message: String,
     },
+    /// 请求工作线程退出。
     Shutdown,
 }
 
+/// 启动音频工作线程并返回其命令发送端。
+///
+/// - 参数 `state`：与 GUI 共享的音频状态；
+/// - 参数 `ctx`：egui 上下文，用于在处理完命令后请求重绘；
+/// - 返回：命令发送端；线程创建失败返回错误字符串。
+///
+/// 线程以 50ms 超时轮询命令，超时则执行一次 `tick` 推进录音/播放状态。
 pub fn spawn(
     state: Arc<Mutex<AudioState>>,
     ctx: egui::Context,
@@ -87,38 +129,61 @@ pub fn spawn(
     Ok(sender)
 }
 
+/// 采集回调写入的共享数据：单声道采样与最近一次设备错误。
 #[derive(Default)]
 struct CaptureData {
+    /// 归一化到 `[-1, 1]` 的单声道采样。
     samples: Vec<f32>,
+    /// 采集过程中的设备错误（若有）。
     error: Option<String>,
 }
 
+/// 一次进行中的麦克风采集。
 struct Capture {
+    /// 对应草稿 ID。
     id: u64,
+    /// 与采集回调共享的采样缓冲。
     data: Arc<Mutex<CaptureData>>,
+    /// cpal 输入流；drop 时停止采集。
     stream: cpal::Stream,
+    /// 麦克风采样率。
     sample_rate: u32,
+    /// 开始采集的时刻，用于超时与最长时长判断。
     started: Instant,
 }
 
+/// 一次进行中的播放。
 struct Player {
+    /// 对应播放键。
     key: PlaybackKey,
+    /// rodio 播放 sink。
     // Sink 必须比 OutputStream 先释放。
     sink: rodio::Player,
+    /// 输出流；字段以下划线保留，确保它在 sink 之后才析构。
     _stream: rodio::MixerDeviceSink,
+    /// 音频总时长。
     duration: Duration,
 }
 
+/// 音频工作线程主体：串行处理命令并 tick 推进状态。
 struct AudioWorker {
+    /// 与 GUI 共享的音频状态。
     state: Arc<Mutex<AudioState>>,
+    /// egui 上下文，用于请求重绘。
     ctx: egui::Context,
+    /// 命令通道发送端，用于回传下载/输出结果。
     tx: mpsc::Sender<WorkerCommand>,
+    /// 当前采集（若有）。
     capture: Option<Capture>,
+    /// 当前播放（若有）。
     player: Option<Player>,
+    /// 代际编号，自增以使旧的下载/输出回调结果失效。
     generation: Arc<AtomicU64>,
 }
 
+/// `AudioWorker` 的固有实现：命令处理、采集/播放控制与每 tick 状态推进。
 impl AudioWorker {
+    /// 处理一条命令，并在结束时请求一次重绘。
     fn handle(&mut self, command: WorkerCommand) {
         match command {
             WorkerCommand::StartRecording(id) => {
@@ -208,12 +273,17 @@ impl AudioWorker {
         self.ctx.request_repaint();
     }
 
+    /// 停止当前播放：自增 generation 使旧的下载/输出回调失效，并清空播放态。
     fn stop_playback(&mut self) {
         self.generation.fetch_add(1, Ordering::Relaxed);
         self.player = None;
         lock(&self.state).playback = None;
     }
 
+    /// 播放/暂停/重试指定音频。
+    ///
+    /// 同一键再次点击在播放与暂停间切换；新来源则进入 `Loading`，
+    /// 内存来源直接解码播放，远端来源另起下载线程。
     fn play(&mut self, key: PlaybackKey, source: AudioSource) {
         if self.capture.is_some()
             || lock(&self.state).draft.as_ref().is_some_and(|draft| {
@@ -283,6 +353,7 @@ impl AudioWorker {
         }
     }
 
+    /// 解码音频字节并打开输出设备开始播放；失败则把播放标记为 `Failed`。
     fn start_player(&mut self, key: PlaybackKey, bytes: Arc<[u8]>, generation: u64) {
         let result = (|| {
             let source = decode(bytes)?;
@@ -323,6 +394,7 @@ impl AudioWorker {
         self.ctx.request_repaint();
     }
 
+    /// 把匹配的播放视图标记为失败并写入错误信息。
     fn fail_playback(&self, key: &PlaybackKey, error: String) {
         if let Some(view) = lock(&self.state).playback.as_mut()
             && &view.key == key
@@ -332,6 +404,7 @@ impl AudioWorker {
         }
     }
 
+    /// 录音失败：丢弃对应草稿并把错误作为一次性通知展示。
     fn fail_recording(&self, id: u64, error: String) {
         let mut state = lock(&self.state);
         if state.draft.as_ref().is_some_and(|draft| draft.id == id)
@@ -341,6 +414,7 @@ impl AudioWorker {
         }
     }
 
+    /// 结束采集：丢弃输入流，把采样编码为 WAV 写入草稿并进入 `Ready`。
     fn finish_capture(&mut self) {
         let Some(capture) = self.capture.take() else {
             return;
@@ -368,6 +442,7 @@ impl AudioWorker {
         self.ctx.request_repaint();
     }
 
+    /// 每个轮询周期推进一次状态：更新录音时长/超时收尾，刷新播放进度。
     fn tick(&mut self) {
         if let Some(capture) = &self.capture {
             let (length, error) = {
@@ -385,6 +460,7 @@ impl AudioWorker {
                 self.capture = None;
                 self.fail_recording(id, error);
             } else if length == 0 && capture.started.elapsed() >= Duration::from_secs(5) {
+                // 打开成功但 5 秒内一个采样都没有，多半是权限/设备被占用，直接报错收尾。
                 let id = capture.id;
                 self.capture = None;
                 self.fail_recording(
@@ -422,6 +498,9 @@ impl AudioWorker {
     }
 }
 
+/// 打开默认麦克风并建立输入流，返回一个 `Capture`。
+///
+/// 依据设备的采样格式选择对应的泛型输入流；采样率/声道数不在支持范围时直接报错。
 fn start_capture(id: u64) -> Result<Capture, String> {
     let device = cpal::default_host()
         .default_input_device()
@@ -462,6 +541,7 @@ fn start_capture(id: u64) -> Result<Capture, String> {
     })
 }
 
+/// 为某种采样类型 `T` 建立 cpal 输入流：回调里把多声道混成单声道追加进共享缓冲。
 fn input_stream<T>(
     device: &cpal::Device,
     config: cpal::StreamConfig,
@@ -487,6 +567,7 @@ where
     )
 }
 
+/// 把一帧多声道采样平均成单声道并追加到输出，同时做有限值/幅值裁剪与长度上限保护。
 fn append_mono<T>(input: &[T], channels: usize, max_samples: usize, output: &mut Vec<f32>)
 where
     T: cpal::Sample,
@@ -534,6 +615,7 @@ fn decode(bytes: Arc<[u8]>) -> Result<rodio::buffer::SamplesBuffer, String> {
     Ok(rodio::buffer::SamplesBuffer::new(channels, rate, samples))
 }
 
+/// 下载远端语音字节，并在 `generation` 变化（播放被切换/停止）时尽快取消。
 async fn download(url: &str, generation: &AtomicU64, expected: u64) -> Result<Arc<[u8]>, String> {
     // 不使用账号 token，不访问本地路径；错误中不得暴露远程 URL 的认证查询参数。
     let parsed = reqwest::Url::parse(url).map_err(|_| "语音地址无效".to_string())?;

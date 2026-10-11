@@ -1,3 +1,9 @@
+//! tracking 图片加载器的内存态状态机。
+//!
+//! 位于 `crate::image_loader` 之下，是 pending / ready / error 与字节统计的唯一真相来源。
+//! 用“代际编号（generation）”防止 `forget` / 重试后旧任务结果回写；ready 按字节软限制
+//! 做 LRU 淘汰并保留活跃宽限，error 用有界 LRU 避免坏 URL 无限堆积。
+
 #[cfg(test)]
 #[path = "tests/state.rs"]
 mod tests;
@@ -21,6 +27,7 @@ const MAX_ERROR_ENTRIES: usize = 128;
 const ACTIVE_IMAGE_GRACE: Duration = Duration::from_millis(750);
 
 pub enum PrepareLoad {
+    /// 内存已命中，直接可用的已解码图片。
     Ready(Arc<ColorImage>),
     /// 仍在等待底层 `BytesLoader` 返回结果。
     ///
@@ -32,29 +39,43 @@ pub enum PrepareLoad {
     Decoding {
         size: Option<Vec2>,
     },
+    /// 已缓存的加载错误（含用户可读信息）。
     Error(Arc<str>),
 }
 
+/// pending 条目的两个阶段：等待底层字节 / 后台解码中。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingPhase {
+    /// 正在等待底层 bytes loader 返回字节。
     WaitingBytes,
+    /// 字节已就绪，后台解码任务已提交。
     Decoding,
 }
 
+/// 一个 pending 请求的代际、尺寸提示与当前阶段。
 #[derive(Debug, Clone, Copy)]
 struct PendingEntry {
+    /// 代际编号，用于丢弃过期结果。
     generation: u64,
+    /// 尺寸提示（若有），用于占位。
     size: Option<Vec2>,
+    /// 当前阶段。
     phase: PendingPhase,
 }
 
+/// 一个已就绪的缓存图片及其记账信息。
 struct ReadyEntry {
+    /// 已解码图片。
     image: Arc<ColorImage>,
+    /// 该图片占用的像素字节。
     byte_size: u64,
+    /// 最近一次被使用的时间，用于 LRU 与活跃宽限。
     last_used: Instant,
 }
 
+/// 一个缓存的加载错误。
 struct ErrorEntry {
+    /// 用户可读的错误信息。
     message: Arc<str>,
 }
 
@@ -69,17 +90,26 @@ struct ErrorEntry {
 /// - `network_pending` 永久残留；
 /// - 统计值和 map 实际内容漂移。
 pub struct LoaderState {
+    /// 已就绪图片的字节软上限。
     max_ready_bytes: u64,
+    /// 下一个代际编号。
     next_generation: u64,
+    /// 当前 ready 图片占用的总字节。
     ready_bytes: u64,
     // 和 ready 图片一样统一按 u64 记账，避免混用不同整数宽度。
+    /// 当前 error 字符串占用的总字节。
     error_bytes: u64,
+    /// 已就绪图片的 LRU（不限条目数，仅按字节软限制淘汰）。
     ready: LruCache<String, ReadyEntry>,
+    /// 有界 LRU 的加载错误。
     errors: LruCache<String, ErrorEntry>,
+    /// 进行中的请求（等待字节或解码中）。
     pending: HashMap<String, PendingEntry>,
 }
 
+/// `LoaderState` 的状态机转移、缓存与淘汰。
 impl LoaderState {
+    /// 用给定的 ready 字节上限创建状态；error 用有界 LRU，ready 不限条目数。
     pub fn new(max_ready_bytes: u64) -> Self {
         let error_capacity =
             NonZeroUsize::new(MAX_ERROR_ENTRIES).expect("MAX_ERROR_ENTRIES 必须大于零");
@@ -133,6 +163,7 @@ impl LoaderState {
         PrepareLoad::WaitingBytes { generation }
     }
 
+    /// 在等待字节阶段更新某 pending 的尺寸提示；代际不匹配或已进入解码阶段则忽略。
     pub fn update_waiting_size(&mut self, uri: &str, generation: u64, size: Option<Vec2>) {
         let Some(entry) = self.pending.get_mut(uri) else {
             return;
@@ -246,12 +277,14 @@ impl LoaderState {
         true
     }
 
+    /// 从 pending / ready / error 中移除某 URI 的全部内存态。
     pub fn forget(&mut self, uri: &str) {
         self.pending.remove(uri);
         self.remove_ready(uri);
         self.remove_error(uri);
     }
 
+    /// 清空所有内存态并把字节记账归零。
     pub fn forget_all(&mut self) {
         self.pending.clear();
         self.ready.clear();
@@ -269,10 +302,12 @@ impl LoaderState {
         total.min(usize::MAX as u64) as usize
     }
 
+    /// 返回当前 ready 图片占用的总字节。
     pub fn ready_byte_size(&self) -> u64 {
         self.ready_bytes
     }
 
+    /// 是否还有 pending 请求。
     pub fn has_pending(&self) -> bool {
         !self.pending.is_empty()
     }
@@ -284,6 +319,7 @@ impl LoaderState {
             .is_some_and(|entry| entry.generation == generation)
     }
 
+    /// 分配一个非零代际编号（跳过 0，绕回时从 1 重新开始）。
     fn allocate_generation(&mut self) -> u64 {
         let generation = self.next_generation;
         self.next_generation = self.next_generation.wrapping_add(1);
@@ -293,18 +329,21 @@ impl LoaderState {
         generation
     }
 
+    /// 从 ready 中移除某 URI 并扣减字节记账。
     fn remove_ready(&mut self, uri: &str) {
         if let Some(entry) = self.ready.pop(uri) {
             self.ready_bytes = self.ready_bytes.saturating_sub(entry.byte_size);
         }
     }
 
+    /// 从 error 中移除某 URI 并扣减字节记账。
     fn remove_error(&mut self, uri: &str) {
         if let Some(entry) = self.errors.pop(uri) {
             self.error_bytes = self.error_bytes.saturating_sub(entry.message.len() as u64);
         }
     }
 
+    /// 超过 ready 字节上限时从 LRU 头部淘汰；仍在活跃宽限内的条目暂时保留。
     fn evict_ready_if_needed(&mut self, now: Instant) {
         while self.ready.len() > 1 && self.ready_limit_exceeded() {
             let Some((uri, entry)) = self.ready.pop_lru() else {
@@ -328,6 +367,7 @@ impl LoaderState {
         }
     }
 
+    /// 是否已超过 ready 字节预算；注意 `max_ready_bytes == 0` 时恒视为超限。
     fn ready_limit_exceeded(&self) -> bool {
         self.max_ready_bytes == 0 || self.ready_bytes > self.max_ready_bytes
     }

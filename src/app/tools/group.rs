@@ -1,19 +1,35 @@
+//! 群 / 成员管理工具面板。
+//!
+//! 位于 `crate::app::tools` 之下，聚合“群资料、成员列表、禁言/解禁、踢出、
+//! 群名片/备注、好友备注”等一类群与成员相关的 bridge Socket API。
+//! 禁言是敏感操作，不直接下发，而是转交群成员面板的确认流程
+//! （`GroupBanConfirmation`）后再执行。
+
 use crate::app::IcaApp;
 use crate::app::state::GroupBanConfirmation;
 use crate::ica::GROUP_BAN_MAX_DURATION;
 use serde_json::{Value as JsonValue, json};
 
+/// 群 / 成员管理面板的输入状态。
 #[derive(Debug, Clone)]
 pub struct GroupToolsState {
+    /// 群号（gin）。
     pub group_id: String,
+    /// 成员 QQ，用于成员资料/禁言/解禁/踢出。
     pub member_id: String,
+    /// 禁言秒数，默认 `"600"`；必须在 `1..=GROUP_BAN_MAX_DURATION` 之间。
     pub ban_seconds: String,
+    /// 我在该群的群名片，`setGroupNick` 用。
     pub group_nick: String,
+    /// 群备注，`setGroupRemark` 用。
     pub group_remark: String,
+    /// 好友 QQ，`setFriendRemark` 用。
     pub friend_id: String,
+    /// 好友备注名。
     pub friend_remark: String,
 }
 
+/// 默认禁言秒数预填 `"600"`（10 分钟），其余留空。
 impl Default for GroupToolsState {
     fn default() -> Self {
         Self {
@@ -28,26 +44,41 @@ impl Default for GroupToolsState {
     }
 }
 
+/// 群 / 成员面板要延迟执行的动作，闭包结束后统一执行。
 enum GroupToolAction {
+    /// 走普通 Socket API 通道下发一个事件。
     Call {
+        /// bridge 端事件名。
         event: &'static str,
+        /// 事件的 JSON 参数数组。
         args: Vec<JsonValue>,
+        /// 是否期待 bridge 回报 ack。
         expect_ack: bool,
     },
+    /// 请求禁言/解禁某成员；转交群成员面板确认流程，不直接下发。
     SetGroupBan {
+        /// 群号（gin）。
         group_id: i64,
+        /// 目标成员 QQ。
         target_id: i64,
+        /// 禁言秒数；`0` 表示解除禁言。
         duration: u64,
     },
+    /// 把“当前选中的群聊”群号回填到输入框。
     FillSelectedGroup,
 }
 
+/// `IcaApp` 的群/成员工具固有方法：群号回填、参数解析、动作执行与窗口渲染。
 impl IcaApp {
+    /// 返回当前选中会话对应的群号（gin）；非群聊或未选中时返回 `None`。
+    ///
+    /// 群聊的 `room_id` 约定为负数，取相反数即群号。
     fn selected_group_gin(&self) -> Option<i64> {
         let room_id = self.active_bridge_state()?.selected_room_id?;
         (room_id < 0).then_some(-room_id)
     }
 
+    /// 去除首尾空白后把输入解析为 `i64`；失败返回 `<label> 不是有效数字`。
     fn parse_group_tool_i64(value: &str, label: &str) -> Result<i64, String> {
         value
             .trim()
@@ -55,6 +86,7 @@ impl IcaApp {
             .map_err(|_| format!("{} 不是有效数字", label))
     }
 
+    /// 去除首尾空白后把输入解析为 `u64`（禁言秒数专用）；失败返回 `<label> 不是有效数字`。
     fn parse_group_tool_u64(value: &str, label: &str) -> Result<u64, String> {
         value
             .trim()
@@ -62,6 +94,10 @@ impl IcaApp {
             .map_err(|_| format!("{} 不是有效数字", label))
     }
 
+    /// 执行一个延迟的群 / 成员面板动作。
+    ///
+    /// 除普通 `Call` 外，`SetGroupBan` 不直接下发，而是校验群号后写入
+    /// `group_member_panel.confirmation`，交由群成员面板的确认流程处理。
     fn execute_group_tool_action(&mut self, action: GroupToolAction) {
         match action {
             GroupToolAction::FillSelectedGroup => {
@@ -83,6 +119,7 @@ impl IcaApp {
                 target_id,
                 duration,
             } => {
+                // 取绝对值得到群号并拒绝 0；确认对象用约定的负数 room_id。
                 let Some(group_id) = group_id.checked_abs().filter(|group_id| *group_id > 0) else {
                     if let Some(state) = self.active_bridge_state_mut() {
                         state.last_error = Some("群号无效".to_string());
@@ -99,6 +136,10 @@ impl IcaApp {
         }
     }
 
+    /// 绘制“群/成员管理”窗口。
+    ///
+    /// 禁言按钮会先校验秒数范围（`1..=GROUP_BAN_MAX_DURATION`），再转确认流程；
+    /// 其它按钮只做校验并记录意图，闭包结束后统一 flush 错误与动作。
     pub fn render_group_tools_window(&mut self, ctx: &egui::Context) {
         let mut open = self.open_page.group_tools;
         let selected_group_gin = self.selected_group_gin();
@@ -334,6 +375,7 @@ impl IcaApp {
                 }
             });
 
+        // 闭包已结束，统一落地渲染期间收集到的错误与动作。
         self.open_page.group_tools = open;
         if let Some(error) = pending_error
             && let Some(state) = self.active_bridge_state_mut()

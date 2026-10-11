@@ -1,3 +1,9 @@
+//! 原始图片字节的磁盘缓存：跨会话/跨重启复用，减少重复网络请求。
+//!
+//! 位于 `crate::image_loader` 之下，与内存态状态机故意分离：
+//! 内存追求“立即可见”的正确性，磁盘是 best-effort 优化，不参与 `generation` 逻辑。
+//! 文件按 URI 的 SHA-256 命名，分 `image` / `avatar` 两个子目录，并按修改时间淘汰。
+
 use super::util::format_bytes;
 use sha2::{Digest, Sha256};
 use std::{
@@ -20,13 +26,21 @@ use tracing::{debug, info, warn};
 /// 因此磁盘缓存不会参与 `generation` 逻辑，只做原始字节复用。
 #[derive(Debug)]
 pub struct DiskCache {
+    /// 缓存根目录。
     root: PathBuf,
+    /// 字节上限；`0` 表示不限制。
     max_bytes: u64,
+    /// 增量记账的当前总字节，避免每次写入都全盘扫描。
     tracked_bytes: AtomicU64,
+    /// 串行化写/删操作的锁，防止并发落盘相互覆盖。
     mutation_lock: Mutex<()>,
 }
 
+/// `DiskCache` 的磁盘读写与淘汰实现。
 impl DiskCache {
+    /// 创建磁盘缓存并确保目录布局；布局失败返回 `None`（禁用磁盘缓存）。
+    ///
+    /// 启动时扫描一次现有总量，作为增量记账的初值。
     pub fn new(root: PathBuf, max_bytes: u64) -> Option<Self> {
         let cache = Self {
             root,
@@ -50,11 +64,13 @@ impl DiskCache {
         Some(cache)
     }
 
+    /// 读取某 URI 对应的缓存字节；文件不存在或读取失败返回 `None`。
     pub fn load(&self, uri: &str) -> Option<Vec<u8>> {
         let path = self.cache_path(uri);
         fs::read(path).ok()
     }
 
+    /// 把某 URI 的原始字节写入磁盘缓存（持修改锁）；空字节直接忽略。
     pub fn save(&self, uri: &str, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
@@ -67,6 +83,7 @@ impl DiskCache {
         }
     }
 
+    /// 删除某 URI 的缓存文件并相应减少记账；文件不存在时视为成功。
     pub fn remove(&self, uri: &str) {
         let _guard = self.mutation_lock.lock().expect("磁盘缓存修改锁被污染");
 
@@ -88,6 +105,7 @@ impl DiskCache {
         }
     }
 
+    /// `save` 的实际落盘逻辑（调用方需持有修改锁）：临时文件 + rename 原子替换。
     fn save_locked(&self, uri: &str, bytes: &[u8]) -> io::Result<()> {
         self.ensure_layout()?;
 
@@ -142,6 +160,9 @@ impl DiskCache {
         Ok(())
     }
 
+    /// 写入后按需淘汰：超过上限时扫描目录，按“先普通图片后头像”的顺序删到上限内。
+    ///
+    /// 调用方需持有修改锁。
     fn evict_if_needed_locked(&self) {
         if self.max_bytes == 0 {
             // 0 = 不限制大小。
@@ -221,12 +242,14 @@ impl DiskCache {
         self.tracked_bytes.store(total_bytes, Ordering::Relaxed);
     }
 
+    /// 确保 `image` / `avatar` 两个子目录存在。
     fn ensure_layout(&self) -> io::Result<()> {
         fs::create_dir_all(self.root.join("image"))?;
         fs::create_dir_all(self.root.join("avatar"))?;
         Ok(())
     }
 
+    /// 扫描两个子目录，累加所有缓存文件的当前字节数。
     fn scan_total_bytes(&self) -> u64 {
         [self.root.join("image"), self.root.join("avatar")]
             .into_iter()
@@ -239,6 +262,7 @@ impl DiskCache {
             })
     }
 
+    /// 计算某 URI 的缓存文件路径：头像走 `avatar/`，其余走 `image/`，文件名为 URI 的 SHA-256。
     fn cache_path(&self, uri: &str) -> PathBuf {
         let subdir = if is_avatar_uri(uri) {
             "avatar"
@@ -251,10 +275,12 @@ impl DiskCache {
     }
 }
 
+/// 判断是否为 QQ 头像 URI（含 `qlogo.cn`），用于分目录与差异化淘汰。
 fn is_avatar_uri(uri: &str) -> bool {
     uri.contains("qlogo.cn")
 }
 
+/// 计算 URI 的 SHA-256 十六进制字符串，作为缓存文件名。
 fn sha256_hex(uri: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(uri.as_bytes());

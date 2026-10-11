@@ -1,15 +1,27 @@
+//! 会话设置工具面板。
+//!
+//! 位于 `crate::app::tools` 之下，聚合“获取/移除/忽略会话、添加会话、优先级、
+//! 置顶、清未读、自动下载及路径”等一类会话（room）相关的 bridge Socket API。
+
 use crate::app::IcaApp;
 use serde_json::{Value as JsonValue, json};
 
+/// 会话设置面板的输入状态。
 #[derive(Debug, Clone)]
 pub struct RoomToolsState {
+    /// 会话 ID（roomId）；群聊为负、私聊为正。
     pub room_id: String,
+    /// 会话名称，添加/忽略会话时作为展示名。
     pub room_name: String,
+    /// 会话优先级字符串，默认 `"3"`；解析为 `u8` 后随设置/添加一起下发。
     pub priority: String,
+    /// 是否开启该会话的自动下载（`setRoomAutoDownload`）。
     pub auto_download: bool,
+    /// 自动下载的目标路径（`setRoomAutoDownloadPath`）。
     pub auto_download_path: String,
 }
 
+/// 默认优先级为 `"3"`、关闭自动下载，其余留空。
 impl Default for RoomToolsState {
     fn default() -> Self {
         Self {
@@ -22,20 +34,29 @@ impl Default for RoomToolsState {
     }
 }
 
+/// 会画面板要延迟执行的动作，闭包结束后统一执行。
 enum RoomToolAction {
+    /// 走普通 Socket API 通道下发一个事件。
     Call {
+        /// bridge 端事件名。
         event: &'static str,
+        /// 事件的 JSON 参数数组。
         args: Vec<JsonValue>,
+        /// 是否期待 bridge 回报 ack。
         expect_ack: bool,
     },
+    /// 把“当前选中的会话”信息回填到输入框。
     FillSelectedRoom,
 }
 
+/// `IcaApp` 的会话设置工具固有方法：会话回填、参数解析、动作执行与窗口渲染。
 impl IcaApp {
+    /// 返回当前选中会话的 ID；没有选中 / 没有活动 bridge 时返回 `None`。
     fn selected_room_tool_room_id(&self) -> Option<i64> {
         self.active_bridge_state()?.selected_room_id
     }
 
+    /// 去除首尾空白后把输入解析为 `i64`；失败返回 `<label> 不是有效数字`。
     fn parse_room_tool_i64(value: &str, label: &str) -> Result<i64, String> {
         value
             .trim()
@@ -43,11 +64,13 @@ impl IcaApp {
             .map_err(|_| format!("{} 不是有效数字", label))
     }
 
+    /// 执行一个延迟的会画面板动作：回填选中会话或走 Socket API 下发。
     fn execute_room_tool_action(&mut self, action: RoomToolAction) {
         match action {
             RoomToolAction::FillSelectedRoom => {
                 if let Some(room_id) = self.selected_room_tool_room_id() {
                     self.room_tools.room_id = room_id.to_string();
+                    // 顺带从已加载会话列表带回名称与优先级，省去手动填写。
                     if let Some((room_name, priority)) = self
                         .active_bridge_state()
                         .and_then(|state| state.rooms.iter().find(|room| room.room_id == room_id))
@@ -68,6 +91,9 @@ impl IcaApp {
         }
     }
 
+    /// 绘制“会话设置”窗口。
+    ///
+    /// 按钮只做校验并记录意图，闭包结束后统一 flush 错误与动作。
     pub fn render_room_tools_window(&mut self, ctx: &egui::Context) {
         let mut open = self.open_page.room_tools;
         let selected_room_id = self.selected_room_tool_room_id();
@@ -299,6 +325,7 @@ impl IcaApp {
                 }
             });
 
+        // 闭包已结束，统一落地渲染期间收集到的错误与动作。
         self.open_page.room_tools = open;
         if let Some(error) = pending_error
             && let Some(state) = self.active_bridge_state_mut()

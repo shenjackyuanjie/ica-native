@@ -1,15 +1,29 @@
+//! 通用 Socket API 调用面板。
+//!
+//! 位于 `crate::app::tools` 之下，提供一个“任意事件名 + JSON 参数数组”的通用下发入口，
+//! 并用一组内置预设（`SOCKET_API_PRESETS`）降低常用 bridge 事件的输入门槛。
+//! 所有调用最终都经由 `send_socket_api_event` 走活动 bridge 的 Socket API 通道。
+
 use crate::app::IcaApp;
 use crate::ica::IcaCommand;
 use serde_json::Value as JsonValue;
 
+/// 一个内置的 Socket API 预设：把常用事件的“名称 + 参数模板 + 说明”打包，
+/// 方便用户一键填入调用面板而不用手写 JSON。
 pub struct SocketApiPreset {
+    /// 面板下拉里显示的中文名称。
     pub label: &'static str,
+    /// bridge 事件名；为空表示“自定义”，不覆盖用户已输入内容。
     pub event: &'static str,
+    /// 参数数组的 JSON 文本模板，应用到输入框后再由用户按需修改。
     pub args: &'static str,
+    /// 该事件是否期待 bridge 回报 ack。
     pub expect_ack: bool,
+    /// 参数含义/用途的简短说明，展示给用户。
     pub note: &'static str,
 }
 
+/// 内置 Socket API 预设表；首项固定为“自定义”（空事件名），作为下拉的占位项。
 const SOCKET_API_PRESETS: &[SocketApiPreset] = &[
     SocketApiPreset {
         label: "自定义",
@@ -503,11 +517,18 @@ const SOCKET_API_PRESETS: &[SocketApiPreset] = &[
     },
 ];
 
+/// `IcaApp` 的通用 Socket API 固有方法：预设查询/应用与调用下发。
 impl IcaApp {
+    /// 返回内置预设表，供下拉框枚举可选事件。
     pub fn socket_api_presets() -> &'static [SocketApiPreset] {
         SOCKET_API_PRESETS
     }
 
+    /// 按索引应用一个预设到调用面板的输入框。
+    ///
+    /// - 参数 `index`：预设在 `SOCKET_API_PRESETS` 中的下标；
+    /// - 越界或“自定义”（空事件名）时保留用户当前输入，只记录选中的下标；
+    /// - 否则用预设的事件名、参数模板与 ack 期望覆盖输入框。
     pub fn apply_socket_api_preset(&mut self, index: usize) {
         let Some(preset) = SOCKET_API_PRESETS.get(index) else {
             return;
@@ -520,6 +541,9 @@ impl IcaApp {
         }
     }
 
+    /// 把调用面板当前输入作为一次 Socket API 调用下发。
+    ///
+    /// 先校验事件名非空、参数是合法 JSON；任一不满足只写入 `last_error`，不下发。
     pub fn send_socket_api_call(&mut self) {
         let Some(bridge_idx) = self.active_bridge_idx else {
             return;
@@ -542,6 +566,7 @@ impl IcaApp {
                 return;
             }
         };
+        // 约定参数为数组；若用户只写了一个标量/对象，则包成单元素数组，兼容两种输入。
         let args = match args_value {
             JsonValue::Array(values) => values,
             value => vec![value],
@@ -550,6 +575,13 @@ impl IcaApp {
         self.send_socket_api_event(event, args, self.socket_api_expect_ack);
     }
 
+    /// 通过活动 bridge 的 Socket API 通道下发一个事件。
+    ///
+    /// - 参数 `event`：bridge 事件名（接受 `Into<String>`，便于直接传 `&'static str`）；
+    /// - 参数 `args`：事件的 JSON 参数数组；
+    /// - 参数 `expect_ack`：是否期待 bridge 回报 ack；
+    /// - 副作用：发送 `IcaCommand::SocketApiCall`，发送失败时记录 `last_error`；
+    ///   没有活动 bridge 时静默返回。
     pub fn send_socket_api_event(
         &mut self,
         event: impl Into<String>,

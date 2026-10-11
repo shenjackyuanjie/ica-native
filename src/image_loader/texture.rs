@@ -1,3 +1,9 @@
+//! 有预算的 GPU 纹理缓存（实现 egui `TextureLoader`）。
+//!
+//! 位于 `crate::image_loader` 之下，为普通位图把已解码图片上传成 GPU 纹理并按字节预算
+//! 做 LRU；SVG 继续交给 egui 默认加载器，保留其按尺寸缓存的专门行为。
+//! 纹理上传成功后会释放可重建的原始字节/CPU 像素，仅在确需保留时（如 `bytes://`）例外。
+
 use egui::{
     Context, TextureHandle, TextureOptions,
     load::{
@@ -13,41 +19,60 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// 纹理缓存项的“活跃宽限”：最近用过的纹理即使超预算也暂不淘汰。
 const ACTIVE_TEXTURE_GRACE: Duration = Duration::from_millis(750);
 
+/// 纹理缓存键：同一 URI 在不同 `TextureOptions` 下是不同的缓存项。
 #[derive(Clone, Eq)]
 struct TextureKey {
+    /// 图片 URI。
     uri: String,
+    /// 纹理选项（缩放/采样等）。
     options: TextureOptions,
 }
 
+/// `TextureKey` 的手动判等实现。
 impl PartialEq for TextureKey {
+    /// 按 URI 与纹理选项判等。
     fn eq(&self, other: &Self) -> bool {
         self.uri == other.uri && self.options == other.options
     }
 }
 
+/// `TextureKey` 的手动哈希实现。
 impl Hash for TextureKey {
+    /// 按 URI 与纹理选项计算哈希，与 `PartialEq` 保持一致。
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.uri.hash(state);
         self.options.hash(state);
     }
 }
 
+/// 一个缓存的 GPU 纹理及其记账信息。
 struct TextureEntry {
+    /// egui 纹理句柄。
     handle: TextureHandle,
+    /// 源图片尺寸。
     source_size: egui::Vec2,
+    /// 纹理占用的字节。
     byte_size: u64,
+    /// 最近一次被使用的时间，用于 LRU 与活跃宽限。
     last_used: Instant,
 }
 
+/// 纹理缓存的内部状态：LRU + 字节记账 + 上限。
 struct TextureState {
+    /// 字节上限；`0` 表示不限制。
     max_bytes: u64,
+    /// 当前占用总字节。
     total_bytes: u64,
+    /// 纹理 LRU。
     textures: LruCache<TextureKey, TextureEntry>,
 }
 
+/// `TextureState` 的构造与淘汰。
 impl TextureState {
+    /// 用给定上限创建空纹理状态（LRU 不限条目数，仅按字节软限制淘汰）。
     fn new(max_bytes: u64) -> Self {
         Self {
             max_bytes,
@@ -56,6 +81,7 @@ impl TextureState {
         }
     }
 
+    /// 超过字节上限时从 LRU 头部淘汰；仍在活跃宽限内的纹理暂时保留。
     fn evict_stale(&mut self, now: Instant) {
         while self.textures.len() > 1 && (self.max_bytes == 0 || self.total_bytes > self.max_bytes)
         {
@@ -77,9 +103,12 @@ pub struct TrackingTextureLoader {
     state: Mutex<TextureState>,
 }
 
+/// `TrackingTextureLoader` 的构造。
 impl TrackingTextureLoader {
+    /// 本 loader 在 egui 中的唯一 ID。
     pub const ID: &'static str = egui::generate_loader_id!(TrackingTextureLoader);
 
+    /// 用给定字节上限创建纹理加载器。
     pub fn new(max_bytes: u64) -> Self {
         Self {
             state: Mutex::new(TextureState::new(max_bytes)),
@@ -87,11 +116,16 @@ impl TrackingTextureLoader {
     }
 }
 
+/// 为 `TrackingTextureLoader` 实现 egui `TextureLoader`。
 impl TextureLoader for TrackingTextureLoader {
+    /// 返回本 loader 的唯一 ID。
     fn id(&self) -> &str {
         Self::ID
     }
 
+    /// egui 请求纹理时的入口：命中缓存直接返回，否则取图片、上传 GPU 并记账。
+    ///
+    /// SVG 让给默认 loader；上传成功后按需释放可重建的原始字节/CPU 像素。
     fn load(
         &self,
         ctx: &Context,
@@ -163,6 +197,7 @@ impl TextureLoader for TrackingTextureLoader {
         Ok(TexturePoll::Ready { texture })
     }
 
+    /// 忘记某 URI 的所有纹理缓存项（不同选项可能各有一份）。
     fn forget(&self, uri: &str) {
         let mut state = self.state.lock();
         let keys = state
@@ -178,21 +213,25 @@ impl TextureLoader for TrackingTextureLoader {
         }
     }
 
+    /// 清空所有纹理缓存并重置记账。
     fn forget_all(&self) {
         let mut state = self.state.lock();
         state.textures.clear();
         state.total_bytes = 0;
     }
 
+    /// 每遍渲染结束时做一次惰性淘汰，把超预算的陈旧纹理回收。
     fn end_pass(&self, _pass_index: u64) {
         self.state.lock().evict_stale(Instant::now());
     }
 
+    /// 返回纹理缓存占用的总字节。
     fn byte_size(&self) -> usize {
         self.state.lock().total_bytes.min(usize::MAX as u64) as usize
     }
 }
 
+/// 在 `egui::Context` 上安装纹理加载器（若尚未安装）。
 pub fn install(ctx: &Context, max_bytes: u64) {
     if !ctx.is_loader_installed(TrackingTextureLoader::ID) {
         ctx.add_texture_loader(Arc::new(TrackingTextureLoader::new(max_bytes)));

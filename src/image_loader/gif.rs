@@ -1,3 +1,9 @@
+//! 有预算的 GIF（动图）加载器。
+//!
+//! 位于 `crate::image_loader` 之下，专门接管 egui 内部用 `...#frame=...` 表示的动图帧：
+//! 把 GIF 解成一组帧与帧时长，按 LRU + 字节预算缓存，并在单线程里串行解码，
+//! 避免放大像素内存峰值。SVG 与静态位图不在此处理。
+
 #[cfg(test)]
 #[path = "tests/gif.rs"]
 mod tests;
@@ -26,21 +32,34 @@ use std::{
 };
 use tracing::{debug, warn};
 
+/// 动图缓存项的“活跃宽限”：最近用过的条目即使超预算也暂不淘汰，避免可见动图被反复解码。
 const ACTIVE_GIF_GRACE: Duration = Duration::from_millis(750);
+/// 单个 GIF 解码缓存的默认字节上限（64 MiB）。
 const DEFAULT_GIF_CACHE_CAP: u64 = 64 * 1024 * 1024;
+/// GIF 解码缓存的下限（16 MiB），防止配置给得过小导致动图几乎无法缓存。
 const MIN_GIF_CACHE_CAP: u64 = 16 * 1024 * 1024;
+/// 单个 GIF 最多解码的帧数，防止异常长图无限解码。
 const MAX_GIF_FRAMES: usize = 180;
+/// 单个 GIF 解码后的字节上限（64 MiB）。
 const MAX_GIF_DECODED_BYTES: u64 = 64 * 1024 * 1024;
+/// GIF 错误缓存的最大条目数，避免坏图无限堆积。
 const MAX_GIF_ERROR_ENTRIES: usize = 128;
 
+/// 一个已解码的动图：全部帧 + 帧时长 + 估算字节。
 #[derive(Debug)]
 struct AnimatedImage {
+    /// 所有帧的像素图。
     frames: Vec<Arc<ColorImage>>,
+    /// 与帧一一对应的时长序列。
     frame_durations: FrameDurations,
+    /// 估算占用字节（帧像素 + 时长）。
     byte_size: u64,
 }
 
+/// `AnimatedImage` 的解码与取帧。
 impl AnimatedImage {
+    /// 从 GIF 字节解码出所有帧；受 `MAX_GIF_FRAMES` / `MAX_GIF_DECODED_BYTES` 约束，
+    /// 超限时至少保留首帧以保证有可显示内容。
     fn load_gif(data: &[u8]) -> Result<Self, String> {
         let decoder = image::codecs::gif::GifDecoder::new(Cursor::new(data))
             .map_err(|err| format!("GIF 解码失败: {err}"))?;
@@ -88,27 +107,41 @@ impl AnimatedImage {
         })
     }
 
+    /// 按帧索引取帧（越界时取模循环），供 egui 请求某一帧时使用。
     fn get_image(&self, index: usize) -> Arc<ColorImage> {
         Arc::clone(&self.frames[index % self.frames.len()])
     }
 }
 
+/// 动图缓存中的一个就绪条目。
 struct GifEntry {
+    /// 解码后的动图。
     image: Arc<AnimatedImage>,
+    /// 最近一次被使用的时间，用于 LRU 与活跃宽限判断。
     last_used: Instant,
+    /// 首次被消费后是否释放源字节（原始 GIF / bytes loader 缓存）。
     release_source_bytes: bool,
 }
 
+/// 动图加载器的内存态：就绪 LRU + pending 代际 + 有界错误缓存。
 struct GifState {
+    /// 字节预算；`0` 表示不限制。
     max_bytes: u64,
+    /// 当前就绪条目占用的总字节。
     total_bytes: u64,
+    /// 已解码动图的 LRU。
     ready: LruCache<String, GifEntry>,
+    /// 正在解码的 URI -> 代际编号。
     pending: HashMap<String, u64>,
+    /// 解码错误的有界 LRU。
     errors: LruCache<String, Arc<str>>,
+    /// 下一个代际编号。
     next_generation: u64,
 }
 
+/// `GifState` 的状态转移与淘汰。
 impl GifState {
+    /// 用给定预算创建动图状态；错误缓存为有界 LRU。
     fn new(image_cache_max_bytes: u64) -> Self {
         Self {
             max_bytes: gif_cache_limit(image_cache_max_bytes),
@@ -122,6 +155,7 @@ impl GifState {
         }
     }
 
+    /// 为一个新 URI 开始解码并分配代际编号；已在就绪/错误/pending 中则返回 `None`。
     fn begin_decode(&mut self, uri: &str) -> Option<u64> {
         if self.ready.contains(uri) || self.errors.contains(uri) || self.pending.contains_key(uri) {
             return None;
@@ -132,16 +166,19 @@ impl GifState {
         Some(generation)
     }
 
+    /// 判断某 URI 的 pending 代际是否仍匹配（用于丢弃过期任务）。
     fn is_pending_generation(&self, uri: &str, generation: u64) -> bool {
         self.pending.get(uri) == Some(&generation)
     }
 
+    /// 取消匹配代际的 pending 条目。
     fn cancel_pending(&mut self, uri: &str, generation: u64) {
         if self.is_pending_generation(uri, generation) {
             self.pending.remove(uri);
         }
     }
 
+    /// 后台线程提交解码结果：代际匹配才写入就绪或错误缓存，返回是否被接受。
     fn complete_decode(
         &mut self,
         uri: &str,
@@ -161,6 +198,7 @@ impl GifState {
         true
     }
 
+    /// 把解码好的动图插入就绪 LRU 并更新字节记账，随后按需淘汰。
     fn insert_ready(&mut self, uri: String, image: Arc<AnimatedImage>, now: Instant) {
         if let Some(old) = self.ready.put(
             uri,
@@ -176,6 +214,7 @@ impl GifState {
         self.evict_if_needed(now);
     }
 
+    /// 按需淘汰就绪动图：超过预算时从 LRU 头部淘汰，但跳过仍在活跃宽限内的条目。
     fn evict_if_needed(&mut self, now: Instant) {
         while self.ready.len() > 1 && (self.max_bytes == 0 || self.total_bytes > self.max_bytes) {
             let Some((uri, entry)) = self.ready.pop_lru() else {
@@ -199,6 +238,7 @@ impl GifState {
     }
 }
 
+/// 由图片内存预算推导动图缓存预算：取一半并夹在上下限之间，且不超过原预算。
 fn gif_cache_limit(image_cache_max_bytes: u64) -> u64 {
     if image_cache_max_bytes == 0 {
         return 0;
@@ -209,14 +249,20 @@ fn gif_cache_limit(image_cache_max_bytes: u64) -> u64 {
         .min(image_cache_max_bytes)
 }
 
+/// 有预算的 GIF 动图加载器（实现 egui `ImageLoader`）。
 pub struct BoundedGifLoader {
+    /// 动图内存态。
     state: Arc<Mutex<GifState>>,
+    /// 单线程解码池：串行解码以压低像素内存峰值。
     workers: DecodeWorkerPool,
 }
 
+/// `BoundedGifLoader` 的构造与解码调度。
 impl BoundedGifLoader {
+    /// 本 loader 在 egui 中的唯一 ID。
     pub const ID: &'static str = egui::generate_loader_id!(BoundedGifLoader);
 
+    /// 用给定图片内存预算创建动图加载器。
     pub fn new(image_cache_max_bytes: u64) -> Self {
         let state = GifState::new(image_cache_max_bytes);
         debug!(
@@ -230,6 +276,10 @@ impl BoundedGifLoader {
         }
     }
 
+    /// 把一个动图解码任务提交给单线程池；代际不匹配或队列繁忙时安全跳过。
+    ///
+    /// `decode` 以闭包注入具体解码函数（当前为 `AnimatedImage::load_gif`），便于测试替换。
+    /// 队列已满不视为失败，仅稍后重排；线程池关闭才返回错误。
     fn schedule_decode(
         &self,
         ctx: &egui::Context,
@@ -287,11 +337,17 @@ impl BoundedGifLoader {
     }
 }
 
+/// 为 `BoundedGifLoader` 实现 egui `ImageLoader`。
 impl ImageLoader for BoundedGifLoader {
+    /// 返回本 loader 的唯一 ID。
     fn id(&self) -> &str {
         Self::ID
     }
 
+    /// egui 请求某一动图帧时的入口。
+    ///
+    /// 先从 `frame_uri` 解出真实图片 URI 与帧索引；命中就绪缓存直接返回该帧，
+    /// 否则经底层 bytes loader 取字节、确认 GIF 魔数后调度解码。
     fn load(&self, ctx: &egui::Context, frame_uri: &str, _: SizeHint) -> ImageLoadResult {
         let (image_uri, frame_index) =
             decode_animated_image_uri(frame_uri).map_err(|_| LoadError::NotSupported)?;
@@ -348,6 +404,7 @@ impl ImageLoader for BoundedGifLoader {
         }
     }
 
+    /// 忘记某动图 URI 的就绪/错误/pending 态；帧 URI（带 `#frame=`）不处理。
     fn forget(&self, uri: &str) {
         if decode_animated_image_uri(uri).is_ok() {
             return;
@@ -361,6 +418,7 @@ impl ImageLoader for BoundedGifLoader {
         }
     }
 
+    /// 清空所有动图缓存态并重置字节记账。
     fn forget_all(&self) {
         let mut state = self.state.lock();
         state.ready.clear();
@@ -369,6 +427,7 @@ impl ImageLoader for BoundedGifLoader {
         state.total_bytes = 0;
     }
 
+    /// 返回动图缓存占用字节（帧像素 + 错误字符串）。
     fn byte_size(&self) -> usize {
         let state = self.state.lock();
         let error_bytes = state
@@ -382,11 +441,13 @@ impl ImageLoader for BoundedGifLoader {
             .min(usize::MAX as u64) as usize
     }
 
+    /// 是否还有正在解码的动图。
     fn has_pending(&self) -> bool {
         !self.state.lock().pending.is_empty()
     }
 }
 
+/// 在 `egui::Context` 上安装动图加载器（若尚未安装）。
 pub fn install(ctx: &egui::Context, image_cache_max_bytes: u64) {
     if !ctx.is_loader_installed(BoundedGifLoader::ID) {
         ctx.add_image_loader(Arc::new(BoundedGifLoader::new(image_cache_max_bytes)));

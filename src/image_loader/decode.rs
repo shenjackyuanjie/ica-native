@@ -1,3 +1,12 @@
+//! 图片格式判定与解码的纯函数集合。
+//!
+//! 位于 `crate::image_loader` 之下，被 tracking loader 与 nt_image loader 共用：
+//! - `normalize_uri` / `should_handle_*` / `is_supported_mime` 决定一个 URI/字节
+//!   是否应由本 loader 处理，避免抢走动图（GIF）与矢量图（SVG）；
+//! - `decode_image` 在后台线程把字节解码为 `egui::ColorImage`；
+//! - `is_permanent_download_error` / `normalize_image_load_error` 归一化下载错误，
+//!   区分“永久失败（可缓存）”与“瞬时失败（可重试）”。
+
 use egui::{
     Color32, ColorImage,
     load::{Bytes, LoadError},
@@ -82,6 +91,7 @@ pub fn should_handle_loaded_bytes(mime: Option<&str>, bytes: &Bytes) -> bool {
     }
 }
 
+/// 判断某个图片格式在当前 `image` crate 编译特性下是否可解码。
 fn can_decode_format(format: ImageFormat) -> bool {
     format.reading_enabled()
 }
@@ -127,6 +137,7 @@ pub fn normalize_image_load_error(uri: &str, err: LoadError) -> LoadError {
     }
 }
 
+/// 取出 URI 路径部分的扩展名（小写），忽略 `?`/`#` 之后的查询与片段。
 fn uri_extension(uri: &str) -> Option<String> {
     let uri = uri
         .strip_prefix("file://")
