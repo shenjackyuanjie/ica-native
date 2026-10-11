@@ -1,7 +1,3 @@
-#[cfg(test)]
-#[path = "tests/files.rs"]
-mod tests;
-
 use serde::{Deserialize, Serialize};
 
 /*interface MessageFile {

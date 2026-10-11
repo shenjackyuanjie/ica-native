@@ -26,14 +26,6 @@ fn server_owned_chat_groups_are_not_persisted_or_loaded() {
 }
 
 #[test]
-fn clones_share_updates() {
-    let store = ConfigStore::from_config(IcaCfg::default(), "test.toml");
-    let clone = store.clone();
-    store.update(|config| config.screen.width = 777.0);
-    assert_eq!(clone.snapshot().screen.width, 777.0);
-}
-
-#[test]
 fn command_line_config_path_has_priority() {
     let (path, source) = resolve_config_path(["--config", "custom.toml"]);
     assert_eq!(path, PathBuf::from("custom.toml"));

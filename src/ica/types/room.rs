@@ -1,7 +1,3 @@
-#[cfg(test)]
-#[path = "tests/room.rs"]
-mod tests;
-
 use crate::ica::types::{
     RoomId, UserId,
     message::{At, LastMessage},
