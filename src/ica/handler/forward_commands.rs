@@ -5,6 +5,7 @@ use super::forward;
 use crate::ica::types::RoomId;
 use serde_json::Value as JsonValue;
 
+/// 拉取合并转发消息；参数原样转交 `forward` 模块处理。
 pub async fn fetch_forward_messages(
     ctx: CommandContext<'_>,
     request_id: u64,
@@ -30,6 +31,7 @@ pub async fn fetch_forward_messages(
     .await;
 }
 
+/// 发送合并转发；参数原样转交 `forward` 模块处理。
 pub async fn send_merged_forward(
     ctx: CommandContext<'_>,
     nodes: Vec<JsonValue>,

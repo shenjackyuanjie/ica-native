@@ -9,6 +9,7 @@ use crate::ica::types::announcement::GroupAnnouncementDraft;
 use serde_json::json;
 use std::time::Duration;
 
+/// 拉取群公告列表，转交 `announcement` 模块经 CGI 完成。
 pub async fn fetch_group_announcements(
     ctx: CommandContext<'_>,
     request_id: u64,
@@ -18,6 +19,10 @@ pub async fn fetch_group_announcements(
     announcement::fetch_group_announcements(ctx, request_id, room_id, bkn).await
 }
 
+/// 对群成员禁言。
+///
+/// 仅群聊有效，且时长不得超过 `GROUP_BAN_MAX_DURATION`；成功后延迟 1 秒
+/// 拉取一次群成员，让界面尽快反映禁言后的状态。
 pub async fn set_group_ban(
     ctx: CommandContext<'_>,
     room_id: RoomId,
@@ -86,6 +91,7 @@ pub async fn set_group_ban(
     }
 }
 
+/// 上传群文件；成功发 `groupFileUploadCompleted`，失败发 `commandFailed`。
 pub async fn upload_group_file(
     ctx: CommandContext<'_>,
     group_id: i64,
@@ -116,6 +122,7 @@ pub async fn upload_group_file(
     }
 }
 
+/// 发起群签到；失败时上报 `commandFailed`。
 pub async fn send_group_sign(ctx: CommandContext<'_>, room_id: RoomId) {
     let CommandContext {
         client,
@@ -137,6 +144,7 @@ pub async fn send_group_sign(ctx: CommandContext<'_>, room_id: RoomId) {
     }
 }
 
+/// 在群里戳一戳指定成员；失败时上报 `commandFailed`。
 pub async fn send_group_poke(ctx: CommandContext<'_>, room_id: RoomId, target_id: i64) {
     let CommandContext {
         client,
@@ -158,6 +166,8 @@ pub async fn send_group_poke(ctx: CommandContext<'_>, room_id: RoomId, target_id
         );
     }
 }
+
+/// 发布或编辑群公告（草稿带 fid 即为编辑），转交 `announcement` 模块。
 pub async fn publish_group_announcement(
     ctx: CommandContext<'_>,
     request_id: u64,
@@ -168,6 +178,7 @@ pub async fn publish_group_announcement(
     announcement::publish_group_announcement(ctx, request_id, room_id, bkn, draft).await
 }
 
+/// 删除群公告，转交 `announcement` 模块。
 pub async fn delete_group_announcement(
     ctx: CommandContext<'_>,
     request_id: u64,

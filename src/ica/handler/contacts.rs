@@ -1,3 +1,10 @@
+//! 联系人（好友与群列表）拉取。
+//!
+//! 好友走 `getFriendsFallback`、群走 `getGroups`，两部分都用带 ACK 的
+//! Socket.IO 请求，并通过 `contactsPartResponse` / `contactsPartFailed`
+//! 事件分部件上报。`emit_with_ack` 只保证请求已发出，因此另起定时任务在
+//! 超时未收到 ACK 时补报失败。
+
 #[cfg(test)]
 #[path = "tests/contacts.rs"]
 mod tests;
@@ -16,6 +23,7 @@ use std::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
+/// 单个联系人部件 ACK 的等待上限，同时用作超时补报的判定窗口。
 const CONTACTS_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// 联系人接口的 ACK 可能把列表作为唯一参数再包一层；UI 侧始终接收联系人对象数组。
@@ -23,6 +31,10 @@ fn contact_ack_items(payload: &Payload) -> serde_json::Value {
     normalize_ack_list(ack_payload_values(payload))
 }
 
+/// 拉取一个联系人部件（好友或群）并上报结果。
+///
+/// `part` 是界面可见的部件名，`event` 是对应的 Bridge 事件名；ACK 回调里
+/// 只负责发事件、不轮询共享状态，超时未回由后台任务补发失败事件。
 async fn fetch_contact_part(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
@@ -95,6 +107,7 @@ async fn fetch_contact_part(
     });
 }
 
+/// 依次拉取好友与群两个部件，共用同一个 `request_id` 供界面归并结果。
 pub async fn fetch_contacts(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,

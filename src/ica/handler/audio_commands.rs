@@ -9,6 +9,12 @@ use crate::ica::command::emit_ui_event;
 use serde_json::json;
 use std::sync::Arc;
 
+/// 发送语音消息。
+///
+/// 语音不经过普通文件分块上传：先在阻塞线程上把 WAV 编码成内嵌 media 的
+/// 消息体，再申请一次性 HTTP token 提交。`request_id` 与 `room_id` 原样用于
+/// 回执匹配；无论成败都会发出 `voiceSendResult`，其中 `accepted` 只表示
+/// Bridge 已接收，不等于 QQ 侧最终送达。
 pub async fn send_voice_message(
     ctx: CommandContext<'_>,
     request_id: u64,

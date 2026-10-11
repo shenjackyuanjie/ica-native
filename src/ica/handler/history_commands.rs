@@ -11,6 +11,7 @@ use serde_json::Value as JsonValue;
 use serde_json::json;
 use std::time::Duration;
 
+/// 拉取会话当前片段消息，转交 `history` 模块。
 pub async fn fetch_messages(ctx: CommandContext<'_>, room_id: RoomId) {
     let CommandContext {
         client,
@@ -21,6 +22,7 @@ pub async fn fetch_messages(ctx: CommandContext<'_>, room_id: RoomId) {
     history::fetch_messages(client, event_tx, bridge_key, room_id).await
 }
 
+/// 从最新位置拉取漫游历史，转交 `history` 模块。
 pub async fn fetch_latest_history(
     ctx: CommandContext<'_>,
     room_id: RoomId,
@@ -42,6 +44,7 @@ pub async fn fetch_latest_history(
     .await
 }
 
+/// 向前分页拉取更早消息，转交 `history` 模块。
 pub async fn fetch_older_messages(
     ctx: CommandContext<'_>,
     room_id: RoomId,
@@ -65,6 +68,7 @@ pub async fn fetch_older_messages(
     .await
 }
 
+/// 拉取群成员列表，转交 `history` 模块。
 pub async fn fetch_group_members(ctx: CommandContext<'_>, room_id: RoomId) {
     let CommandContext {
         client,
@@ -75,6 +79,7 @@ pub async fn fetch_group_members(ctx: CommandContext<'_>, room_id: RoomId) {
     history::fetch_group_members(client, event_tx, bridge_key, room_id).await
 }
 
+/// 分页检索指定发送者的发言，转交 `history` 模块。
 pub async fn fetch_messages_by_sender(
     ctx: CommandContext<'_>,
     request_id: u64,
@@ -104,6 +109,7 @@ pub async fn fetch_messages_by_sender(
     .await
 }
 
+/// 在会话内按关键词检索消息（15 秒 ACK），结果以 `searchMessagesResponse` 返回。
 pub async fn search_messages(
     ctx: CommandContext<'_>,
     room_id: RoomId,
@@ -165,6 +171,7 @@ pub async fn search_messages(
     }
 }
 
+/// 通知 Bridge 停止拉取历史；失败只记警告，不影响界面。
 pub async fn stop_fetching_history(ctx: CommandContext<'_>) {
     let CommandContext { client, .. } = ctx;
     if let Err(e) = client.emit("stopFetchingHistory", json!(null)).await {

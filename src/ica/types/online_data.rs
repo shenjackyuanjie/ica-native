@@ -1,18 +1,32 @@
+//! 在线状态与 Bridge 自身信息。
+//!
+//! `OnlineData` 由 Bridge 的 `onlineData` 事件下发；`IcalinguaInfo` 解析
+//! Bridge 打印的多行状态文本，缺字段时记警告并回退默认值，保证界面总能展示。
+
 use serde_json::Value as JsonValue;
 use tracing::warn;
 
+/// Bridge 运行时信息，来自 `onlineData` 里的 `sysInfo` 多行文本。
 #[derive(Debug, Clone, Hash)]
 pub struct IcalinguaInfo {
+    /// Bridge 版本。
     pub ica_version: String,
+    /// 运行环境（操作系统信息）。
     pub os_info: String,
+    /// 常驻内存大小。
     pub resident_set_size: String,
+    /// 堆占用。
     pub heap_used: String,
+    /// 负载。
     pub load: String,
+    /// 服务节点。
     pub server_node: String,
+    /// 已连接客户端数。
     pub client_count: u16,
 }
 
 impl IcalinguaInfo {
+    /// 从 Bridge 的多行状态文本解析；每个字段缺失都会记警告并回退默认值。
     pub fn new_from_str(s: &str) -> Self {
         let mut ica_version = None;
         let mut os_info = None;
@@ -82,16 +96,23 @@ impl IcalinguaInfo {
     }
 }
 
+/// 账号在线状态与 Bridge 信息，由 `onlineData` 事件下发。
 #[derive(Debug, Clone, Hash)]
 pub struct OnlineData {
+    /// 鉴权用 bkn；缺失时为 -1。
     pub bkn: i64,
+    /// 账号昵称。
     pub nick: String,
+    /// 是否在线。
     pub online: bool,
+    /// 账号 QQ。
     pub qqid: i64,
+    /// Bridge 自身信息。
     pub icalingua_info: IcalinguaInfo,
 }
 
 impl OnlineData {
+    /// 从 `onlineData` 事件的 JSON 解析；字段缺失时记警告并回退默认值。
     pub fn new_from_json(value: &JsonValue) -> Self {
         let bkn = value["bkn"].as_i64().unwrap_or_else(|| {
             warn!("online data 中缺少 bkn");
@@ -127,6 +148,7 @@ impl OnlineData {
     }
 }
 
+/// 未收到 `onlineData` 时的占位值：bkn 为 -1 表示不可用。
 impl Default for OnlineData {
     fn default() -> Self {
         Self {

@@ -1,3 +1,9 @@
+//! 历史消息、群成员与系统消息的拉取。
+//!
+//! 与联系人、转发一样采用“带 ACK 的 Socket.IO 请求 + UI 事件回报”的模式；
+//! 部分接口（如群成员）只等待 ACK 注册、把实际等待放进后台任务，避免阻塞
+//! 同一 Bridge 上的后续聊天命令。
+
 #[cfg(test)]
 #[path = "tests/history.rs"]
 mod tests;
@@ -18,11 +24,20 @@ use std::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
+/// “按发送者检索消息”的请求参数。
+///
+/// 打包成结构体是为了避免长参数表在调用处传错顺序；`snapshot_time` 为界面
+/// 发起检索时的快照时间，`offset` 用于分页。
 pub struct FetchMessagesBySenderRequest {
+    /// 界面发起的请求 ID，结果原样回传用于匹配。
     pub request_id: u64,
+    /// 目标会话；群聊为负群号，私聊为正 QQ 号。
     pub room_id: i64,
+    /// 要检索的发送者 QQ 号。
     pub sender_id: i64,
+    /// 分页偏移，跳过已有条数。
     pub offset: usize,
+    /// 检索快照时间（毫秒时间戳），作为跨请求一致的分页基线。
     pub snapshot_time: i64,
 }
 
@@ -38,6 +53,10 @@ fn latest_history_message_id(room_id: i64) -> Option<String> {
     Some(STANDARD.encode(bytes))
 }
 
+/// 从最新位置拉取漫游历史。
+///
+/// 用占位消息 ID 告诉 Bridge 起点，`current_loaded_messages` 为当前已加载
+/// 条数；协议端完成后会广播新的 `setMessages`。
 pub async fn fetch_latest_history(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
@@ -83,6 +102,9 @@ pub async fn fetch_latest_history(
     }
 }
 
+/// 拉取会话当前片段的消息；结果以 `setMessages` 事件整体替换界面列表。
+///
+/// ACK 超时（10 秒）未回会补发 `commandFailed`。
 pub async fn fetch_messages(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
@@ -165,6 +187,10 @@ pub async fn fetch_messages(
     }
 }
 
+/// 按 `before_time` / `before_id` 向前分页拉取更早的消息。
+///
+/// 结果以 `appendOlderMessages` 前插；即使请求失败也发空列表，让界面重置
+/// “加载中”状态。
 pub async fn fetch_older_messages(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
@@ -224,6 +250,9 @@ pub async fn fetch_older_messages(
     }
 }
 
+/// 拉取群成员列表。
+///
+/// ACK 等待放在后台任务里，不阻塞同一 Bridge 的后续聊天命令。
 pub async fn fetch_group_members(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
@@ -275,6 +304,7 @@ pub async fn fetch_group_members(
     });
 }
 
+/// 分页检索指定发送者在会话内的发言，结果以 `memberHistoryResponse` 返回。
 pub async fn fetch_messages_by_sender(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,
@@ -334,6 +364,7 @@ pub async fn fetch_messages_by_sender(
     }
 }
 
+/// 拉取系统验证消息；结果以 `setSystemMessages` 交给界面，超时会上报失败。
 pub async fn get_system_messages(
     client: &Client,
     event_tx: &Option<UnboundedSender<BridgeEvent>>,

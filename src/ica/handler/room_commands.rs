@@ -6,6 +6,7 @@ use crate::ica::types::RoomId;
 use crate::ica::types::room::Room;
 use serde_json::json;
 
+/// 新增一个会话（房间）。
 pub async fn add_room(ctx: CommandContext<'_>, room: Room) {
     let CommandContext {
         client,
@@ -28,6 +29,7 @@ pub async fn add_room(ctx: CommandContext<'_>, room: Room) {
     }
 }
 
+/// 置顶或取消置顶会话。
 pub async fn pin_room(ctx: CommandContext<'_>, room_id: RoomId, pin: bool) {
     let CommandContext {
         client,
@@ -52,6 +54,7 @@ pub async fn pin_room(ctx: CommandContext<'_>, room_id: RoomId, pin: bool) {
     }
 }
 
+/// 从会话列表移除一个聊天。
 pub async fn remove_chat(ctx: CommandContext<'_>, room_id: RoomId) {
     let CommandContext {
         client,
@@ -73,6 +76,7 @@ pub async fn remove_chat(ctx: CommandContext<'_>, room_id: RoomId) {
     }
 }
 
+/// 屏蔽一个聊天；`room_name` 一并传给 Bridge 用于展示。
 pub async fn ignore_chat(ctx: CommandContext<'_>, room_id: RoomId, room_name: String) {
     let CommandContext {
         client,
@@ -97,6 +101,7 @@ pub async fn ignore_chat(ctx: CommandContext<'_>, room_id: RoomId, room_name: St
     }
 }
 
+/// 取消屏蔽一个聊天。
 pub async fn remove_ignored_chat(ctx: CommandContext<'_>, room_id: RoomId) {
     let CommandContext {
         client,
@@ -118,6 +123,7 @@ pub async fn remove_ignored_chat(ctx: CommandContext<'_>, room_id: RoomId) {
     }
 }
 
+/// 设置会话优先级。
 pub async fn set_room_priority(ctx: CommandContext<'_>, room_id: RoomId, priority: u8) {
     let CommandContext {
         client,
@@ -142,6 +148,7 @@ pub async fn set_room_priority(ctx: CommandContext<'_>, room_id: RoomId, priorit
     }
 }
 
+/// 清除会话未读计数与 @ 状态。
 pub async fn clear_room_unread(ctx: CommandContext<'_>, room_id: RoomId) {
     let CommandContext {
         client,
@@ -172,6 +179,7 @@ pub async fn clear_room_unread(ctx: CommandContext<'_>, room_id: RoomId) {
     }
 }
 
+/// 向 Bridge 上报已读到指定消息。
 pub async fn report_read(ctx: CommandContext<'_>, room_id: RoomId, message_id: String) {
     let CommandContext {
         client,
@@ -193,6 +201,7 @@ pub async fn report_read(ctx: CommandContext<'_>, room_id: RoomId, message_id: S
     }
 }
 
+/// 新建聊天分组；`include_all_personal` 决定是否自动包含全部私聊。
 pub async fn add_chat_group(
     ctx: CommandContext<'_>,
     name: String,
@@ -223,6 +232,7 @@ pub async fn add_chat_group(
     }
 }
 
+/// 删除一个聊天分组。
 pub async fn remove_chat_group(ctx: CommandContext<'_>, name: String) {
     let CommandContext {
         client,
@@ -243,6 +253,7 @@ pub async fn remove_chat_group(ctx: CommandContext<'_>, name: String) {
     }
 }
 
+/// 更新聊天分组的成员会话列表。
 pub async fn update_chat_group(
     ctx: CommandContext<'_>,
     name: String,

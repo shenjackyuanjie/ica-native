@@ -114,6 +114,7 @@ pub struct GroupAnnouncementImage {
     pub id: String,
     /// CGI 声明的原始像素宽高，缺失或非数字时为 None。
     pub width: Option<u32>,
+    /// 像素高度；与 `width` 一起用于占位比。
     pub height: Option<u32>,
 }
 
@@ -153,8 +154,11 @@ pub struct GroupAnnouncement {
     pub sender_id: i64,
     /// 发布时间（秒级时间戳）。
     pub publish_time: i64,
+    /// 公告标题。
     pub title: String,
+    /// 公告正文（已还原为纯文本）。
     pub text: String,
+    /// 正文配图。
     pub images: Vec<GroupAnnouncementImage>,
     /// 已读人数；QQ 未下发时为 None。
     pub read_count: Option<i64>,
@@ -175,6 +179,7 @@ pub struct GroupAnnouncement {
     pub raw: JsonValue,
 }
 
+/// 把 JSON 值转成字符串；null 取空串，其他类型走其 JSON 文本形式。
 fn json_string(value: &JsonValue) -> String {
     match value {
         JsonValue::String(text) => text.clone(),
@@ -183,6 +188,7 @@ fn json_string(value: &JsonValue) -> String {
     }
 }
 
+/// 读取可能是数字或字符串的整数字段；类型不符或缺失时为 None。
 fn json_i64(value: &JsonValue) -> Option<i64> {
     match value {
         JsonValue::Number(number) => number.as_i64(),
@@ -364,6 +370,7 @@ pub fn parse_announcement_list(value: &JsonValue) -> Result<Vec<GroupAnnouncemen
 pub struct GroupAnnouncementDraft {
     /// 为空表示新建；带上已有公告的 fid 即为编辑该条公告。
     pub fid: Option<String>,
+    /// 公告正文。
     pub text: String,
     /// 是否置顶。
     pub pinned: bool,
@@ -407,6 +414,7 @@ impl GroupAnnouncementDraft {
         }
     }
 
+    /// 是否为编辑已有公告（fid 非空）。
     pub fn is_edit(&self) -> bool {
         self.fid.is_some()
     }

@@ -1,3 +1,9 @@
+//! 消息的协议类型。
+//!
+//! `Message` 是界面渲染用的归一化形态，由 Bridge 的原始 JSON 二次解析而来：
+//! 必填字段缺失即报错，可选字段一律有默认值。发送侧另有 `SendMessage`、
+//! `NewMessage`、`DeleteMessage` 等请求类型。
+
 #[cfg(test)]
 #[path = "tests/message.rs"]
 mod tests;
@@ -13,7 +19,9 @@ use std::fmt;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum At {
+    /// @全体成员。
     All,
+    /// 是否 @ 到当前用户。
     Bool(bool),
     /// 占位值
     #[default]
@@ -89,26 +97,36 @@ impl<'de> Deserialize<'de> for At {
  */
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LastMessage {
+    /// 摘要内容。
     pub content: Option<String>,
+    /// 时间文本。
     pub timestamp: Option<String>,
+    /// 发送者名字。
     pub username: Option<String>,
+    /// 发送者 ID。
     #[serde(rename = "userId")]
     pub user_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReplyMessage {
+    /// 被回复的消息 ID。
     #[serde(rename = "_id")]
     pub msg_id: String,
+    /// 被回复消息的内容。
     pub content: String,
+    /// 被回复消息带的单个文件。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<MessageFile>,
+    /// 被回复消息带的文件列表。
     #[serde(default, deserialize_with = "deserialize_message_files")]
     pub files: Vec<MessageFile>,
+    /// 被回复消息的发送者名字。
     #[serde(rename = "username")]
     pub sender_name: String,
 }
 
+/// 兼容 `files` 为单对象、数组或缺失三种形态。
 fn deserialize_message_files<'de, D>(deserializer: D) -> Result<Vec<MessageFile>, D::Error>
 where
     D: Deserializer<'de>,
@@ -127,7 +145,9 @@ where
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mention {
+    /// 被 @ 的成员 ID；1 表示全体成员。
     pub user_id: i64,
+    /// @ 的展示文本。
     pub text: String,
 }
 
@@ -397,6 +417,7 @@ impl<'de> Deserialize<'de> for Message {
     }
 }
 
+/// 按量级推断 Bridge 时间戳的单位（秒 / 毫秒 / 微秒）并转成 UTC。
 fn parse_bridge_timestamp(value: i64) -> Option<DateTime<chrono::Utc>> {
     let magnitude = value.unsigned_abs();
     if magnitude >= 100_000_000_000_000 {
@@ -408,6 +429,7 @@ fn parse_bridge_timestamp(value: i64) -> Option<DateTime<chrono::Utc>> {
     }
 }
 
+/// 保留原始消息链（数组或带 `type` 的对象），供特殊消息类型按原样处理。
 fn retain_raw_message_chain(json: &JsonValue) -> Option<Box<JsonValue>> {
     let raw = json.get("message").unwrap_or(json);
     match raw {
@@ -418,6 +440,7 @@ fn retain_raw_message_chain(json: &JsonValue) -> Option<Box<JsonValue>> {
 }
 
 impl Message {
+    /// 生成调试用的定宽文本行。
     pub fn output(&self) -> String {
         format!(
             // >10 >10 >15
@@ -445,6 +468,7 @@ impl Message {
         self.reply.as_ref()
     }
 
+    /// 获取被回复消息的可变引用。
     pub fn get_reply_mut(&mut self) -> Option<&mut ReplyMessage> {
         self.reply.as_mut()
     }
@@ -460,6 +484,7 @@ pub struct NewMessage {
 }
 
 impl NewMessage {
+    /// 用房间与消息构造。
     pub fn new(room_id: RoomId, msg: Message) -> Self {
         Self { room_id, msg }
     }
@@ -480,22 +505,30 @@ impl NewMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileAttachment {
+    /// 附件类型。
     #[serde(rename = "type")]
     pub file_type: String,
+    /// 本地路径。
     pub path: String,
+    /// 大小（字节）。
     pub size: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageAttachment {
+    /// base64 数据（`data:` URL 形式）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub b64: Option<String>,
+    /// 或图片 URL。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// MIME 类型。
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub file_type: Option<String>,
+    /// 文件 ID。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fid: Option<String>,
+    /// 多图顺序。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order: Option<usize>,
 }
@@ -513,6 +546,7 @@ pub struct SendMessage {
     /// @ 谁
     #[serde(rename = "at")]
     pub at: JsonValue,
+    /// 内嵌图片（base64 或 URL）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media: Vec<ImageAttachment>,
     /// 文件附件（分块上传后使用）
@@ -525,6 +559,7 @@ pub struct SendMessage {
 }
 
 impl SendMessage {
+    /// 构造一条纯文本待发送消息。
     pub fn new(content: String, room_id: RoomId, reply_to: Option<ReplyMessage>) -> Self {
         Self {
             content,
@@ -537,10 +572,12 @@ impl SendMessage {
         }
     }
 
+    /// 序列化成 Bridge 接受的 JSON 值。
     pub fn as_value(&self) -> JsonValue {
         serde_json::to_value(self).unwrap()
     }
 
+    /// 是否带有 base64 内嵌图片（决定能否走 HTTP 直发）。
     pub fn has_base64_media(&self) -> bool {
         self.media.iter().any(|attachment| {
             attachment
@@ -550,6 +587,7 @@ impl SendMessage {
         })
     }
 
+    /// 设置 @ 的成员列表。
     pub fn set_mentions(&mut self, mentions: &[Mention]) {
         self.at = JsonValue::Array(mentions.iter().map(Mention::as_value).collect());
     }
@@ -567,12 +605,14 @@ impl SendMessage {
         self.add_img_data(format!("data:{file_type};base64,{base64_data}"), file_type);
     }
 
+    /// 追加一张 base64 图片（不清理已有 media）。
     pub fn add_img(&mut self, file: &[u8], file_type: &str) {
         use base64::{Engine as _, engine::general_purpose};
         let base64_data = general_purpose::STANDARD.encode(file);
         self.add_img_data(format!("data:{file_type};base64,{base64_data}"), file_type);
     }
 
+    /// 追加一条图片附件记录。
     fn add_img_data(&mut self, b64: String, file_type: &str) {
         self.media.push(ImageAttachment {
             b64: Some(b64),
@@ -587,11 +627,14 @@ impl SendMessage {
 /// 被删除的消息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteMessage {
+    /// 目标会话。
     pub room_id: RoomId,
+    /// 被删除的消息 ID。
     pub message_id: MessageId,
 }
 
 impl DeleteMessage {
+    /// 构造删除请求。
     pub fn new(room_id: RoomId, message_id: MessageId) -> Self {
         Self {
             room_id,
@@ -599,6 +642,7 @@ impl DeleteMessage {
         }
     }
 
+    /// 序列化成 Bridge 接受的 JSON 值。
     pub fn as_value(&self) -> JsonValue {
         serde_json::to_value(self).unwrap()
     }

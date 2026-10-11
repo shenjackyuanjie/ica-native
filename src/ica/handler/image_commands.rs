@@ -6,6 +6,10 @@ use serde_json::json;
 use std::time::Duration;
 use tokio::sync::oneshot;
 
+/// 刷新单张图片的访问 URL。
+///
+/// 只等待 ACK 注册，实际等待在后台任务中进行，结果经 `result_tx` 回传；
+/// Bridge 返回空地址或等待失败都会转成错误字符串。
 pub async fn refresh_image_url(
     ctx: CommandContext<'_>,
     file_id: String,

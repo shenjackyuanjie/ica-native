@@ -24,6 +24,11 @@ where
     Ok(recall().await)
 }
 
+/// 编辑重发一条自己发送的消息。
+///
+/// 先提交新消息（保留原消息的 media，新增图片只能追加），Bridge 经 HTTP
+/// 接收后再请求撤回旧消息；提交失败不撤回、不重试，草稿由界面保留。结果以
+/// `editSendResult` 上报，`accepted` 只表示 Bridge 已接收，不等于 QQ 已送达。
 pub async fn edit_and_resend_message(
     ctx: CommandContext<'_>,
     message: SendMessage,
@@ -74,6 +79,7 @@ pub async fn edit_and_resend_message(
     );
 }
 
+/// 发送普通聊天消息，转交 `send_message` 统一走 HTTP 提交流程。
 pub async fn send_chat_message(ctx: CommandContext<'_>, message: SendMessage) {
     let CommandContext {
         client,
@@ -86,6 +92,7 @@ pub async fn send_chat_message(ctx: CommandContext<'_>, message: SendMessage) {
     send_message(message, client, event_tx, bridge_key, api_base_url, http).await;
 }
 
+/// 发送单图消息；图片编码在阻塞线程上完成，失败时上报 `commandFailed`。
 pub async fn send_image_message(
     ctx: CommandContext<'_>,
     room_id: RoomId,
@@ -127,6 +134,7 @@ pub async fn send_image_message(
     }
 }
 
+/// 发送多图消息；图片编码在阻塞线程上完成，失败时上报 `commandFailed`。
 pub async fn send_multi_image_message(
     ctx: CommandContext<'_>,
     room_id: RoomId,
@@ -164,6 +172,7 @@ pub async fn send_multi_image_message(
     }
 }
 
+/// 发送原始（raw）消息，内容由调用方按 Bridge 协议自行拼装。
 pub async fn send_raw_message(ctx: CommandContext<'_>, room_id: RoomId, content: JsonValue) {
     let CommandContext {
         client,
@@ -190,6 +199,7 @@ pub async fn send_raw_message(ctx: CommandContext<'_>, room_id: RoomId, content:
     }
 }
 
+/// 对一条消息执行隐藏操作。
 pub async fn hide_message(ctx: CommandContext<'_>, room_id: RoomId, message_id: String) {
     let CommandContext {
         client,
@@ -218,6 +228,7 @@ pub async fn hide_message(ctx: CommandContext<'_>, room_id: RoomId, message_id: 
     }
 }
 
+/// 取消一条消息的隐藏。
 pub async fn reveal_message(ctx: CommandContext<'_>, room_id: RoomId, message_id: String) {
     let CommandContext {
         client,
@@ -246,6 +257,7 @@ pub async fn reveal_message(ctx: CommandContext<'_>, room_id: RoomId, message_id
     }
 }
 
+/// 请求 Bridge 重发（renew）一条消息。
 pub async fn renew_message(ctx: CommandContext<'_>, room_id: RoomId, message_id: String) {
     let CommandContext {
         client,
@@ -274,6 +286,7 @@ pub async fn renew_message(ctx: CommandContext<'_>, room_id: RoomId, message_id:
     }
 }
 
+/// 删除（撤回）一条消息；失败时上报 `commandFailed`。
 pub async fn delete_message(ctx: CommandContext<'_>, message: DeleteMessage) {
     let CommandContext {
         client,
@@ -306,6 +319,7 @@ pub struct OutgoingFile {
     pub data: std::sync::Arc<[u8]>,
 }
 
+/// 发送文件消息；先上传再发送，失败时上报 `commandFailed`。
 pub async fn send_file_message(
     ctx: CommandContext<'_>,
     room_id: RoomId,

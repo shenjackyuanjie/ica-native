@@ -1,3 +1,10 @@
+//! 群公告的读取与写操作。
+//!
+//! 公告列表与发布／删除都走 QQ 的 Web CGI：先经 Bridge 取得登录 Cookie，
+//! 再用 Cookie 里的 skey（或 onlineData 下发的 bkn）确定 bkn，以表单 POST
+//! 请求 CGI。CGI 恒定返回 HTTP 200，业务成败由响应体的 `ec` 决定，因此传输
+//! 错误与业务错误分开判定，语义解析交给 `types::announcement`。
+
 use super::context::CommandContext;
 use crate::ica::command::emit_ui_event;
 use crate::ica::event::BridgeEvent;
@@ -12,6 +19,7 @@ use serde_json::{Value as JsonValue, json};
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
+/// 向 Bridge 索取 Cookie 的等待上限；超时即视为本次公告操作失败。
 const COOKIE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// 向 Bridge 索取指定域名的 Cookie。
@@ -194,6 +202,7 @@ fn emit_action_result(
     }
 }
 
+/// 拉取群公告列表；原始响应体经 `groupAnnouncementsResponse` 事件交给界面解析。
 pub async fn fetch_group_announcements(
     ctx: CommandContext<'_>,
     request_id: u64,

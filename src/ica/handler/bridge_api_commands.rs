@@ -11,6 +11,11 @@ use serde_json::Value as JsonValue;
 use serde_json::json;
 use std::time::Duration;
 
+/// 把任意 Socket.IO 事件透传给 Bridge。
+///
+/// `expect_ack` 为 true 时使用 15 秒 ACK 等待，回执经 `socketApiResponse`
+/// 事件返回；为 false 时只发送，成功后同样以 `socketApiResponse`（带 `sent`）
+/// 确认。发送或等待失败统一上报 `commandFailed`。
 pub async fn socket_api_call(
     ctx: CommandContext<'_>,
     event: String,
@@ -86,6 +91,10 @@ pub async fn socket_api_call(
     }
 }
 
+/// 向指定 `gin` 的文件管理连接透传调用。
+///
+/// 结果与错误的投递由 `call_file_manager` 负责，这里只把失败转换成
+/// `commandFailed` 事件。
 pub async fn file_manager_call(
     ctx: CommandContext<'_>,
     gin: i64,
