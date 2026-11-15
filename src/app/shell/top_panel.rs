@@ -1,7 +1,8 @@
-//! 顶部菜单栏：应用信息、通知设置、选项与帮助。
+//! 顶部菜单栏：应用信息、通知设置、功能、选项与帮助。
 //!
-//! 顶栏只放菜单按钮，把入口收敛成四个菜单，避免占满一行按钮。其中
-//! “选项”菜单是各功能窗口的总开关，直接勾选 `open_page` 上的布尔值；
+//! 顶栏只放菜单按钮。“功能”集中提供各类工具窗口的打开/关闭开关，
+//! “选项”保留即时生效的服务开关和应用设置。所有窗口开关直接勾选
+//! `open_page` 上的布尔值；
 //! 需要即时生效的设置（Noticer 启停）在勾选当时就保存并应用。
 
 use crate::app::IcaApp;
@@ -17,12 +18,12 @@ impl IcaApp {
         });
     }
 
-    // 合并后的顶部菜单：包含 Icalingua 信息、通知设置、选项、帮助
-    /// 绘制四个顶层菜单的内容。
+    /// 绘制顶层菜单的内容。
     ///
     /// - Icalingua++ native：版本、仓库链接与验证消息入口；
     /// - 通知设置：通知级别滑块与两类免打扰开关；
-    /// - 选项：即时生效的服务开关与各功能窗口的打开/关闭勾选；
+    /// - 功能：各类工具窗口的打开/关闭勾选；
+    /// - 选项：即时生效的服务开关与应用设置；
     /// - 帮助：文档链接与关于窗口。
     pub fn render_top_menus(&mut self, ui: &mut egui::Ui) {
         // Icalingua 菜单
@@ -60,6 +61,22 @@ impl IcaApp {
             }
         });
 
+        ui.menu_button("功能", |ui| {
+            let contacts_was_open = self.open_page.contacts;
+            let _ = ui.checkbox(&mut self.open_page.contacts, "联系人");
+            if !contacts_was_open && self.open_page.contacts {
+                // 勾选即打开：联系人窗口需要立即发起一次列表请求。
+                self.open_contacts();
+            }
+            let _ = ui.checkbox(&mut self.open_page.group_tools, "群/成员管理");
+            let _ = ui.checkbox(&mut self.open_page.account_tools, "账号/登录设备");
+            let _ = ui.checkbox(&mut self.open_page.file_tools, "文件/资源工具");
+            let _ = ui.checkbox(&mut self.open_page.message_tools, "消息检索/历史");
+            let _ = ui.checkbox(&mut self.open_page.room_tools, "会话设置");
+            let _ = ui.checkbox(&mut self.open_page.auto_sign, "全群自动签到");
+            let _ = ui.checkbox(&mut self.open_page.relation_network, "QQ 关系网");
+        });
+
         // 选项（把原先多个 checkbox 合并在同一菜单内）
         ui.menu_button("选项", |ui| {
             let mut noticer_enabled = self.config.snapshot().noticer.enabled;
@@ -88,19 +105,6 @@ impl IcaApp {
             let _ = ui.checkbox(&mut self.open_page.custom_chat_extra, "定制聊天界面(extra)");
             let _ = ui.checkbox(&mut self.open_page.online_status, "在线状态");
             let _ = ui.checkbox(&mut self.open_page.socketio_status, "Socket.IO 状态");
-            let contacts_was_open = self.open_page.contacts;
-            let _ = ui.checkbox(&mut self.open_page.contacts, "联系人");
-            if !contacts_was_open && self.open_page.contacts {
-                // 勾选即打开：联系人窗口需要立即发起一次列表请求。
-                self.open_contacts();
-            }
-            let _ = ui.checkbox(&mut self.open_page.group_tools, "群/成员管理");
-            let _ = ui.checkbox(&mut self.open_page.account_tools, "账号/登录设备");
-            let _ = ui.checkbox(&mut self.open_page.file_tools, "文件/资源工具");
-            let _ = ui.checkbox(&mut self.open_page.message_tools, "消息检索/历史");
-            let _ = ui.checkbox(&mut self.open_page.room_tools, "会话设置");
-            let _ = ui.checkbox(&mut self.open_page.auto_sign, "全群自动签到");
-            let _ = ui.checkbox(&mut self.open_page.relation_network, "QQ 关系网");
             let _ = ui.checkbox(&mut self.open_page.raw_config, "配置文件编辑");
         });
 

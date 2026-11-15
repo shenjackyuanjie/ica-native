@@ -1,7 +1,7 @@
 //! 全群自动签到：按模式挑选群，按随机间隔依次发送群签到命令。
 //!
 //! 这是一个在 egui 主线程按时间片推进的后台任务：`tick_auto_sign` 每帧检查是否到点，
-//! 到点则向当前 bridge 发送一条 `SendGroupSign`，并用 2–3 秒随机间隔错开请求，避免
+//! 到点则向当前 bridge 发送一条 `SendGroupSign`，并用可调的随机间隔错开请求，避免
 //! 触发 Bridge 频率限制。进度、耗时与房间清单由 `AutoSignState` 维护，
 //! `render_auto_sign_window` 负责对应的设置/进度窗口。
 
@@ -15,10 +15,10 @@ use std::time::{Duration, Instant};
 const HOT_DEFAULT_HOURS: u32 = 12;
 /// “7 天”预设对应的活跃窗口小时数。
 const WARM_PRESET_HOURS: u32 = 7 * 24;
-/// 相邻两次群签到请求的最小间隔（毫秒），用于错开请求、规避频率限制。
-const MIN_SIGN_DELAY_MS: u64 = 2_000;
-/// 相邻两次群签到请求的最大间隔（毫秒）。
-const MAX_SIGN_DELAY_MS: u64 = 3_000;
+/// 随机签到间隔的可调下限（秒）。
+const MIN_SIGN_DELAY_SECONDS: f64 = 0.1;
+/// 随机签到间隔的可调上限（秒）。
+const MAX_SIGN_DELAY_SECONDS: f64 = 10.0;
 
 /// 自动签到的选群模式。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -62,6 +62,10 @@ pub struct AutoSignState {
     pub mode: AutoSignMode,
     /// 活跃模式的活跃窗口（小时）。
     pub hot_hours: u32,
+    /// 随机签到间隔的下限（秒）。
+    pub min_delay_seconds: f64,
+    /// 随机签到间隔的上限（秒）。
+    pub max_delay_seconds: f64,
     /// 是否正在进行签到。
     pub running: bool,
     /// 当前任务所属 bridge 的索引。
@@ -95,6 +99,8 @@ impl Default for AutoSignState {
         Self {
             mode: AutoSignMode::All,
             hot_hours: HOT_DEFAULT_HOURS,
+            min_delay_seconds: 2.0,
+            max_delay_seconds: 3.0,
             running: false,
             bridge_idx: 0,
             bridge_key: String::new(),
@@ -292,10 +298,11 @@ impl IcaApp {
         if self.auto_sign.next_index >= self.auto_sign.rooms.len() {
             self.auto_sign.finish(now);
         } else {
-            // 用 2–3 秒随机间隔排定下一次，错开请求以规避 Bridge 频率限制。
+            // 沿用用户设定的范围排定下一次，错开请求以规避 Bridge 频率限制。
             let mut rng = rand::rng();
-            let delay_ms = rng.random_range(MIN_SIGN_DELAY_MS..=MAX_SIGN_DELAY_MS);
-            self.auto_sign.next_tick_at = Some(now + Duration::from_millis(delay_ms));
+            let delay_seconds = rng
+                .random_range(self.auto_sign.min_delay_seconds..=self.auto_sign.max_delay_seconds);
+            self.auto_sign.next_tick_at = Some(now + Duration::from_secs_f64(delay_seconds));
         }
     }
 
@@ -304,11 +311,11 @@ impl IcaApp {
         let mut open = self.open_page.auto_sign;
         egui::Window::new("全群自动签到")
             .open(&mut open)
-            .default_size(egui::vec2(420.0, 360.0))
+            .default_size(egui::vec2(520.0, 400.0))
             .min_size(egui::vec2(320.0, 260.0))
             .resizable(true)
             .show(ctx, |ui| {
-                ui.label("按 2–3 秒随机间隔依次请求群签到。");
+                ui.label("按设定的随机间隔依次请求群签到。");
                 ui.horizontal_wrapped(|ui| {
                     ui.add_enabled_ui(!self.auto_sign.running, |ui| {
                         ui.selectable_value(
@@ -341,6 +348,31 @@ impl IcaApp {
                     });
                 });
 
+                ui.horizontal(|ui| {
+                    ui.label("随机间隔");
+                    ui.add(
+                        egui::Slider::new(
+                            &mut self.auto_sign.min_delay_seconds,
+                            MIN_SIGN_DELAY_SECONDS..=MAX_SIGN_DELAY_SECONDS,
+                        )
+                        .fixed_decimals(2)
+                        .step_by(0.01)
+                        .suffix(" 秒"),
+                    );
+                    ui.label("至");
+                    ui.add(
+                        egui::Slider::new(
+                            &mut self.auto_sign.max_delay_seconds,
+                            MIN_SIGN_DELAY_SECONDS..=MAX_SIGN_DELAY_SECONDS,
+                        )
+                        .fixed_decimals(2)
+                        .step_by(0.01)
+                        .suffix(" 秒"),
+                    );
+                });
+                if self.auto_sign.min_delay_seconds > self.auto_sign.max_delay_seconds {
+                    self.auto_sign.max_delay_seconds = self.auto_sign.min_delay_seconds;
+                }
                 ui.weak(format!(
                     "当前模式：{}；hot 默认半天内活跃，和 bot-sign hot 一致。",
                     self.auto_sign.mode.label()
@@ -372,6 +404,14 @@ impl IcaApp {
 
                 ui.horizontal(|ui| {
                     if self.auto_sign.running {
+                        if ui
+                            .button("立即签到下一个")
+                            .on_hover_text("跳过倒计时，签到队列中的下一个群")
+                            .clicked()
+                        {
+                            self.auto_sign.next_tick_at = Some(Instant::now());
+                            self.tick_auto_sign(ctx);
+                        }
                         if ui.button("停止").clicked() {
                             self.auto_sign.cancel();
                         }
