@@ -27,6 +27,7 @@ pub mod test_support;
 #[cfg(test)]
 mod tests;
 mod tools;
+mod window_trace;
 
 use crate::config::ConfigStore;
 use crate::ica::BridgeEventKind;
@@ -562,7 +563,8 @@ impl eframe::App for IcaApp {
     ///
     /// 顺序重要：事件轮询要早于视图绘制，保证本帧反映最新状态；窄窗口下只显示一个
     /// 主面板，避免各区域互相挤压。
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let window_geometry = window_trace::capture(ui, frame);
         self.sync_agent_context_config();
         self.update_chat_input(ui.ctx());
         self.handle_chat_navigation_shortcuts(ui.ctx());
@@ -606,5 +608,6 @@ impl eframe::App for IcaApp {
         self.render_windows(ui);
         self.render_chat_windows(ui.ctx());
         self.render_agent_context(ui.ctx());
+        window_trace::record(ui, window_geometry);
     }
 }

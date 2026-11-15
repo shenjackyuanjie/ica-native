@@ -1,3 +1,5 @@
+mod window_geometry;
+
 use super::IcaApp;
 
 #[test]

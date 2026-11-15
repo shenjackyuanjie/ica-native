@@ -2,6 +2,30 @@
 
 ica-native 的自动化测试统一通过 `cargo test` 执行，包括业务规则、协议兼容、错误处理和无窗口 GUI 回归。回归是测试目的，不是另一套执行机制；项目没有运行时自测开关，也不会为测试启动真实客户端或连接真实 Bridge。
 
+## 窗口拖拽缩放诊断
+
+出现窗口放大后右侧或底部黑屏时，可启用只记录几何数据的本地日志。该开关默认关闭，不改变重绘调度，不记录账号、聊天或输入内容；不要用它代替真实窗口复现。
+
+在仓库根目录执行（正常退出旧客户端后再启动新构建）：
+
+```powershell
+cargo build --release --locked
+$env:ICA_NATIVE_WINDOW_LOG = "$env:TEMP\ica-native-window-geometry.log"
+.\target\release\ica-native.exe
+# 复现结束后取消开关；日志保留在上述路径。
+Remove-Item Env:ICA_NATIVE_WINDOW_LOG
+```
+
+先停留正常尺寸，再拖动边缘放大／缩小；出现问题时等两秒并移动鼠标，补充记录松开拖拽后的状态。另试一次最大化／还原。如果涉及跨显示器拖动，请说明两侧缩放比例。回传日志并说明黑屏是仅拖动期间出现还是松开后仍存在。
+
+日志中的 `native_pixels` 为客户区物理像素；其除以 `pixels_per_point` 后应与 `viewport_rect` 大小相符。`root_rect`、`root_clip` 与 `used_rect` 用来定位布局或裁剪是否停在旧尺寸；`input_inner_rect` 含桌面坐标，比较大小即可。每次启动追加一个进程分隔头，`frame` 是布局调用序号（可能含 egui 的多轮布局），不是 GPU 提交帧数。日志没有 GPU framebuffer 尺寸，不能仅凭这些数值认定渲染后端已正常。
+
+无窗口布局回归只验证应用面板跟随输入尺寸，不能覆盖原生窗口事件、GPU surface 或 Windows 合成器：
+
+```powershell
+cargo test --locked root_panels_follow_viewport_growth_and_shrink_without_unpainted_edges
+```
+
 ## 文件组织
 
 - 生产文件只声明测试模块，测试实现放在所属业务目录的 `tests/` 下。文件级 `mod`、`use` 和 `pub use` 都放在文件开头，测试声明与条件编译属性也不例外。
