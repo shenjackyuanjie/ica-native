@@ -15,6 +15,21 @@ use crate::app::chat::format_message_content;
 use crate::app::{ChatListScrollTarget, IcaApp};
 use crate::ica::types::room::Room;
 
+/// painter 单行省略，不向虚拟列表添加子 widget 或改变行高。
+fn layout_single_line(
+    painter: &egui::Painter,
+    text: String,
+    font: egui::FontId,
+    color: egui::Color32,
+    width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(text, font, color);
+    job.wrap.max_width = width.max(0.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    painter.layout_job(job)
+}
+
 /// 根据视口范围计算可见行区间（含上下各两行缓冲）。
 ///
 /// 虚拟列表只需要绘制可见行；缓冲行让快速滚动时不会出现明显空白。
@@ -421,7 +436,13 @@ impl IcaApp {
             egui::pos2(right_limit.max(text_left), rect.bottom()),
         );
         let name_painter = painter.with_clip_rect(name_clip);
-        let name_galley = name_painter.layout_no_wrap(name_text.to_owned(), name_font, name_color);
+        let name_galley = layout_single_line(
+            &name_painter,
+            name_text.to_owned(),
+            name_font,
+            name_color,
+            name_clip.width(),
+        );
         name_painter.galley(egui::pos2(text_left, name_y), name_galley, name_color);
 
         // 第二行右侧先画未读胶囊，再让消息预览在剩余宽度里裁剪。
@@ -449,6 +470,13 @@ impl IcaApp {
             painter.galley(badge_rect.min + padding, galley, egui::Color32::WHITE);
             preview_right = badge_rect.left() - 8.0;
         }
+
+        // 发送者、草稿标记和正文都必须避开未读角标，不能只裁剪正文。
+        let preview_clip = egui::Rect::from_min_max(
+            egui::pos2(text_left, rect.top()),
+            egui::pos2(preview_right.max(text_left), rect.bottom()),
+        );
+        let painter = painter.with_clip_rect(preview_clip);
 
         // 草稿优先于最后一条消息显示，避免群聊发送者前缀看起来像草稿作者。
         // 蓝色标记用于从列表中快速识别仍有未发送内容的会话。
@@ -484,10 +512,13 @@ impl IcaApp {
                 } else {
                     egui::Color32::from_rgb(0x19, 0x76, 0xd2)
                 };
-                let galley = painter.layout_no_wrap(
+                // 昵称最多占可用预览的一半，长昵称省略后仍给正文留出空间。
+                let galley = layout_single_line(
+                    &painter,
                     format!("{username}:"),
                     egui::FontId::proportional(12.0),
                     username_color,
+                    ((preview_right - text_left - 4.0) * 0.5).max(0.0),
                 );
                 painter.galley(
                     egui::pos2(preview_x, preview_y),
@@ -499,8 +530,7 @@ impl IcaApp {
             room.last_message.content.as_deref()
         };
 
-        // 消息内容也通过 painter clip 截断。这里用 layout_no_wrap 是为了保持
-        // 单行预览，和旧的 TextWrapMode::Truncate 行为一致。
+        // 正文在剩余宽度内单行省略，并保留裁剪作为像素级越界保护。
         if let Some(content) = preview_content
             && !content.is_empty()
             && preview_x < preview_right
@@ -511,10 +541,12 @@ impl IcaApp {
                 egui::pos2(preview_right, rect.bottom()),
             );
             let preview_painter = painter.with_clip_rect(preview_clip);
-            let galley = preview_painter.layout_no_wrap(
+            let galley = layout_single_line(
+                &preview_painter,
                 preview,
                 egui::FontId::proportional(12.0),
                 muted_color,
+                preview_clip.width(),
             );
             preview_painter.galley(egui::pos2(preview_x, preview_y), galley, muted_color);
         }
