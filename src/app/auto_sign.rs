@@ -5,6 +5,8 @@
 //! 触发 Bridge 频率限制。进度、耗时与房间清单由 `AutoSignState` 维护，
 //! `render_auto_sign_window` 负责对应的设置/进度窗口。
 
+mod delay_range;
+
 use super::IcaApp;
 use crate::ica::IcaCommand;
 use crate::ica::types::{RoomId, room::Room};
@@ -348,31 +350,12 @@ impl IcaApp {
                     });
                 });
 
-                ui.horizontal(|ui| {
-                    ui.label("随机间隔");
-                    ui.add(
-                        egui::Slider::new(
-                            &mut self.auto_sign.min_delay_seconds,
-                            MIN_SIGN_DELAY_SECONDS..=MAX_SIGN_DELAY_SECONDS,
-                        )
-                        .fixed_decimals(2)
-                        .step_by(0.01)
-                        .suffix(" 秒"),
-                    );
-                    ui.label("至");
-                    ui.add(
-                        egui::Slider::new(
-                            &mut self.auto_sign.max_delay_seconds,
-                            MIN_SIGN_DELAY_SECONDS..=MAX_SIGN_DELAY_SECONDS,
-                        )
-                        .fixed_decimals(2)
-                        .step_by(0.01)
-                        .suffix(" 秒"),
-                    );
-                });
-                if self.auto_sign.min_delay_seconds > self.auto_sign.max_delay_seconds {
-                    self.auto_sign.max_delay_seconds = self.auto_sign.min_delay_seconds;
-                }
+                let auto_sign = &mut self.auto_sign;
+                delay_range::render(
+                    ui,
+                    &mut auto_sign.min_delay_seconds,
+                    &mut auto_sign.max_delay_seconds,
+                );
                 ui.weak(format!(
                     "当前模式：{}；hot 默认半天内活跃，和 bot-sign hot 一致。",
                     self.auto_sign.mode.label()
