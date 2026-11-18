@@ -80,7 +80,9 @@ async fn sign_with_key(
             "expectedProtocolVersion": ICA_PROTOCOL_VERSION,
         }),
     );
-    if protocol_version != ICA_PROTOCOL_VERSION {
+    // 比较握手中的 protocolVersion，不用服务发布号推断功能：本地上传补丁版
+    // 虽叫 2.26.9，报的仍是 2.26.7。旧 Bridge 可继续聊天，上游 2.26.9 起才有资源事件。
+    if !matches!(protocol_version, ICA_PROTOCOL_VERSION | "2.26.9" | "2.26.7") {
         let message = format!(
             "Bridge 协议版本不匹配：客户端要求 {ICA_PROTOCOL_VERSION}，服务器为 {protocol_version}"
         );

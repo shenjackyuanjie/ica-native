@@ -95,6 +95,27 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
             }
             state.last_error = payload::payload_message(payload);
         }
+        "socketApiResponse"
+            if let Some(event @ ("favoritesRequest" | "flashTransferRequest")) =
+                payload.get("event").and_then(JsonValue::as_str) =>
+        {
+            // 列表经常超过旧工具的 1024 字预览，给详情单独留一个有界槽位。
+            // 下载地址/请求头可能有临时凭据：其它工具和状态历史只看结果，不看原文。
+            state.last_resource_api_response = Some(payload::json_preview(payload, 64 * 1024));
+            let result = match payload
+                .get("ack")
+                .and_then(payload::first_payload_value)
+                .and_then(|ack| ack.get("ok"))
+                .and_then(JsonValue::as_bool)
+            {
+                Some(true) => "成功",
+                Some(false) => "失败",
+                None => "响应无效",
+            };
+            state.last_notice = Some(format!(
+                "Socket API {event}：{result}，详情见高级 Socket API"
+            ));
+        }
         "socketApiResponse" | "fileManagerResponse" => {
             let response = payload::json_preview(payload, 1024);
             state.last_socket_api_response = Some(response.clone());

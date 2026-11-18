@@ -369,6 +369,27 @@ const SOCKET_API_PRESETS: &[SocketApiPreset] = &[
         note: "参数: 群号 gin。",
     },
     SocketApiPreset {
+        label: "QQ 收藏：列出条目",
+        event: "favoritesRequest",
+        args: r#"[{"action":"list","options":{"page_size":10}}]"#,
+        expect_ack: true,
+        note: "需要 Bridge 协议 2.26.9 或 2.26.10。可将 action 改为 get 并传 cid 查看详情。",
+    },
+    SocketApiPreset {
+        label: "QQ 闪传：解析分享",
+        event: "flashTransferRequest",
+        args: r#"[{"action":"resolve","input":"分享链接、分享码或文件集 ID"}]"#,
+        expect_ack: true,
+        note: "需要 Bridge 协议 2.26.9 或 2.26.10。返回的文件集 ID 可用于列出文件。",
+    },
+    SocketApiPreset {
+        label: "QQ 闪传：列出文件",
+        event: "flashTransferRequest",
+        args: r#"[{"action":"list","fileset_id":"文件集 ID"}]"#,
+        expect_ack: true,
+        note: "可选 parent_id 指定目录，省略时列出根目录。",
+    },
+    SocketApiPreset {
         label: "获取群文件元信息",
         event: "getGroupFileMeta",
         args: "[123456, \"fid\"]",

@@ -456,12 +456,28 @@ impl IcaApp {
                     if ui.button("发送").clicked() {
                         send_socket_api = true;
                     }
-                    if let Some(active) = self.active_bridge_state()
-                        && let Some(response) = &active.last_socket_api_response
-                    {
+                    // 资源回执只在用户查看该类事件时展示；复制也要由用户主动触发。
+                    let response = self.active_bridge_state().and_then(|active| {
+                        match self.socket_api_event.trim() {
+                            "favoritesRequest" | "flashTransferRequest" => {
+                                active.last_resource_api_response.as_ref()
+                            }
+                            _ => active.last_socket_api_response.as_ref(),
+                        }
+                    });
+                    if let Some(response) = response {
                         ui.separator();
-                        ui.label("最近响应");
-                        ui.monospace(response);
+                        ui.horizontal(|ui| {
+                            ui.label("最近响应");
+                            if ui.button("复制响应").clicked() {
+                                ui.ctx().copy_text(response.clone());
+                            }
+                        });
+                        egui::ScrollArea::vertical()
+                            .max_height(200.0)
+                            .show(ui, |ui| {
+                                ui.monospace(response);
+                            });
                     }
                 });
             });

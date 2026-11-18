@@ -78,6 +78,8 @@ pub struct ConnectionState {
     observed_notice: Option<String>,
     /// 最近一次高级 Socket API 调用的响应原文。
     pub last_socket_api_response: Option<String>,
+    /// 收藏或闪传的最近回执，单独保留，不出现在其他工具窗口。
+    pub last_resource_api_response: Option<String>,
     /// Bridge 请求登录/初始化的提示内容。
     pub setup_requested: Option<String>,
     /// 致命错误；出现后连接不再可用。
@@ -103,6 +105,7 @@ impl ConnectionState {
             observed_error: None,
             observed_notice: None,
             last_socket_api_response: None,
+            last_resource_api_response: None,
             setup_requested: None,
             fatal_error: None,
             last_event: None,

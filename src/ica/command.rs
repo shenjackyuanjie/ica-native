@@ -25,11 +25,8 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
-/// icalingua 客户端的兼容版本号
-///
-/// 与 Bridge 的 `protocolVersion` 比对，不一致时由 `client::sign_with_key` 上报
-/// `bridgeProtocolMismatch`，是否继续连接取决于配置里的容错开关。
-pub const ICA_PROTOCOL_VERSION: &str = "2.26.7";
+/// icalingua 客户端当前跟进的 Bridge `protocolVersion`。
+pub const ICA_PROTOCOL_VERSION: &str = "2.26.10";
 /// 群禁言时长上限：30 天（秒）。
 ///
 /// Bridge 侧对超过该时长的请求会拒绝，GUI 需要在提交前就按此钳制。

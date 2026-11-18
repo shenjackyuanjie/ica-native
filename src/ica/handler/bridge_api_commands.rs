@@ -1,21 +1,30 @@
 //! 直接透传给 Bridge 的原始 Socket.IO / 文件管理调用。
 
-use super::ack_payload_values;
 use super::context::CommandContext;
 use crate::ica::command::emit_ui_event;
 use crate::ica::file_manager::call_file_manager;
-use futures_util::future::BoxFuture;
-use rust_socketio::Payload;
-use rust_socketio::asynchronous::Client;
+use crate::ica::{BridgeEvent, ack};
 use serde_json::Value as JsonValue;
 use serde_json::json;
 use std::time::Duration;
+use tokio::sync::mpsc::UnboundedSender;
 
-/// 把任意 Socket.IO 事件透传给 Bridge。
-///
-/// `expect_ack` 为 true 时使用 15 秒 ACK 等待，回执经 `socketApiResponse`
-/// 事件返回；为 false 时只发送，成功后同样以 `socketApiResponse`（带 `sent`）
-/// 确认。发送或等待失败统一上报 `commandFailed`。
+/// 统一交给界面处理本地校验、发送和 ACK 超时，只传错误描述，不传原始请求。
+fn socket_api_failure(
+    event_tx: &Option<UnboundedSender<BridgeEvent>>,
+    bridge_key: &str,
+    event: &str,
+    message: &str,
+) {
+    emit_ui_event(
+        event_tx,
+        bridge_key,
+        "commandFailed",
+        json!({"kind": "socketApiCall", "event": event, "message": message}),
+    );
+}
+
+/// 通过当前 Bridge 发送原始事件；等待 ACK 时不阻塞后续聊天命令。
 pub async fn socket_api_call(
     ctx: CommandContext<'_>,
     event: String,
@@ -28,65 +37,62 @@ pub async fn socket_api_call(
         bridge_key,
         ..
     } = ctx;
-    if expect_ack {
-        let event_for_cb = event.clone();
-        let tx = event_tx.clone();
-        let bridge_id = bridge_key.to_string();
-        if let Err(e) = client
-            .emit_with_ack(
-                event.as_str(),
-                args,
-                Duration::from_secs(15),
-                move |payload: Payload, _client: Client| -> BoxFuture<'static, ()> {
-                    let tx = tx.clone();
-                    let bridge_id = bridge_id.clone();
-                    let event = event_for_cb.clone();
-                    Box::pin(async move {
-                        emit_ui_event(
-                            &tx,
-                            &bridge_id,
-                            "socketApiResponse",
-                            json!({
-                                "event": event,
-                                "ack": ack_payload_values(&payload),
-                            }),
-                        );
-                    })
-                },
-            )
-            .await
-        {
-            emit_ui_event(
-                event_tx,
-                bridge_key,
-                "commandFailed",
-                json!({
-                    "kind": "socketApiCall",
-                    "event": event,
-                    "message": e.to_string(),
-                }),
-            );
-        }
-    } else if let Err(e) = client.emit(event.as_str(), args).await {
-        emit_ui_event(
+    // 上游签名为 (request, callback)，不是多个位置参数；没有 callback 不会执行。
+    // 只校验公共形状，具体 action 与字段交给 Bridge 校验，避免重复维护动作列表。
+    let resource_request = matches!(event.as_str(), "favoritesRequest" | "flashTransferRequest");
+    let action = args
+        .first()
+        .and_then(|request| request.get("action"))
+        .and_then(JsonValue::as_str);
+    if resource_request
+        && (!expect_ack || args.len() != 1 || action.is_none_or(|action| action.trim().is_empty()))
+    {
+        socket_api_failure(
             event_tx,
             bridge_key,
-            "commandFailed",
-            json!({
-                "kind": "socketApiCall",
-                "event": event,
-                "message": e.to_string(),
-            }),
+            &event,
+            "需要一个带非空 action 的请求对象，并等待 ACK",
         );
+        return;
+    }
+    if expect_ack {
+        // 对齐 Electron：闪传可能递归列目录，收藏 fileUrl 需要额外解析下载凭据。
+        // 其他旧事件继续用默认 15 秒，等待超时不重发，避免重复修改/分享。
+        let timeout = Duration::from_secs(match (event.as_str(), action) {
+            ("flashTransferRequest", _) => 120,
+            ("favoritesRequest", Some("fileUrl")) => 35,
+            ("favoritesRequest", _) => 20,
+            _ => 15,
+        });
+        match ack::start(client, &event, args, timeout).await {
+            Ok(pending) => {
+                // 发包仍按主连接命令顺序；只有等回包移到后台，聊天和回执互不阻塞。
+                let event_tx = event_tx.clone();
+                let bridge_key = bridge_key.to_owned();
+                tokio::spawn(async move {
+                    match pending.receive().await {
+                        Ok(payload) => emit_ui_event(
+                            &event_tx,
+                            &bridge_key,
+                            "socketApiResponse",
+                            json!({"event": event, "ack": ack::payload_values(&payload)}),
+                        ),
+                        Err(error) => {
+                            socket_api_failure(&event_tx, &bridge_key, &event, &error.to_string());
+                        }
+                    }
+                });
+            }
+            Err(error) => socket_api_failure(event_tx, bridge_key, &event, &error.to_string()),
+        }
+    } else if let Err(error) = client.emit(event.as_str(), args).await {
+        socket_api_failure(event_tx, bridge_key, &event, &error.to_string());
     } else {
         emit_ui_event(
             event_tx,
             bridge_key,
             "socketApiResponse",
-            json!({
-                "event": event,
-                "sent": true,
-            }),
+            json!({"event": event, "sent": true}),
         );
     }
 }
