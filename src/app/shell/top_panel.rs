@@ -11,6 +11,7 @@ use egui::Hyperlink;
 impl IcaApp {
     /// 绘制顶部菜单栏容器。
     pub fn render_top_panel(&mut self, ui: &mut egui::Ui) {
+        self.handle_settings_shortcut(ui.ctx());
         egui::Panel::top("顶栏").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 self.render_top_menus(ui);
@@ -49,15 +50,10 @@ impl IcaApp {
 
         // 通知设置
         ui.menu_button("通知设置", |ui| {
-            ui.label("通知启用级别 1-5");
-            let _ = ui.add(egui::Slider::new(&mut self.notify_level, 1..=5));
+            self.render_notification_options(ui);
             if ui.button("通知等级说明").clicked() {
                 ui.close();
                 self.open_page.notify_level = true;
-            }
-            let _ = ui.checkbox(&mut self.mute_any, "禁用任何通知");
-            if !self.mute_any {
-                let _ = ui.checkbox(&mut self.mute_all, "禁用 @ 全体 通知");
             }
         });
 
@@ -100,8 +96,10 @@ impl IcaApp {
                 ui.close();
             }
             ui.separator();
-            ui.label("打开选项页面");
-            let _ = ui.checkbox(&mut self.open_page.settings, "设置");
+            if ui.button("设置中心…").on_hover_text("Ctrl+,").clicked() {
+                self.open_page.settings = true;
+                ui.close();
+            }
             let _ = ui.checkbox(&mut self.open_page.custom_chat_ica, "定制聊天界面(ica)");
             let _ = ui.checkbox(&mut self.open_page.custom_chat_extra, "定制聊天界面(extra)");
             let _ = ui.checkbox(&mut self.open_page.online_status, "在线状态");

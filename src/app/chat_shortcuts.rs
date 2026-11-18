@@ -177,6 +177,7 @@ impl IcaApp {
             page.about,
             page.settings,
             page.noticer_settings,
+            page.agent_context_settings,
             page.notify_level,
             page.custom_chat_ica,
             page.custom_chat_extra,

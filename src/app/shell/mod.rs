@@ -7,5 +7,6 @@
 mod about;
 mod chat_list;
 mod left_groups;
+mod settings_center;
 mod top_panel;
 mod windows;

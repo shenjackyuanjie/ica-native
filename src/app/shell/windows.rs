@@ -96,6 +96,7 @@ impl IcaApp {
             self.open_page.custom_chat_extra = false;
         }
         self.apply_chat_appearance_viewport_changes();
+        self.render_settings_center(&ctx);
         let parent_viewport_id = ctx.viewport_id();
 
         // 定制聊天界面 (ica)
