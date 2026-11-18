@@ -1,12 +1,62 @@
-//! 最左侧的聊天分组导航栏：所有聊天/群聊/私聊/自定义分组与账号头像。
-//!
-//! 窄栏固定 70px，只放图标按钮与截断的文字标签。选中状态在闭包内先改本地
-//! 副本，绘制结束后再经 `select_active_chat_group` 统一提交，保证键盘导航
-//! 与鼠标点击走同一条路径；分组增删（把当前会话加入/移出分组）同样先记录
-//! 意图，最后统一同步到 Bridge。
+//! 最左侧的聊天分组导航栏：账号、分组切换和未读提示。
+
+#[cfg(test)]
+#[path = "tests/left_groups.rs"]
+mod tests;
 
 use crate::app::{ChatListScrollTarget, CompactChatPanel, IcaApp, SelectedChatGroup};
+use crate::config::chat_groups::ChatGroup;
+use crate::ica::types::{RoomId, message::At, room::Room};
 use egui::{Button, Image, Label, RichText};
+use std::collections::HashSet;
+
+#[derive(Default)]
+struct SidebarUnread {
+    rooms: HashSet<RoomId>,
+    private: bool,
+    group: bool,
+}
+
+impl SidebarUnread {
+    fn from_rooms(rooms: &[Room], notify_level: u8, include_at_all: bool) -> Self {
+        let mut unread = Self::default();
+        for room in rooms.iter().filter(|room| {
+            room.unread_count > 0
+                && (room.priority >= notify_level
+                    || matches!(room.at, At::Bool(true))
+                    || (include_at_all && matches!(room.at, At::All)))
+        }) {
+            unread.rooms.insert(room.room_id);
+            unread.private |= room.room_id > 0;
+            unread.group |= room.room_id < 0;
+        }
+        unread
+    }
+
+    fn in_custom_group(&self, group: &ChatGroup) -> bool {
+        (group.include_all_personal && self.private)
+            || group.rooms.iter().any(|room| self.rooms.contains(room))
+    }
+}
+
+fn draw_group(
+    ui: &mut egui::Ui,
+    image: &Image<'_>,
+    name: &str,
+    selected: bool,
+    unread: bool,
+) -> egui::Response {
+    let response = ui.add(Button::image(image.clone())).on_hover_text(name);
+    if unread && !selected {
+        let radius = 3.0;
+        let pos = response.rect.right_top() + egui::vec2(-radius, radius);
+        ui.painter().circle_filled(pos, radius, egui::Color32::RED);
+    }
+    let text = RichText::new(name);
+    let text = if selected { text.strong() } else { text };
+    ui.add_sized([64.0, 18.0], Label::new(text).selectable(false).truncate());
+    response
+}
 
 impl IcaApp {
     /// 分类按钮与键盘共用入口；不改变当前房间，也不持久化临时筛选。
@@ -33,233 +83,117 @@ impl IcaApp {
         true
     }
 
-    /// 绘制最左侧分组导航栏。
-    ///
-    /// 顶部是账号头像（点击打开在线状态），随后是所有聊天/群聊/私聊与用户
-    /// 自定义分组，底部是分组管理入口。未读红点只画在未选中的分组上。
-    /// 为避免在 egui 闭包里同时可变借用 `self`，这里先把当前 bridge 的
-    /// 分组、房间等数据克隆成局部副本，闭包结束后再整体写回。
+    /// 账号和分组管理入口固定在顶部，分类按钮单独滚动。
     pub fn render_left_groups_panel(&mut self, ui: &mut egui::Ui) {
-        let disable_groups = self.custom_chat.disable_chat_group;
-        let disable_dot = self.custom_chat.disable_chat_group_dot;
+        if self.custom_chat.disable_chat_group || self.custom_chat.hide_chat_group_sidebar {
+            return;
+        }
         let active_bridge_idx = self.active_bridge_idx;
-        let (mut chat_groups, mut selected_chat_group, rooms, selected_room_id, account) =
-            active_bridge_idx
-                .and_then(|idx| self.bridge_states.get(idx))
-                .map(|state| {
-                    (
-                        state.chat_groups.clone(),
-                        state.selected_chat_group.clone(),
-                        state.rooms.clone(),
-                        state.selected_room_id,
-                        (state.online_data.qqid, state.online_data.nick.clone()),
-                    )
-                })
-                .unwrap_or_else(|| {
-                    (
-                        crate::config::ChatGroups::default(),
-                        SelectedChatGroup::All,
-                        Vec::new(),
-                        None,
-                        (0, String::new()),
-                    )
-                });
-        let private_has_unread = rooms
-            .iter()
-            .any(|room| room.room_id > 0 && room.unread_count > 0);
-        let group_has_unread = rooms
-            .iter()
-            .any(|room| room.room_id < 0 && room.unread_count > 0);
-        let custom_group_has_unread = (0..chat_groups.groups.len())
-            .map(|idx| chat_groups.has_unread_in_group(idx, &rooms))
-            .collect::<Vec<_>>();
-        let mut updated_group = None;
-        let mut group_selection_requested = false;
+        let state = self.active_bridge_state();
+        let selected = state.map_or(&SelectedChatGroup::All, |state| &state.selected_chat_group);
+        // 屏蔽 @全体时，它不能让低于通知级别的会话额外触发红点。
+        let unread = state
+            .filter(|_| !self.custom_chat.disable_chat_group_dot)
+            .map(|state| SidebarUnread::from_rooms(&state.rooms, self.notify_level, !self.mute_all))
+            .unwrap_or_default();
+        let mut select_group = None;
+        let mut toggle_membership = None;
+        let mut open_editor = false;
+        let mut open_online_status = false;
 
         egui::Panel::left("群聊组")
             .resizable(false)
             .exact_size(70.0)
             .show(ui, |ui| {
-                let img = Image::new(crate::assets::svg::CHAT_GROUP)
-                    .fit_to_exact_size([24.0, 24.0].into())
-                    .alt_text("chat_group_icon");
-
+                let image = Image::new(crate::assets::svg::CHAT_GROUP)
+                    .fit_to_exact_size([24.0, 24.0].into());
                 ui.spacing_mut().item_spacing.x = 0.5;
                 ui.vertical_centered(|ui| {
-                    if account.0 > 0 {
+                    if let Some(state) = state
+                        && state.online_data.qqid > 0
+                    {
+                        let account = &state.online_data;
                         let avatar = Image::from_uri(format!(
                             "https://q1.qlogo.cn/g?b=qq&nk={}&s=100",
-                            account.0
+                            account.qqid
                         ))
                         .fit_to_exact_size([32.0, 32.0].into())
                         .corner_radius(16.0);
-                        if ui
+                        open_online_status = ui
                             .add(Button::image(avatar))
-                            .on_hover_text(format!("{} ({})", account.1, account.0))
-                            .clicked()
-                        {
-                            self.open_page.online_status = true;
-                        }
-                        ui.add_space(6.0);
+                            .on_hover_text(format!("{} ({})", account.nick, account.qqid))
+                            .clicked();
                     }
-
-                    // 所有聊天
-                    {
-                        let btn = Button::image(img.clone());
-                        let resp = ui.add(btn);
-                        if resp.clicked() {
-                            selected_chat_group = SelectedChatGroup::All;
-                            group_selection_requested = true;
-                        }
-                        let mut text = RichText::new("所有聊天");
-                        if selected_chat_group == SelectedChatGroup::All {
-                            text = text.strong();
-                        }
-                        ui.add_sized([64.0, 18.0], Label::new(text).selectable(false).truncate());
-                    }
-
-                    // 群聊
-                    {
-                        let btn = Button::image(img.clone());
-                        let resp = ui.add(btn);
-                        if resp.clicked() {
-                            selected_chat_group = SelectedChatGroup::Group;
-                            group_selection_requested = true;
-                        }
-                        let mut text = RichText::new("群聊");
-                        if selected_chat_group == SelectedChatGroup::Group {
-                            text = text.strong();
-                        }
-                        if !disable_dot
-                            && selected_chat_group != SelectedChatGroup::Group
-                            && group_has_unread
-                        {
-                            let dot_radius = 3.0;
-                            let dot_pos =
-                                resp.rect.right_top() + egui::vec2(-dot_radius, dot_radius);
-                            ui.painter()
-                                .circle_filled(dot_pos, dot_radius, egui::Color32::RED);
-                        }
-                        ui.add_sized([64.0, 18.0], Label::new(text).selectable(false).truncate());
-                    }
-
-                    // 私聊
-                    {
-                        let btn = Button::image(img.clone());
-                        let resp = ui.add(btn);
-                        if resp.clicked() {
-                            selected_chat_group = SelectedChatGroup::Private;
-                            group_selection_requested = true;
-                        }
-                        let mut text = RichText::new("私聊");
-                        if selected_chat_group == SelectedChatGroup::Private {
-                            text = text.strong();
-                        }
-                        // 私聊未读红点
-                        if !disable_groups
-                            && !disable_dot
-                            && selected_chat_group != SelectedChatGroup::Private
-                            && private_has_unread
-                        {
-                            let dot_radius = 3.0;
-                            let dot_pos =
-                                resp.rect.right_top() + egui::vec2(-dot_radius, dot_radius);
-                            ui.painter()
-                                .circle_filled(dot_pos, dot_radius, egui::Color32::RED);
-                        }
-                        ui.add_sized([64.0, 18.0], Label::new(text).selectable(false).truncate());
-                    }
-
-                    // 用户自定义分组
-                    for (idx, group_name) in chat_groups.group_names().iter().enumerate() {
-                        let btn = Button::image(img.clone());
-                        let resp = ui.add(btn);
-                        let is_selected = matches!(
-                            &selected_chat_group,
-                            SelectedChatGroup::Custom(i) if *i == idx
-                        );
-                        if resp.clicked() {
-                            selected_chat_group = SelectedChatGroup::Custom(idx);
-                            group_selection_requested = true;
-                        }
-
-                        // 未读红点
-                        if !disable_groups
-                            && !disable_dot
-                            && !is_selected
-                            && custom_group_has_unread.get(idx).copied().unwrap_or(false)
-                        {
-                            let dot_radius = 3.0;
-                            let dot_pos =
-                                resp.rect.right_top() + egui::vec2(-dot_radius, dot_radius);
-                            ui.painter()
-                                .circle_filled(dot_pos, dot_radius, egui::Color32::RED);
-                        }
-
-                        // 右键菜单
-                        resp.context_menu(|ui| {
-                            if let Some(room_id) = selected_room_id {
-                                let in_group = chat_groups.is_room_in_group(idx, room_id);
-                                let label = if in_group {
-                                    "移出当前会话"
-                                } else {
-                                    "加入当前会话"
-                                };
-                                if ui.button(label).clicked() {
-                                    chat_groups.toggle_room_in_group(idx, room_id);
-                                    updated_group = Some(idx);
-                                    ui.close();
+                    open_editor = ui.small_button("编辑分组").clicked();
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .id_salt(("chat_group_sidebar", active_bridge_idx))
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            for (category, name, has_unread) in [
+                                (SelectedChatGroup::All, "所有聊天", !unread.rooms.is_empty()),
+                                (SelectedChatGroup::Group, "群聊", unread.group),
+                                (SelectedChatGroup::Private, "私聊", unread.private),
+                            ] {
+                                let is_selected = selected == &category;
+                                if draw_group(ui, &image, name, is_selected, has_unread).clicked() {
+                                    select_group = Some(category);
                                 }
                             }
-                            if ui.button("编辑分组").clicked() {
-                                self.open_page.chat_group_editor = true;
-                                ui.close();
+                            if let Some(state) = state {
+                                for (index, group) in state.chat_groups.groups.iter().enumerate() {
+                                    let category = SelectedChatGroup::Custom(index);
+                                    let response = draw_group(
+                                        ui,
+                                        &image,
+                                        &group.name,
+                                        selected == &category,
+                                        unread.in_custom_group(group),
+                                    );
+                                    if response.clicked() {
+                                        select_group = Some(category);
+                                    }
+                                    response.context_menu(|ui| {
+                                        if let Some(room_id) = state.selected_room_id {
+                                            let label = if group.rooms.contains(&room_id) {
+                                                "移出当前会话"
+                                            } else {
+                                                "加入当前会话"
+                                            };
+                                            if ui.button(label).clicked() {
+                                                toggle_membership = Some((index, room_id));
+                                                ui.close();
+                                            }
+                                        }
+                                        if ui.button("编辑分组").clicked() {
+                                            open_editor = true;
+                                            ui.close();
+                                        }
+                                    });
+                                }
                             }
                         });
-
-                        let mut text: egui::RichText = group_name.as_str().into();
-                        if is_selected {
-                            text = text.strong();
-                        }
-                        ui.add_sized([64.0, 18.0], Label::new(text).selectable(false).truncate());
-                    }
-
-                    // 管理按钮
-                    ui.add_space(8.0);
-                    if ui
-                        .add_sized([24.0, 24.0], Button::new(RichText::new("+").size(16.0)))
-                        .clicked()
-                    {
-                        self.open_page.chat_group_editor = true;
-                    }
-                    if ui
-                        .add_sized([24.0, 24.0], Button::new(RichText::new("⚙").size(14.0)))
-                        .clicked()
-                    {
-                        self.open_page.chat_group_editor = true;
-                    }
                 });
             });
 
-        // 闭包期间改的是本地副本，结束后统一写回并失效可见房间缓存。
-        if let Some(bridge_idx) = active_bridge_idx
-            && let Some(state) = self.bridge_states.get_mut(bridge_idx)
-        {
-            state.chat_groups = chat_groups;
-            state.invalidate_visible_room_indices();
+        if open_online_status {
+            self.open_page.online_status = true;
         }
-        if group_selection_requested {
-            self.select_active_chat_group(selected_chat_group);
+        if open_editor {
+            self.open_page.chat_group_editor = true;
         }
-        if let Some(group_idx) = updated_group
+        if let Some(group) = select_group {
+            self.select_active_chat_group(group);
+        }
+        // 只在确实改动分组成员时写回并使列表缓存失效。
+        if let Some((index, room_id)) = toggle_membership
             && let Some(bridge_idx) = active_bridge_idx
-            && let Some(group) = self.bridge_states[bridge_idx]
-                .chat_groups
-                .groups
-                .get(group_idx)
-                .cloned()
+            && let Some(state) = self.bridge_states.get_mut(bridge_idx)
+            && index < state.chat_groups.groups.len()
         {
-            // 成员变化只上报这一个分组，不做全量覆盖。
+            state.chat_groups.toggle_room_in_group(index, room_id);
+            state.invalidate_visible_room_indices();
+            let group = &self.bridge_states[bridge_idx].chat_groups.groups[index];
             self.send_update_chat_group(
                 bridge_idx,
                 &group.name,
@@ -268,6 +202,4 @@ impl IcaApp {
             );
         }
     }
-
-    // 聊天列表面板：把 header + rooms + 房间渲染整合为更少的函数（内部仍有一个私有房间渲染辅助）
 }

@@ -9,7 +9,6 @@
 mod tests;
 
 use crate::ica::types::RoomId;
-use crate::ica::types::room::Room;
 use serde::{Deserialize, Serialize};
 
 /// 全部分组的集合；顺序即界面展示顺序（可用 `move_group` 调整）。
@@ -23,11 +22,6 @@ impl ChatGroups {
     /// 创建空分组集合。
     pub fn new() -> Self {
         Self { groups: Vec::new() }
-    }
-
-    /// 按顺序取所有分组名（克隆出新 `Vec`，调用方可自由修改）。
-    pub fn group_names(&self) -> Vec<String> {
-        self.groups.iter().map(|g| g.name()).collect()
     }
 
     /// 在末尾追加一个分组。
@@ -65,29 +59,6 @@ impl ChatGroups {
         } else {
             false
         }
-    }
-
-    /// 判断房间是否已在指定分组中；分组不存在时返回 `false`。
-    pub fn is_room_in_group(&self, group_index: usize, room_id: RoomId) -> bool {
-        self.groups
-            .get(group_index)
-            .map(|g| g.rooms.contains(&room_id))
-            .unwrap_or(false)
-    }
-
-    /// 判断分组内是否有未读会话。
-    ///
-    /// 计入两种房间：显式加入分组的，以及 `include_all_personal` 开启时的
-    /// 全部私聊（`room_id > 0`，与 QQ 的私聊 ID 约定一致）。
-    pub fn has_unread_in_group(&self, group_index: usize, rooms: &[Room]) -> bool {
-        let Some(group) = self.groups.get(group_index) else {
-            return false;
-        };
-        rooms.iter().any(|room| {
-            room.unread_count > 0
-                && (group.rooms.contains(&room.room_id)
-                    || (group.include_all_personal && room.room_id > 0))
-        })
     }
 
     /// 把分组从 `from` 挪到 `to`（拖动排序用）；任一下标越界时安全跳过。
@@ -142,10 +113,5 @@ impl ChatGroup {
             rooms: Vec::new(),
             include_all_personal: false,
         }
-    }
-
-    /// 取分组名（克隆，避免调用方持有内部引用）。
-    pub fn name(&self) -> String {
-        self.name.clone()
     }
 }
