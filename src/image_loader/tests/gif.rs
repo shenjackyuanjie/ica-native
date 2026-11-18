@@ -96,7 +96,9 @@ fn cold_poll_does_not_wait_for_decode_and_completion_wakes_ui() {
     ctx.include_bytes(uri, gif_bytes());
     // 清除 Context 首帧自身的 repaint，后面只观察解码完成的唤醒。
     for _ in 0..3 {
-        let _ = ctx.run_ui(Default::default(), |_| {});
+        let mut output = ctx.run_ui(Default::default(), |_| {});
+        // 无渲染后端，显式丢弃本帧的纹理更新。
+        output.textures_delta.clear();
     }
     let (repaint_tx, repaint_rx) = mpsc::channel();
     ctx.set_request_repaint_callback(move |_| {

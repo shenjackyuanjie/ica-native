@@ -153,9 +153,11 @@ fn non_allowlisted_read_waits_for_consent_and_returns_the_frozen_snapshot() {
         Err(oneshot::error::TryRecvError::Empty)
     ));
     let ctx = egui::Context::default();
-    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
         app.render_agent_context(ui.ctx())
     });
+    // 无渲染后端，显式丢弃本帧的纹理更新。
+    output.textures_delta.clear();
     assert!(matches!(
         result.try_recv(),
         Err(oneshot::error::TryRecvError::Empty)
