@@ -484,6 +484,26 @@ fn reply_image_file(reply: &ReplyMessage) -> Option<&MessageFile> {
         .find(|file| is_image_file_type(&file.file_type))
 }
 
+/// 默认隐藏时只显示占位；选中这张图之前不进入图片加载链路。
+fn render_hidden_message_image(
+    ui: &mut egui::Ui,
+    file: &MessageFile,
+    room_id: RoomId,
+    message_id: &str,
+) -> Option<ImageAction> {
+    if file.url.is_empty() {
+        ui.weak("[图片]");
+        return None;
+    }
+    ui.small_button("查看此图").clicked().then(|| {
+        ImageAction::OpenSingle(ImageSource::message(
+            file.url.clone(),
+            room_id,
+            message_id.to_owned(),
+        ))
+    })
+}
+
 /// 渲染消息中的图片缩略图并返回统一图片动作。
 ///
 /// - `source`：图片地址与归属（会话/消息），用于"在聊天中定位"；
@@ -948,58 +968,68 @@ impl IcaApp {
                                                     {
                                                         action =
                                                             Some(MessageAction::ScrollToMessage {
-                                                                msg_id: reply_msg_id,
+                                                                msg_id: reply_msg_id.clone(),
                                                             });
+                                                    }
+                                                    if self.custom_chat.hide_chat_img
+                                                        && let Some(file) = reply_image.filter(|file| !file.url.is_empty())
+                                                        && let Some(image_action) = render_hidden_message_image(
+                                                            ui, file, room_id, &reply_msg_id,
+                                                        )
+                                                    {
+                                                        action = Some(MessageAction::Image(image_action));
                                                     }
                                                 } else {
                                                     let mut reply_image_action = None;
-                                                    let reply_resp = egui::Frame::group(ui.style())
-                                                        .show(ui, |ui| {
-                                                            ui.weak(format!(
-                                                                "回复 {}",
-                                                                reply.sender_name
-                                                            ));
-                                                            if let Some(file) = reply_image {
-                                                                if file.url.is_empty() {
-                                                                    ui.weak("[图片]");
-                                                                } else if self
-                                                                    .custom_chat
-                                                                    .hide_chat_img
-                                                                {
-                                                                    ui.weak("[图片已隐藏]");
-                                                                } else {
-                                                                    let source =
-                                                                        ImageSource::message(
-                                                                            file.url.clone(),
-                                                                            room_id,
-                                                                            reply.msg_id.clone(),
-                                                                        );
-                                                                    reply_image_action =
-                                                                        render_message_image(
-                                                                            ui,
-                                                                            &source,
-                                                                            &file.file_type,
-                                                                            96.0,
-                                                                            96.0,
-                                                                        );
-                                                                }
-                                                            }
-                                                            if !reply.content.trim().is_empty() {
-                                                                render_rich_content(
-                                                                    ui,
-                                                                    &reply.content,
-                                                                    self.custom_chat
-                                                                        .high_contrast_chat,
+                                                    let render_reply = |ui: &mut egui::Ui| {
+                                                        ui.weak(format!(
+                                                            "回复 {}",
+                                                            reply.sender_name
+                                                        ));
+                                                        if let Some(file) = reply_image {
+                                                            if self.custom_chat.hide_chat_img {
+                                                                reply_image_action = render_hidden_message_image(
+                                                                    ui, file, room_id, &reply_msg_id,
                                                                 );
+                                                            } else if file.url.is_empty() {
+                                                                ui.weak("[图片]");
+                                                            } else {
+                                                                let source =
+                                                                    ImageSource::message(
+                                                                        file.url.clone(),
+                                                                        room_id,
+                                                                        reply.msg_id.clone(),
+                                                                    );
+                                                                reply_image_action =
+                                                                    render_message_image(
+                                                                        ui,
+                                                                        &source,
+                                                                        &file.file_type,
+                                                                        96.0,
+                                                                        96.0,
+                                                                    );
                                                             }
-                                                        });
+                                                        }
+                                                        if !reply.content.trim().is_empty() {
+                                                            render_rich_content(
+                                                                ui,
+                                                                &reply.content,
+                                                                self.custom_chat
+                                                                    .high_contrast_chat,
+                                                            );
+                                                        }
+                                                    };
+                                                    // 引用块的定位点击在子控件下方，不能抢走图片按钮。
+                                                    let reply_resp = ui.scope_builder(
+                                                        egui::UiBuilder::new().sense(egui::Sense::click()),
+                                                        |ui| egui::Frame::group(ui.style()).show(ui, render_reply),
+                                                    );
                                                     if let Some(image_action) = reply_image_action {
                                                         action = Some(MessageAction::Image(
                                                             image_action,
                                                         ));
                                                     } else if reply_resp
                                                         .response
-                                                        .interact(egui::Sense::click())
                                                         .on_hover_cursor(
                                                             egui::CursorIcon::PointingHand,
                                                         )
@@ -1043,7 +1073,11 @@ impl IcaApp {
                                                         continue;
                                                     }
                                                     if is_image && self.custom_chat.hide_chat_img {
-                                                        ui.weak("[图片已隐藏]");
+                                                        if let Some(image_action) = render_hidden_message_image(
+                                                            ui, file, room_id, &message.msg_id,
+                                                        ) {
+                                                            action = Some(MessageAction::Image(image_action));
+                                                        }
                                                     } else if is_video_file_type(&file.file_type)
                                                         && self.custom_chat.hide_chat_video
                                                     {

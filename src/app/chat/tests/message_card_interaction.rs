@@ -168,3 +168,90 @@ fn forward_selection_hidden_deleted_and_flash_messages_never_double_click_reply(
         );
     }
 }
+
+#[test]
+fn hidden_image_viewer_opens_only_the_clicked_attachment_of_a_visible_message() {
+    let (mut app, _rx) = test_app();
+    app.custom_chat.hide_chat_img = true;
+    app.custom_chat.hide_group_member_avatar = false;
+    app.custom_chat.disable_img_swap_in_chat = false;
+    let quoted_url = "https://example.invalid/quoted.png";
+    let body_url = "https://example.invalid/body.png";
+    let visible: Message = serde_json::from_value(serde_json::json!({
+        "_id": "visible", "senderId": 456, "username": "Alice", "content": "正文",
+        "files": [{"type": "image/png", "url": body_url}],
+        "replyMessage": {
+            "_id": "quoted", "username": "Bob", "content": "引用",
+            "file": {"type": "image/png", "url": quoted_url}
+        }
+    }))
+    .unwrap();
+    let mut quoted = message("缓存中的原消息");
+    quoted.msg_id = "quoted".into();
+    quoted.files = vec![MessageFile {
+        file_type: "image/png".into(),
+        url: quoted_url.into(),
+        size: None,
+        name: None,
+        fid: None,
+    }];
+    app.bridge_states[0].conversation_mut(-123).messages = vec![quoted, visible.clone()];
+
+    let click_image = |app: &IcaApp, index: usize| {
+        let ctx = egui::Context::default();
+        frame(&ctx, app, &visible, false, 0.0, Vec::new());
+        let layout = frame(&ctx, app, &visible, false, 0.5, Vec::new());
+        let pos = layout
+            .texts
+            .iter()
+            .filter(|(text, _)| text == "查看此图")
+            .nth(index)
+            .expect("正文和引用应分别显示查看入口")
+            .1
+            .center();
+        let pointer = |pressed| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        frame(&ctx, app, &visible, false, 1.0, pointer(true));
+        let Some(MessageAction::Image(action)) =
+            frame(&ctx, app, &visible, false, 1.1, pointer(false)).action
+        else {
+            panic!("点击应查看图片而不是定位引用");
+        };
+        (ctx, action)
+    };
+
+    for (index, url) in [quoted_url, body_url].into_iter().enumerate() {
+        let (ctx, action) = click_image(&app, index);
+        app.handle_image_action(&ctx, 0, action);
+        let viewer = app.image_viewer.take().unwrap();
+        let viewer = viewer.lock().unwrap();
+        assert_eq!(viewer.sources.len(), 1, "不能暴露同会话其他隐藏图片");
+        assert_eq!(viewer.current_source().url, url);
+    }
+
+    app.bridge_states[0].conversation_mut(-123).messages[0].deleted = true;
+    let (ctx, action) = click_image(&app, 0);
+    app.handle_image_action(&ctx, 0, action);
+    assert!(app.image_viewer.is_none(), "不能通过引用查看已撤回原图");
+
+    let mut hidden = visible;
+    hidden.hide = true;
+    let frame = frame(
+        &egui::Context::default(),
+        &app,
+        &hidden,
+        false,
+        0.0,
+        Vec::new(),
+    );
+    assert!(frame.texts.iter().all(|(text, _)| text != "查看此图"));
+}

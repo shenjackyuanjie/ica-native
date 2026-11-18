@@ -670,23 +670,27 @@ impl IcaApp {
                             self.mention_replace_trigger = false;
                             self.mention_selected_index = 0;
                         }
-                        let plus_btn = ui.add_sized(
-                            [button_width, control_height],
-                            Button::new(RichText::new("＋").size(16.0)),
-                        );
-                        plus_btn.context_menu(|ui| {
-                            if ui.button("📷 发送图片").clicked() {
+                        let plus_btn = ui
+                            .add_sized(
+                                [button_width, control_height],
+                                Button::new(RichText::new("＋").size(16.0)),
+                            )
+                            .on_hover_text("添加图片或文件");
+                        let mut attachments = egui::Popup::menu(&plus_btn)
+                            .id(composer_id.with("attachments"));
+                        if plus_btn.secondary_clicked() {
+                            attachments = attachments.open_memory(egui::SetOpenCommand::Bool(true));
+                        }
+                        attachments.show(|ui| {
+                            if ui.button("📷 选择图片").clicked() {
                                 choose_image = true;
                                 ui.close();
                             }
-                            if ui.button("📎 发送文件").clicked() {
+                            if ui.button("📎 选择文件").clicked() {
                                 choose_file = true;
                                 ui.close();
                             }
                         });
-                        if plus_btn.clicked() {
-                            choose_image = true;
-                        }
                         let session = &self.bridge_states[active_bridge_idx];
                         self.audio.render_audio_toolbar(ui, &session.bridge_key, room_id,
                             session.socket_state == crate::app::SocketState::Connected

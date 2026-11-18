@@ -60,6 +60,8 @@ pub enum ImageAction {
     CopyUrl(ImageSource),
     /// 在图片浏览器中打开（可带同会话图库）。
     Open(ImageSource),
+    /// 单独查看一张由聊天设置默认折叠的图片，不构建整会话图库。
+    OpenSingle(ImageSource),
     /// 保存到默认下载目录。
     Save(ImageSource),
     /// 另存为（弹出对话框选择路径）。
@@ -77,6 +79,7 @@ impl ImageAction {
             | Self::AddSticker(source)
             | Self::CopyUrl(source)
             | Self::Open(source)
+            | Self::OpenSingle(source)
             | Self::Save(source)
             | Self::SaveAs(source)
             | Self::Locate(source) => source,
@@ -120,6 +123,19 @@ impl IcaApp {
                         .unwrap_or_else(|| vec![source.clone()])
                 };
                 self.open_image_viewer_with_sources(source, gallery);
+            }
+            ImageAction::OpenSingle(source) => {
+                // 引用卡片可以来自可见消息，而原消息可能已经隐藏或撤回。
+                let original = self.bridge_states.get(bridge_idx).and_then(|state| {
+                    state.find_message(source.room_id?, source.message_id.as_deref()?)
+                });
+                if original
+                    .is_some_and(|message| (message.deleted || message.hide) && !message.reveal)
+                {
+                    self.media_error = Some("原消息已隐藏或撤回，无法查看图片".to_string());
+                    return;
+                }
+                self.open_image_viewer_with_sources(source.clone(), vec![source]);
             }
             ImageAction::CopyImage(source) => {
                 let cached = cached_image_bytes(ctx, &source.url);
