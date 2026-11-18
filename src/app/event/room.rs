@@ -18,6 +18,9 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
                 match Vec::<Room>::deserialize(value) {
                     Ok(rooms) => {
                         state.rooms = rooms;
+                        for conversation in state.conversations.values_mut() {
+                            conversation.room_time_before_live_preview = None;
+                        }
                         state.bump_rooms_revision();
                     }
                     Err(e) => {
@@ -63,6 +66,11 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
             if let Some(value) = payload::first_payload_value(payload) {
                 match Room::deserialize(value) {
                     Ok(updated_room) => {
+                        if let Some(conversation) =
+                            state.conversations.get_mut(&updated_room.room_id)
+                        {
+                            conversation.room_time_before_live_preview = None;
+                        }
                         if let Some(existing) = state
                             .rooms
                             .iter_mut()

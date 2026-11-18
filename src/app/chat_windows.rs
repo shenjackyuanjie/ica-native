@@ -42,10 +42,8 @@ impl IcaApp {
             .iter()
             .any(|window| window.bridge_key == bridge_key && window.room_id == room_id)
         {
-            self.bridge_states[bridge_idx]
-                .detached_room_ids
-                .insert(room_id);
-            // 复用首次取历史、自动已读等逻辑，随后恢复主窗口的选择。
+            // 先复用首次取历史、自动已读等逻辑，再登记为 detached；已登记的会话
+            // 在主窗口里只是占位，不能再重置独立窗口当前的未读和滚动状态。
             let active_bridge = self.active_bridge_idx;
             let selected_room = self.bridge_states[bridge_idx].selected_room_id;
             let compact_panel = self.compact_chat_panel;
@@ -53,6 +51,9 @@ impl IcaApp {
             std::mem::swap(&mut self.state.chat_ui, &mut window_ui);
             self.active_bridge_idx = Some(bridge_idx);
             self.select_active_room(room_id);
+            self.bridge_states[bridge_idx]
+                .detached_room_ids
+                .insert(room_id);
             self.active_bridge_idx = active_bridge;
             self.bridge_states[bridge_idx].selected_room_id = selected_room;
             self.compact_chat_panel = compact_panel;

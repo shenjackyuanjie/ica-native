@@ -246,6 +246,8 @@ impl BridgeState {
         }
 
         messages.truncate(limit);
+        // 新端被截断后，后续实时增量不能与这一段旧消息组成连续的历史尾部。
+        conversation.received_snapshot = false;
         self.invalidate_message_layout(room_id);
         self.conversation_mut(room_id).no_more_history = false;
         true
@@ -338,7 +340,11 @@ impl BridgeState {
         room.last_message.username = Some(message.sender_name.clone());
         room.last_message.user_id = Some(message.sender_id);
         room.last_message.timestamp = Some(message.time_text.clone());
-        room.utime = message.time.timestamp_millis();
+        let previous_time = std::mem::replace(&mut room.utime, message.time.timestamp_millis());
+        // addMessage 的时间可能先于匹配的 updateRoom 到达，未读计数仍属于旧时间。
+        self.conversation_mut(room_id)
+            .room_time_before_live_preview
+            .get_or_insert(previous_time);
         self.bump_rooms_revision();
     }
 
@@ -357,6 +363,9 @@ impl BridgeState {
             *existing = message;
             false
         } else {
+            if let Some(unread) = &mut conversation.opening_unread {
+                unread.exclude_live_message(&message);
+            }
             messages.push(message);
             true
         };

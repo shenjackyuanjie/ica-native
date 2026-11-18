@@ -73,6 +73,8 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
                         conversation.message_layout_cache_key = None;
                         conversation.last_content_height = None;
                         conversation.messages = messages;
+                        conversation.received_snapshot = true;
+                        conversation.resolve_opening_unread();
                         state.trim_message_caches(state.selected_room_id);
                     }
                     Err(e) => {
@@ -119,6 +121,7 @@ pub fn apply(state: &mut BridgeState, event_name: &str, payload: &JsonValue) -> 
                                 }
                                 conversation.message_row_layouts.clear();
                                 conversation.prepend_scroll_fix = true;
+                                conversation.resolve_opening_unread();
                                 state.trim_after_history_prepend(room_id);
                             }
                         }

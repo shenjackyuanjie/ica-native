@@ -14,7 +14,105 @@ use crate::ica::types::{
     files::MessageFile,
     message::{Mention, Message, ReplyMessage},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+#[derive(Debug, Clone)]
+enum UnreadBoundary {
+    Pending {
+        count: usize,
+        tail_time: i64,
+        live_ids: HashSet<String>,
+    },
+    Anchored(String),
+}
+
+/// 这次进入会话时的未读边界，不随会话红点或实时新消息计数变化。
+#[derive(Debug, Clone)]
+pub struct OpeningUnread {
+    boundary: UnreadBoundary,
+    /// 用户请求跳转后，已请求的前插页数；未请求跳转时为 None。
+    pub jump_pages: Option<u8>,
+}
+
+impl OpeningUnread {
+    fn new(count: u64, tail_time: i64) -> Option<Self> {
+        (count > 0 && tail_time > 0).then(|| Self {
+            boundary: UnreadBoundary::Pending {
+                count: count.try_into().unwrap_or(usize::MAX),
+                tail_time,
+                live_ids: HashSet::new(),
+            },
+            jump_pages: None,
+        })
+    }
+
+    pub fn anchor_id(&self) -> Option<&str> {
+        match &self.boundary {
+            UnreadBoundary::Pending { .. } => None,
+            UnreadBoundary::Anchored(id) => Some(id),
+        }
+    }
+
+    /// 历史快照可能包含开房之后的消息；即使其时间相同或倒序到达，也排除已见增量。
+    pub fn exclude_live_message(&mut self, message: &Message) {
+        if let UnreadBoundary::Pending {
+            tail_time,
+            live_ids,
+            ..
+        } = &mut self.boundary
+            && message.time.timestamp_millis() <= *tail_time
+        {
+            live_ids.insert(message.msg_id.clone());
+        }
+    }
+
+    pub fn can_page_older(&self, messages: &[Message]) -> bool {
+        let Some(oldest) = messages.first() else {
+            return false;
+        };
+        match &self.boundary {
+            UnreadBoundary::Anchored(_) => true,
+            UnreadBoundary::Pending {
+                tail_time,
+                live_ids,
+                ..
+            } => {
+                // 如果已经翻过开房尾端却没找到它，再往前翻也无法确认边界。
+                oldest.time.timestamp_millis() >= *tail_time
+                    || messages.iter().any(|message| {
+                        message.time.timestamp_millis() == *tail_time
+                            && !live_ids.contains(&message.msg_id)
+                    })
+            }
+        }
+    }
+
+    fn resolve(&mut self, messages: &[Message]) -> bool {
+        let UnreadBoundary::Pending {
+            count,
+            tail_time,
+            live_ids,
+        } = &self.boundary
+        else {
+            return false;
+        };
+        let at_open = |message: &&Message| {
+            message.time.timestamp_millis() <= *tail_time && !live_ids.contains(&message.msg_id)
+        };
+        let mut suffix = messages.iter().rev().filter(at_open).peekable();
+        // 正常 Bridge 消息和房间时间使用同一个“秒 * 1000 + 同秒偏移”。
+        // 必须覆盖这个精确尾端；不能按秒舍入或把一段更早的缓存误当成未读尾部。
+        if suffix
+            .peek()
+            .is_some_and(|message| message.time.timestamp_millis() == *tail_time)
+            && let Some(message) = suffix.filter(|message| !message.system).nth(count - 1)
+        {
+            self.boundary = UnreadBoundary::Anchored(message.msg_id.clone());
+            return true;
+        }
+        false
+    }
+}
 
 /// 单个会话拥有的全部可变状态。
 #[derive(Debug, Clone, Default)]
@@ -55,6 +153,11 @@ pub struct ConversationState {
     pub mentions: Vec<Mention>,
     /// 是否已向 Bridge 请求过完整会话快照。
     pub requested_snapshot: bool,
+    /// 缓存中有快照恢复的连续消息尾段；实时增量或已发出请求都不算。
+    pub received_snapshot: bool,
+    /// 实时预览改写 room.utime 前，与 room.unread_count 同步的 Bridge 时间。
+    pub room_time_before_live_preview: Option<i64>,
+    pub opening_unread: Option<OpeningUnread>,
     /// 是否正在向上拉取更早的历史消息。
     pub loading_older_messages: bool,
     /// 是否已经没有更早的历史可拉。
@@ -80,6 +183,28 @@ pub struct ConversationState {
 }
 
 impl ConversationState {
+    pub fn capture_opening_unread(&mut self, count: u64, tail_time: i64) {
+        if self
+            .opening_unread
+            .as_ref()
+            .and_then(OpeningUnread::anchor_id)
+            .is_some()
+        {
+            self.message_row_layouts.clear();
+        }
+        self.opening_unread = OpeningUnread::new(count, tail_time);
+    }
+
+    /// 只从已有快照或合入的历史页解析一次；解析后永远按 ID 定位。
+    pub fn resolve_opening_unread(&mut self) {
+        if self.received_snapshot
+            && let Some(unread) = &mut self.opening_unread
+            && unread.resolve(&self.messages)
+        {
+            self.message_row_layouts.clear();
+        }
+    }
+
     /// 输入区是否有任何待发送内容（正文、本地图片、远程图片或文件）。
     pub fn has_composer_content(&self) -> bool {
         !self.draft.trim().is_empty()

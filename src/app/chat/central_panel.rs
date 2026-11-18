@@ -22,6 +22,31 @@ use std::collections::HashSet;
 
 /// 日期分隔条的行高估算值（像素），与 `render_date_separator` 的实际占位保持一致。
 const DATE_SEPARATOR_ESTIMATED_HEIGHT: f32 = 42.0;
+/// 固定占位已包含条目间距；估算、绘制、测量都使用同一高度。
+const UNREAD_SEPARATOR_HEIGHT: f32 = 28.0;
+
+fn render_unread_separator(ui: &mut egui::Ui) {
+    let (_, rect) = ui.allocate_space(egui::vec2(
+        ui.available_width(),
+        UNREAD_SEPARATOR_HEIGHT - ui.spacing().item_spacing.y,
+    ));
+    let color = ui.visuals().hyperlink_color;
+    let painter = ui.painter();
+    let text = painter.layout_no_wrap(
+        "以下为未读消息".to_owned(),
+        egui::FontId::proportional(12.0),
+        color,
+    );
+    let text_left = rect.center().x - text.size().x / 2.0;
+    let text_right = text_left + text.size().x;
+    let line = egui::Stroke::new(1.0, color.gamma_multiply(0.6));
+    let y = rect.center().y;
+    if rect.left() + 8.0 < text_left - 8.0 {
+        painter.hline(rect.left() + 8.0..=text_left - 8.0, y, line);
+        painter.hline(text_right + 8.0..=rect.right() - 8.0, y, line);
+    }
+    painter.galley(egui::pos2(text_left, y - text.size().y / 2.0), text, color);
+}
 
 /// 判断当前消息前是否要画日期分隔条：仅当与上一条消息日期不同且上一条存在。
 fn should_show_date_separator(previous_date: Option<&str>, current_date: &str) -> bool {
@@ -312,7 +337,23 @@ impl IcaApp {
                     }
                 }
             }
+            self.advance_opening_unread_jump(active_bridge_idx, room_id);
             let conversation = self.bridge_states[active_bridge_idx].conversation(room_id);
+            let opening_unread =
+                conversation.and_then(|conversation| conversation.opening_unread.as_ref());
+            let has_opening_unread = opening_unread.is_some();
+            let unread_jump_pending =
+                opening_unread.is_some_and(|unread| unread.jump_pages.is_some());
+            let unread_anchor_id = opening_unread
+                .and_then(|unread| unread.anchor_id())
+                .map(str::to_owned);
+            let unread_separator_height = |message_id: &str| {
+                if unread_anchor_id.as_deref() == Some(message_id) {
+                    UNREAD_SEPARATOR_HEIGHT
+                } else {
+                    0.0
+                }
+            };
             let has_requested =
                 conversation.is_some_and(|conversation| conversation.requested_snapshot);
             let mut should_scroll_to_bottom =
@@ -458,7 +499,7 @@ impl IcaApp {
                 .conversation(room_id)
                 .and_then(|conversation| conversation.message_scroll_offset)
                 .unwrap_or(0.0);
-            let mut measured_message_heights = Vec::<(usize, f32)>::new();
+            let mut measured_message_heights = Vec::<(usize, f32, f32)>::new();
 
             let needs_row_layout = {
                 let bridge_state = &self.bridge_states[active_bridge_idx];
@@ -519,7 +560,8 @@ impl IcaApp {
                                     } else {
                                         0.0
                                     }
-                                });
+                                })
+                                + unread_separator_height(&message.msg_id);
 
                             rows.push(MessageRowLayout { top: 0.0, height });
                         }
@@ -675,7 +717,11 @@ impl IcaApp {
                                 );
                                 row_ui.set_clip_rect(row_ui.clip_rect().intersect(row_rect));
                                 let ui = &mut row_ui;
+                                let separator_height = unread_separator_height(&message.msg_id);
                                 {
+                                    if separator_height > 0.0 {
+                                        render_unread_separator(ui);
+                                    }
                                     if show_date_separator {
                                         render_date_separator(ui, &message.date_text);
                                     }
@@ -694,7 +740,9 @@ impl IcaApp {
                                         pending_action = Some(action);
                                     }
                                 }
-                                let measured_height = (ui.min_rect().height() + spacing).max(24.0);
+                                let base_height =
+                                    (ui.min_rect().height() + spacing - separator_height).max(24.0);
+                                let measured_height = base_height + separator_height;
                                 if highlighted_message.as_deref() == Some(message.msg_id.as_str()) {
                                     let rect = egui::Rect::from_min_size(
                                         egui::pos2(ui.min_rect().left(), before_y),
@@ -708,7 +756,11 @@ impl IcaApp {
                                     );
                                 }
                                 if (measured_height - row.height).abs() > 1.0 {
-                                    measured_message_heights.push((idx, measured_height));
+                                    measured_message_heights.push((
+                                        idx,
+                                        measured_height,
+                                        base_height,
+                                    ));
                                 }
                                 if is_scroll_target {
                                     scroll_target_rendered = true;
@@ -788,7 +840,7 @@ impl IcaApp {
                         || (scroll_output.state.offset.y - old_max_scroll).abs() <= 1.0;
                     let mut anchor_delta = 0.0;
                     let mut total_delta = 0.0;
-                    for (idx, height) in measured_message_heights {
+                    for (idx, height, base_height) in measured_message_heights {
                         let row = &mut rows[idx];
                         let delta = height - row.height;
                         total_delta += delta;
@@ -798,7 +850,7 @@ impl IcaApp {
                         row.height = height;
                         conversation
                             .message_row_heights
-                            .insert(conversation.messages[idx].msg_id.clone(), height);
+                            .insert(conversation.messages[idx].msg_id.clone(), base_height);
                     }
                     let mut top = 0.0;
                     for row in rows {
@@ -870,6 +922,41 @@ impl IcaApp {
                 });
             }
 
+            // 开房历史未读与实时消息按钮独立；不修改实时计数。
+            if has_opening_unread && scroll_output.inner_rect.height() >= 42.0 {
+                let scroll_rect = scroll_output.inner_rect;
+                egui::Area::new(egui::Id::new((
+                    "jump_to_opening_unread",
+                    &bridge_key,
+                    room_id,
+                )))
+                .fixed_pos(egui::pos2(
+                    scroll_rect.right() - 12.0,
+                    scroll_rect.top() + 8.0,
+                ))
+                .pivot(egui::Align2::RIGHT_TOP)
+                .order(egui::Order::Foreground)
+                .show(ui.ctx(), |ui| {
+                    let label = if unread_jump_pending {
+                        "定位未读中…"
+                    } else {
+                        "↑ 跳到首条未读"
+                    };
+                    if ui
+                        .add_enabled(!unread_jump_pending, egui::Button::new(label))
+                        .clicked()
+                    {
+                        if let Some(unread) = &mut self.bridge_states[active_bridge_idx]
+                            .conversation_mut(room_id)
+                            .opening_unread
+                        {
+                            unread.jump_pages = Some(0);
+                        }
+                        ui.ctx().request_repaint();
+                    }
+                });
+            }
+
             // 未滚动到底部时，在滚动区域右下角悬浮显示 "↓" 按钮
             if !user_scrolled_to_bottom {
                 let scroll_rect = scroll_output.inner_rect;
@@ -915,6 +1002,9 @@ impl IcaApp {
                             self.bridge_states[active_bridge_idx].conversation_mut(room_id);
                         conversation.scroll_to_bottom = true;
                         conversation.new_message_count = 0;
+                        if let Some(unread) = &mut conversation.opening_unread {
+                            unread.jump_pages = None;
+                        }
                     }
                 });
             }

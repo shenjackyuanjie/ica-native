@@ -170,6 +170,46 @@ impl IcaApp {
         }
     }
 
+    /// 推进用户点选的未读定位：先等快照，必要时沿用已有的向前分页，再按 ID 跳转。
+    pub fn advance_opening_unread_jump(&mut self, bridge_idx: usize, room_id: RoomId) {
+        const MAX_UNREAD_PAGES: u8 = 10;
+        let state = &mut self.bridge_states[bridge_idx];
+        let conversation = state.conversation_mut(room_id);
+        let Some(unread) = &mut conversation.opening_unread else {
+            return;
+        };
+        let Some(pages) = unread.jump_pages else {
+            return;
+        };
+        if let Some(id) = unread.anchor_id()
+            && conversation
+                .messages
+                .iter()
+                .any(|message| message.msg_id == id)
+        {
+            conversation.scroll_to_message_id = Some(id.to_owned());
+            conversation.scroll_to_message_attempts = 0;
+            conversation.scroll_to_bottom = false;
+            conversation.pending_message_scroll_to_bottom = false;
+            conversation.near_bottom = false;
+            unread.jump_pages = None;
+        } else if conversation.loading_older_messages
+            || conversation.pending_message_scroll_to_bottom
+        {
+            // 等待已在途的加载，不发并行请求。
+        } else if !conversation.received_snapshot
+            || !unread.can_page_older(&conversation.messages)
+            || conversation.no_more_history
+            || pages >= MAX_UNREAD_PAGES
+        {
+            unread.jump_pages = None;
+            state.last_notice = Some("现有历史中无法定位首条未读消息".to_string());
+        } else {
+            unread.jump_pages = Some(pages + 1);
+            self.request_older_messages(bridge_idx, room_id);
+        }
+    }
+
     /// 请求当前 bridge 的系统消息（验证消息等）。
     pub fn request_system_messages(&self, bridge_idx: usize) {
         let Some(session) = self.bridge_states.get(bridge_idx) else {
@@ -305,30 +345,52 @@ impl IcaApp {
         if let Some(state) = self.active_bridge_state_mut() {
             let room_changed = state.selected_room_id != Some(room_id);
             state.selected_room_id = Some(room_id);
+            if clear_search_on_room_select {
+                state.room_search_query.clear();
+                state.invalidate_visible_room_indices();
+            }
+            // 主窗口这里只显示占位，保留独立窗口的边界、滚动和正在进行的定位。
+            let detached = state.detached_room_ids.contains(&room_id);
+            if room_changed && !detached {
+                let (count, room_time) = state
+                    .rooms
+                    .iter()
+                    .find(|room| room.room_id == room_id)
+                    .map_or((0, 0), |room| (room.unread_count, room.utime));
+                let conversation = state.conversation_mut(room_id);
+                conversation.capture_opening_unread(
+                    count,
+                    conversation
+                        .room_time_before_live_preview
+                        .unwrap_or(room_time),
+                );
+                conversation.resolve_opening_unread();
+            }
             // 仅在开启自动已读时清除本地标记并同步到 Bridge/QQ。
             if auto_read && clear_room_unread(&mut state.rooms, room_id) {
                 state.bump_rooms_revision();
                 should_clear_remote_unread = true;
             }
             state.trim_message_caches(Some(room_id));
-            if clear_search_on_room_select {
-                state.room_search_query.clear();
-                state.invalidate_visible_room_indices();
-            }
-            // `requested_rooms` 表示已经发起过完整快照请求，而不是“缓存里碰巧有消息”。
-            // 首次打开始终请求；开关启用后，切换回来也刷新。
             let conversation = state.conversation_mut(room_id);
-            conversation.scroll_to_message_id = None;
-            conversation.scroll_to_message_attempts = 0;
-            should_request = should_request_messages_on_room_select(
-                conversation.requested_snapshot,
-                room_changed,
-                auto_fetch_history_on_select,
-            );
-            if should_request {
-                // 先占位可以避免响应返回前连续重绘或重复点击产生并发请求。
-                conversation.requested_snapshot = true;
-                current_loaded_messages = conversation.messages.len();
+            if !detached {
+                conversation.scroll_to_message_id = None;
+                conversation.scroll_to_message_attempts = 0;
+                let needs_unread_snapshot = room_changed
+                    && conversation.opening_unread.is_some()
+                    && !conversation.received_snapshot
+                    && !conversation.pending_message_scroll_to_bottom;
+                should_request = needs_unread_snapshot
+                    || should_request_messages_on_room_select(
+                        conversation.requested_snapshot,
+                        room_changed,
+                        auto_fetch_history_on_select,
+                    );
+                if should_request {
+                    // 先占位可以避免响应返回前连续重绘或重复点击产生并发请求。
+                    conversation.requested_snapshot = true;
+                    current_loaded_messages = conversation.messages.len();
+                }
             }
             if auto_read {
                 last_msg_id = conversation.messages.last().map(|m| m.msg_id.clone());
