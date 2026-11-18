@@ -39,6 +39,8 @@ pub struct AppOpenPage {
     pub account_tools: bool,
     /// 文件/资源工具
     pub file_tools: bool,
+    /// 收藏与闪传只读窗口
+    pub resources: bool,
     /// 消息检索/历史工具
     pub message_tools: bool,
     /// 会话设置工具

@@ -71,6 +71,7 @@ impl IcaApp {
             let _ = ui.checkbox(&mut self.open_page.group_tools, "群/成员管理");
             let _ = ui.checkbox(&mut self.open_page.account_tools, "账号/登录设备");
             let _ = ui.checkbox(&mut self.open_page.file_tools, "文件/资源工具");
+            let _ = ui.checkbox(&mut self.open_page.resources, "QQ 收藏与闪传");
             let _ = ui.checkbox(&mut self.open_page.message_tools, "消息检索/历史");
             let _ = ui.checkbox(&mut self.open_page.room_tools, "会话设置");
             let _ = ui.checkbox(&mut self.open_page.auto_sign, "全群自动签到");

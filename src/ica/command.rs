@@ -325,6 +325,15 @@ pub enum IcaCommand {
         /// 是否需要等待 ACK 并把结果回传 GUI。
         expect_ack: bool,
     },
+    /// 从当前 Bridge 查询收藏或闪传；只交付给发起操作的窗口，不进入诊断事件历史。
+    QueryResource {
+        /// `favoritesRequest` 或 `flashTransferRequest`。
+        event: &'static str,
+        /// 一个带 action 的请求对象。
+        request: JsonValue,
+        /// 单次回包；窗口关闭或切换账号时丢弃接收端。
+        result_tx: oneshot::Sender<Result<JsonValue, String>>,
+    },
     /// 调用 fileMgr 连接上的文件管理事件（群文件、目录操作等）。
     FileManagerCall {
         /// 目标群号（正数）。

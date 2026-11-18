@@ -13,7 +13,8 @@ use super::super::{
     settings::{ConfigEditor, NoticerEditor},
     stickers::{StickerPickerTab, StickerStore},
     tools::{
-        AccountToolsState, FileToolsState, GroupToolsState, MessageToolsState, RoomToolsState,
+        AccountToolsState, FileToolsState, GroupToolsState, MessageToolsState, ResourceBrowser,
+        RoomToolsState,
     },
 };
 use super::{BridgeSession, ChatListScrollTarget, ImageViewerState};
@@ -200,6 +201,8 @@ pub struct AppState {
     pub account_tools: AccountToolsState,
     /// 文件/资源工具窗口状态。
     pub file_tools: FileToolsState,
+    /// 收藏和闪传只读窗口；关闭或换账号时丢弃查询状态。
+    pub resource_browser: ResourceBrowser,
     /// 消息检索/历史工具窗口状态。
     pub message_tools: MessageToolsState,
     /// 会话设置工具窗口状态。
@@ -267,6 +270,7 @@ impl AppState {
             group_tools: GroupToolsState::default(),
             account_tools: AccountToolsState::default(),
             file_tools: FileToolsState::default(),
+            resource_browser: ResourceBrowser::default(),
             message_tools: MessageToolsState::default(),
             room_tools: RoomToolsState::default(),
             auto_sign: AutoSignState::default(),

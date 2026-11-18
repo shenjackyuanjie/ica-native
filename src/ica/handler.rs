@@ -285,6 +285,11 @@ pub async fn handle_command(
             args,
             expect_ack,
         } => bridge_api_commands::socket_api_call(ctx, event, args, expect_ack).await,
+        IcaCommand::QueryResource {
+            event,
+            request,
+            result_tx,
+        } => bridge_api_commands::query_resource(ctx, event, request, result_tx).await,
         IcaCommand::FileManagerCall {
             gin,
             event,

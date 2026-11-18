@@ -188,6 +188,7 @@ impl IcaApp {
             page.group_tools,
             page.account_tools,
             page.file_tools,
+            page.resources,
             page.message_tools,
             page.room_tools,
             page.auto_sign,

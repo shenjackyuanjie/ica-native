@@ -17,6 +17,7 @@ mod account;
 mod file;
 mod group;
 mod message;
+mod resources;
 mod room;
 mod socket;
 
@@ -26,4 +27,5 @@ pub use account::AccountToolsState;
 pub use file::FileToolsState;
 pub use group::GroupToolsState;
 pub use message::MessageToolsState;
+pub use resources::ResourceBrowser;
 pub use room::RoomToolsState;
