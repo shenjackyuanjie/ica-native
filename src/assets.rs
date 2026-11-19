@@ -21,11 +21,13 @@ pub mod png {
     pub const ICON_512X: &[u8] = include_bytes!("../assets/png/icon_512x512.png");
 }
 
-/// SVG 矢量图标：聊天分组与静音标记。
+/// SVG 矢量图标：聊天分组、编辑入口与静音标记。
 pub mod svg {
     /// 分组图标，用于分组导航与房间列表。
     pub const CHAT_GROUP: egui::ImageSource =
         egui::include_image!("../assets/svg/chat-group-icon.svg");
+    /// 分组编辑入口图标，白色轮廓由控件按主题着色。
+    pub const EDIT_GROUP: egui::ImageSource = egui::include_image!("../assets/svg/edit-group.svg");
     /// 静音图标，标记已静音的会话。
     pub const CHAT_MUTE: egui::ImageSource = egui::include_image!("../assets/svg/chat-mute.svg");
 }

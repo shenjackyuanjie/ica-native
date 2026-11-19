@@ -3,6 +3,7 @@ use crate::app::test_support::test_app;
 use crate::config::chat_groups::ChatGroup;
 use crate::ica::types::message::{At, LastMessage};
 use crate::ica::types::{RoomId, room::Room};
+use egui::{Event, Modifiers, MouseWheelUnit, PointerButton, Pos2, Rect, Shape};
 
 fn room(room_id: RoomId, priority: u8, unread_count: u64, at: At) -> Room {
     Room {
@@ -54,4 +55,65 @@ fn drawing_an_idle_sidebar_preserves_the_visible_room_index_cache() {
     });
     output.textures_delta.clear();
     assert!(app.bridge_states[0].visible_room_indices_cache.is_some());
+}
+
+#[test]
+fn edit_group_label_stays_on_one_line_and_opens_editor_after_scrolling() {
+    let (mut app, _) = test_app();
+    app.bridge_states[0].chat_groups.groups = (0..8)
+        .map(|index| ChatGroup::new_empty(format!("Team {index}")))
+        .collect();
+    let ctx = egui::Context::default();
+    let mut draw = |events| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(360.0, 190.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| app.render_left_groups_panel(ui),
+        );
+        output.textures_delta.clear();
+        output
+            .shapes
+            .into_iter()
+            .find_map(|shape| match shape.shape {
+                Shape::Text(text) if text.galley.job.text == "Edit" => {
+                    let label = Rect::from_min_size(text.pos, text.galley.size());
+                    shape.clip_rect.contains_rect(label).then(|| {
+                        assert_eq!(text.galley.rows.len(), 1);
+                        label.center()
+                    })
+                }
+                _ => None,
+            })
+    };
+
+    assert!(draw(vec![]).is_none(), "长列表顶部不能显示编辑入口");
+    draw(vec![Event::PointerMoved(egui::pos2(30.0, 90.0))]);
+    draw(vec![
+        Event::MouseWheel {
+            unit: MouseWheelUnit::Point,
+            delta: egui::Vec2::ZERO,
+            phase: egui::TouchPhase::Start,
+            modifiers: Modifiers::NONE,
+        },
+        Event::MouseWheel {
+            unit: MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -1200.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Modifiers::NONE,
+        },
+    ]);
+    let pos = draw(vec![]).expect("滚到底后应完整显示单行 Edit");
+    draw(vec![Event::PointerMoved(pos)]);
+    for pressed in [true, false] {
+        draw(vec![Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        }]);
+    }
+    assert!(app.open_page.chat_group_editor);
 }

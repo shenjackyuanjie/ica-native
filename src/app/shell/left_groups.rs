@@ -58,6 +58,46 @@ fn draw_group(
     response
 }
 
+/// 与分类项一样，上方显示图标，下方保留一行短标签；整个区域都接受点击。
+fn draw_edit_group(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 44.0), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "编辑分组")
+    });
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+        if response.hovered() || response.has_focus() || response.is_pointer_button_down_on() {
+            ui.painter().rect(
+                rect,
+                visuals.corner_radius,
+                visuals.weak_bg_fill,
+                visuals.bg_stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+        let color = visuals.fg_stroke.color;
+        let icon_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.center().x, rect.top() + 15.0),
+            egui::Vec2::splat(24.0),
+        );
+        Image::new(crate::assets::svg::EDIT_GROUP)
+            .tint(color)
+            .paint_at(ui, icon_rect);
+        // 长说明保留在提示里，不受侧栏宽度和普通按钮的文字换行规则影响。
+        ui.painter().text(
+            egui::pos2(rect.center().x, rect.top() + 28.0),
+            egui::Align2::CENTER_TOP,
+            "Edit",
+            egui::FontId::proportional(12.0),
+            color,
+        );
+    }
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("编辑分组")
+}
+
 impl IcaApp {
     /// 分类按钮与键盘共用入口；不改变当前房间，也不持久化临时筛选。
     ///
@@ -83,7 +123,7 @@ impl IcaApp {
         true
     }
 
-    /// 账号和分组管理入口固定在顶部，分类按钮单独滚动。
+    /// 账号头像固定在顶部，分类按钮和列表末尾的编辑入口一起滚动。
     pub fn render_left_groups_panel(&mut self, ui: &mut egui::Ui) {
         if self.custom_chat.disable_chat_group || self.custom_chat.hide_chat_group_sidebar {
             return;
@@ -124,7 +164,6 @@ impl IcaApp {
                             .on_hover_text(format!("{} ({})", account.nick, account.qqid))
                             .clicked();
                     }
-                    open_editor = ui.small_button("编辑分组").clicked();
                     ui.separator();
                     egui::ScrollArea::vertical()
                         .id_salt(("chat_group_sidebar", active_bridge_idx))
@@ -172,6 +211,7 @@ impl IcaApp {
                                     });
                                 }
                             }
+                            open_editor |= draw_edit_group(ui).clicked();
                         });
                 });
             });
